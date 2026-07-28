@@ -212,27 +212,27 @@ object GadgetbridgeReader {
     private fun readDailySummariesXiaomi(db: SQLiteDatabase, days: Int): List<DailySummary> {
         val now = LocalDate.now()
         val startTime = now.minusDays(days.toLong())
-            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            .atStartOfDay(ZoneId.systemDefault()).toInstant().epochSecond
         val summaries = mutableListOf<DailySummary>()
-        val cursor = db.query(
-            "XIAOMI_DAILY_SUMMARY_SAMPLE",
-            arrayOf("TIMESTAMP", "STEPS", "HR_RESTING", "HR_MAX", "HR_MIN", "HR_AVG", "STRESS_AVG", "CALORIES", "SPO2_AVG"),
-            "TIMESTAMP >= ?",
-            arrayOf(startTime.toString()),
-            null, null, "TIMESTAMP ASC"
+        // Mi Band 5 没有日汇总表——从 MI_BAND_ACTIVITY_SAMPLE 聚合步数
+        val cursor = db.rawQuery(
+            "SELECT MIN(TIMESTAMP) as ts, SUM(COALESCE(STEPS,0)) as total_steps " +
+            "FROM MI_BAND_ACTIVITY_SAMPLE WHERE TIMESTAMP >= ? " +
+            "GROUP BY strftime('%Y-%m-%d', datetime(TIMESTAMP, 'unixepoch')) ORDER BY ts ASC",
+            arrayOf(startTime.toString())
         )
         cursor.use {
             while (it.moveToNext()) {
                 val timestamp = it.getLong(0)
-                val date = Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
-                summaries.add(DailySummary(timestamp, date, it.getInt(1), getIntOrNull(it, 2), getIntOrNull(it, 3), getIntOrNull(it, 4), getIntOrNull(it, 5), getIntOrNull(it, 6), getIntOrNull(it, 7), getIntOrNull(it, 8)))
+                val date = Instant.ofEpochSecond(timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
+                summaries.add(DailySummary(timestamp, date, it.getInt(1), null, null, null, null, null, null, null))
             }
         }
         return summaries
     }
 
     private fun readLatestActivitySampleXiaomi(db: SQLiteDatabase): ActivitySample? {
-        val cursor = db.query("XIAOMI_ACTIVITY_SAMPLE", arrayOf("TIMESTAMP", "HEART_RATE", "STEPS", "STRESS", "SPO2", "RAW_INTENSITY"), "HEART_RATE IS NOT NULL AND HEART_RATE > 0", null, null, null, "TIMESTAMP DESC", "1")
+        val cursor = db.query("MI_BAND_ACTIVITY_SAMPLE", arrayOf("TIMESTAMP", "HEART_RATE", "STEPS", "RAW_INTENSITY"), "HEART_RATE IS NOT NULL AND HEART_RATE > 0", null, null, null, "TIMESTAMP DESC", "1")
         cursor.use {
             return if (it.moveToFirst()) ActivitySample(it.getLong(0), getIntOrNull(it, 1), getIntOrNull(it, 2), getIntOrNull(it, 3), getIntOrNull(it, 4), getIntOrNull(it, 5)) else null
         }
@@ -271,10 +271,9 @@ object GadgetbridgeReader {
         val startSec = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().epochSecond
         var spo2: Int? = null
         var stress: Int? = null
-        val c1 = db.query("XIAOMI_ACTIVITY_SAMPLE", arrayOf("SPO2"), "TIMESTAMP >= ? AND SPO2 IS NOT NULL AND SPO2 > 0", arrayOf(startSec.toString()), null, null, "TIMESTAMP DESC", "1")
-        c1.use { if (it.moveToFirst()) spo2 = getIntOrNull(it, 0) }
-        val c2 = db.query("XIAOMI_ACTIVITY_SAMPLE", arrayOf("STRESS"), "TIMESTAMP >= ? AND STRESS IS NOT NULL AND STRESS > 0", arrayOf(startSec.toString()), null, null, "TIMESTAMP DESC", "1")
-        c2.use { if (it.moveToFirst()) stress = getIntOrNull(it, 0) }
+        // Mi Band 5 不支持 SPO2 和 STRESS
+        spo2 = null
+        stress = null
         return Pair(spo2, stress)
     }
 
