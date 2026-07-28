@@ -6,11 +6,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: 'recursive'
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -26,41 +27,35 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install web dependencies
+        run: |
+          cd web-ui
+          pnpm install
+
       - name: Prepare build files
         run: |
-          # 解码base64编码的keystore文件
-          echo "${{ secrets.KEY_BASE64 }}" | base64 -d > app/app.key
-          
-          # 写入签名配置到local.properties
-          echo "${{ secrets.SIGNING_CONFIG }}" > local.properties
-          
-          # 写入Google Services配置
-          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
+          echo '{}' > app/google-services.json
+          echo "" > local.properties
+          # 生成 debug keystore
+          keytool -genkey -v -keystore app/debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Debug,OU=Dev,O=OrangeChat,L=City,S=State,C=CN" -noprompt
 
       - name: Gradle Build
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew assembleDebug
 
-      - name: Extract version
-        id: version
-        run: |
-          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Upload artifacts
+      - name: Upload APK
         uses: actions/upload-artifact@v4
-        if: success()
         with:
-          name: artifacts
-          path: app/build/outputs/apk/release/*.apk
-
-      - name: Create GitHub Release
-        if: success()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "${{ steps.version.outputs.version }}" \
-            --title "Release ${{ steps.version.outputs.version }}" \
-            --generate-notes \
-            app/build/outputs/apk/release/*.apk
+          name: orangechat-debug
+          path: app/build/outputs/apk/debug/*.apk
