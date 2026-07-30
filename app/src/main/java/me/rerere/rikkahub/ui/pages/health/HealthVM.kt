@@ -25,6 +25,7 @@ import me.rerere.rikkahub.data.gadgetbridge.GadgetbridgeReader
 import me.rerere.rikkahub.data.gadgetbridge.HealthUiState
 import me.rerere.rikkahub.data.gadgetbridge.StepsRange
 import java.io.File
+import java.time.LocalDate
 
 class HealthVM(
     application: Application,
@@ -97,19 +98,27 @@ class HealthVM(
     private suspend fun loadHealthData(customPath: String = "") {
         withContext(Dispatchers.IO) {
             try {
-                val latestActivity = GadgetbridgeReader.readLatestActivitySample(customPath)
-                val dailySummaries7 = GadgetbridgeReader.readDailySummaries(7, customPath)
-                val dailySummaries30 = GadgetbridgeReader.readDailySummaries(30, customPath)
-                val sleepSummaries = GadgetbridgeReader.readSleepSummaries(7, customPath)
-                val (spo2, stress) = GadgetbridgeReader.readLatestSpo2AndStress(customPath)
+                val snapshot = GadgetbridgeReader.readHealthSnapshot(
+                    summaryDays = 30,
+                    sleepDays = 7,
+                    customPath = customPath,
+                ) ?: throw IllegalStateException("无法读取完整的 Gadgetbridge 数据快照")
+                val latestActivity = snapshot.latestActivity
+                val dailySummaries30 = snapshot.dailySummaries
+                val dailySummaries7 = dailySummaries30.filter {
+                    !it.date.isBefore(LocalDate.now().minusDays(7))
+                }
+                val sleepSummaries = snapshot.sleepSummaries
                 val todaySummary = dailySummaries7.lastOrNull()
                 _state.value = _state.value.copy(
                     isLoading = false, dbFileExists = true,
+                    sourceInfo = snapshot.sourceInfo,
                     currentHeartRate = latestActivity?.heartRate,
                     dailySummaries7 = dailySummaries7,
                     dailySummaries30 = dailySummaries30,
                     sleepSummaries = sleepSummaries,
-                    latestSpo2 = spo2, latestStress = stress,
+                    latestSpo2 = snapshot.latestSpo2,
+                    latestStress = snapshot.latestStress,
                     todaySteps = todaySummary?.steps ?: 0,
                     todayCalories = todaySummary?.calories,
                 )

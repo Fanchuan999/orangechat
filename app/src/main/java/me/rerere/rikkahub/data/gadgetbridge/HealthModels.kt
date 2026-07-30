@@ -9,6 +9,45 @@ package me.rerere.rikkahub.data.gadgetbridge
 
 import java.time.LocalDate
 
+/**
+ * A metric that the connected wearable has actually exported. This is kept
+ * separate from a missing reading: an unsupported metric must never be
+ * represented as zero when it is passed to the AI.
+ */
+enum class HealthMetric(val id: String) {
+    STEPS("steps"),
+    HEART_RATE("heart_rate"),
+    SLEEP("sleep"),
+    SPO2("spo2"),
+    STRESS("stress"),
+    CALORIES("calories"),
+}
+
+/**
+ * Metadata for the database snapshot that was used to build health data.
+ * [databaseExportedAt] is the file modification time, not a claim that the
+ * wearable measured every metric at that instant.
+ */
+data class HealthDataSourceInfo(
+    val source: String = "Gadgetbridge",
+    val manufacturer: String? = null,
+    val databaseExportedAt: Long,
+    val supportedMetrics: Set<HealthMetric>,
+)
+
+/**
+ * A consistent health read made from one SQLite connection. It avoids mixing
+ * values from separate database exports while the user is syncing their band.
+ */
+data class HealthSnapshot(
+    val sourceInfo: HealthDataSourceInfo,
+    val latestActivity: ActivitySample?,
+    val dailySummaries: List<DailySummary>,
+    val sleepSummaries: List<SleepSummary>,
+    val latestSpo2: Int?,
+    val latestStress: Int?,
+)
+
 data class DailySummary(
     val timestamp: Long,
     val date: LocalDate,
@@ -31,6 +70,25 @@ data class ActivitySample(
     val rawIntensity: Int?,
 )
 
+/** Mi Band 5 exports activity timestamps in epoch seconds. */
+internal object MiBand5HealthMapper {
+    fun mapActivitySample(
+        timestampSeconds: Long,
+        heartRate: Int?,
+        steps: Int?,
+        rawIntensity: Int?,
+    ): ActivitySample = ActivitySample(
+        timestamp = timestampSeconds * 1000L,
+        heartRate = heartRate,
+        steps = steps,
+        // RAW_INTENSITY is movement intensity, not the user's stress level.
+        stress = null,
+        // Mi Band 5 does not export a blood-oxygen reading through this table.
+        spo2 = null,
+        rawIntensity = rawIntensity,
+    )
+}
+
 data class SleepSummary(
     val timestamp: Long,      // 入睡时间（毫秒时间戳）
     val wakeupTime: Long,     // 醒来时间（毫秒时间戳）
@@ -48,6 +106,7 @@ data class HealthUiState(
     val isLoading: Boolean = true,
     val error: String? = null,
     val dbFileExists: Boolean = true,
+    val sourceInfo: HealthDataSourceInfo? = null,
     val currentHeartRate: Int? = null,
     val dailySummaries7: List<DailySummary> = emptyList(),
     val dailySummaries30: List<DailySummary> = emptyList(),

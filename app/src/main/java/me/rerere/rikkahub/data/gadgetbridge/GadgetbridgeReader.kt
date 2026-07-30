@@ -139,7 +139,7 @@ object GadgetbridgeReader {
      * - MANUFACTURER 字段不区分大小写包含 "huawei" 即判定为华为。
      * - 查询异常 / 表不存在 / 字段为空 / 无法识别的厂商：默认走小米逻辑，保证向后兼容。
      */
-    private fun detectManufacturer(db: SQLiteDatabase): Manufacturer {
+    private fun readDeviceManufacturer(db: SQLiteDatabase): String? {
         return try {
             // DEVICE 表的 MANUFACTURER 字段实测值如 "Huawei"
             val cursor = db.query(
@@ -150,23 +150,73 @@ object GadgetbridgeReader {
             )
             cursor.use {
                 if (!it.moveToFirst()) {
-                    Log.w(TAG, "厂商判断: DEVICE 表为空, 默认走小米逻辑")
-                    Manufacturer.XIAOMI
+                    null
                 } else {
-                    val manufacturer = it.getString(0)?.lowercase()?.trim().orEmpty()
-                    Log.d(TAG, "厂商判断: MANUFACTURER=$manufacturer")
-                    when {
-                        manufacturer.contains("huawei") -> Manufacturer.HUAWEI
-                        // 未识别的厂商一律走小米，保持向后兼容
-                        else -> Manufacturer.XIAOMI
-                    }
+                    it.getString(0)?.trim()?.takeIf(String::isNotEmpty)
                 }
             }
         } catch (e: Exception) {
-            // DEVICE 表不存在或字段缺失时不阻断主流程
-            Log.e(TAG, "厂商判断失败, 默认走小米逻辑", e)
-            Manufacturer.XIAOMI
+            // DEVICE 表不存在或字段缺失时不阻断主流程。
+            Log.e(TAG, "读取设备厂商失败", e)
+            null
         }
+    }
+
+    private fun detectManufacturer(db: SQLiteDatabase): Manufacturer {
+        val manufacturer = readDeviceManufacturer(db)?.lowercase().orEmpty()
+        Log.d(TAG, "厂商判断: MANUFACTURER=$manufacturer")
+        return if (manufacturer.contains("huawei")) Manufacturer.HUAWEI else Manufacturer.XIAOMI
+    }
+
+    private fun tableHasColumns(db: SQLiteDatabase, tableName: String, columns: Set<String>): Boolean {
+        return try {
+            val actualColumns = mutableSetOf<String>()
+            db.rawQuery("PRAGMA table_info($tableName)", null).use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                while (cursor.moveToNext() && nameIndex >= 0) {
+                    cursor.getString(nameIndex)?.uppercase()?.let(actualColumns::add)
+                }
+            }
+            columns.all { it.uppercase() in actualColumns }
+        } catch (e: Exception) {
+            Log.w(TAG, "检查数据表字段失败: $tableName", e)
+            false
+        }
+    }
+
+    private fun readSourceInfo(
+        db: SQLiteDatabase,
+        manufacturer: Manufacturer,
+        databaseExportedAt: Long,
+    ): HealthDataSourceInfo {
+        val metrics = buildSet {
+            when (manufacturer) {
+                Manufacturer.XIAOMI -> {
+                    if (tableHasColumns(db, "MI_BAND_ACTIVITY_SAMPLE", setOf("STEPS"))) add(HealthMetric.STEPS)
+                    if (tableHasColumns(db, "MI_BAND_ACTIVITY_SAMPLE", setOf("HEART_RATE"))) {
+                        add(HealthMetric.HEART_RATE)
+                    }
+                    if (tableHasColumns(db, "XIAOMI_SLEEP_TIME_SAMPLE", setOf("TIMESTAMP", "WAKEUP_TIME"))) {
+                        add(HealthMetric.SLEEP)
+                    }
+                }
+                Manufacturer.HUAWEI -> {
+                    if (tableHasColumns(db, "HUAWEI_ACTIVITY_SAMPLE", setOf("STEPS"))) add(HealthMetric.STEPS)
+                    if (tableHasColumns(db, "HUAWEI_ACTIVITY_SAMPLE", setOf("HEART_RATE"))) add(HealthMetric.HEART_RATE)
+                    if (tableHasColumns(db, "HUAWEI_ACTIVITY_SAMPLE", setOf("CALORIES"))) add(HealthMetric.CALORIES)
+                    if (tableHasColumns(db, "HUAWEI_ACTIVITY_SAMPLE", setOf("SPO"))) add(HealthMetric.SPO2)
+                    if (tableHasColumns(db, "HUAWEI_STRESS_SAMPLE", setOf("STRESS"))) add(HealthMetric.STRESS)
+                    if (tableHasColumns(db, "HUAWEI_SLEEP_STATS_SAMPLE", setOf("TIMESTAMP", "WAKEUP_TIME"))) {
+                        add(HealthMetric.SLEEP)
+                    }
+                }
+            }
+        }
+        return HealthDataSourceInfo(
+            manufacturer = readDeviceManufacturer(db),
+            databaseExportedAt = databaseExportedAt,
+            supportedMetrics = metrics,
+        )
     }
 
     // ==================== 公开方法（4 个，签名保持不变，内部按厂商分流） ====================
@@ -207,6 +257,48 @@ object GadgetbridgeReader {
         }.getOrDefault(null to null)
     }
 
+    /**
+     * Read all values required for an AI health response from one immutable
+     * view of the exported database. This prevents a sync finishing between
+     * separate calls from producing a mismatched "latest" value and daily
+     * total.
+     */
+    fun readHealthSnapshot(
+        summaryDays: Int = 7,
+        sleepDays: Int = 3,
+        customPath: String = "",
+    ): HealthSnapshot? {
+        val dbPath = findDbPath(customPath) ?: return null
+        val databaseExportedAt = File(dbPath).lastModified()
+        return withDatabase(customPath) { db ->
+            val manufacturer = detectManufacturer(db)
+            val summaries = when (manufacturer) {
+                Manufacturer.HUAWEI -> readDailySummariesHuawei(db, summaryDays)
+                Manufacturer.XIAOMI -> readDailySummariesXiaomi(db, summaryDays)
+            }
+            val latestActivity = when (manufacturer) {
+                Manufacturer.HUAWEI -> readLatestActivitySampleHuawei(db)
+                Manufacturer.XIAOMI -> readLatestActivitySampleXiaomi(db)
+            }
+            val sleepSummaries = when (manufacturer) {
+                Manufacturer.HUAWEI -> readSleepSummariesHuawei(db, sleepDays)
+                Manufacturer.XIAOMI -> readSleepSummariesXiaomi(db, sleepDays)
+            }
+            val (spo2, stress) = when (manufacturer) {
+                Manufacturer.HUAWEI -> readLatestSpo2AndStressHuawei(db)
+                Manufacturer.XIAOMI -> readLatestSpo2AndStressXiaomi(db)
+            }
+            HealthSnapshot(
+                sourceInfo = readSourceInfo(db, manufacturer, databaseExportedAt),
+                latestActivity = latestActivity,
+                dailySummaries = summaries,
+                sleepSummaries = sleepSummaries,
+                latestSpo2 = spo2,
+                latestStress = stress,
+            )
+        }.getOrNull()
+    }
+
     // ==================== 小米实现（原样保留，一行未改） ====================
 
     private fun readDailySummariesXiaomi(db: SQLiteDatabase, days: Int): List<DailySummary> {
@@ -223,18 +315,42 @@ object GadgetbridgeReader {
         )
         cursor.use {
             while (it.moveToNext()) {
-                val timestamp = it.getLong(0)
-                val date = Instant.ofEpochSecond(timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
-                summaries.add(DailySummary(timestamp, date, it.getInt(1), null, null, null, null, null, null, null))
+                val timestampSeconds = it.getLong(0)
+                val date = Instant.ofEpochSecond(timestampSeconds).atZone(ZoneId.systemDefault()).toLocalDate()
+                summaries.add(
+                    DailySummary(
+                        timestamp = timestampSeconds * 1000L,
+                        date = date,
+                        steps = it.getInt(1),
+                        hrResting = null,
+                        hrMax = null,
+                        hrMin = null,
+                        hrAvg = null,
+                        stressAvg = null,
+                        calories = null,
+                        spo2Avg = null,
+                    )
+                )
             }
         }
         return summaries
     }
 
     private fun readLatestActivitySampleXiaomi(db: SQLiteDatabase): ActivitySample? {
-        val cursor = db.query("MI_BAND_ACTIVITY_SAMPLE", arrayOf("TIMESTAMP", "HEART_RATE", "STEPS", "RAW_INTENSITY"), "HEART_RATE IS NOT NULL AND HEART_RATE > 0", null, null, null, "TIMESTAMP DESC", "1")
+        val cursor = db.query(
+            "MI_BAND_ACTIVITY_SAMPLE",
+            arrayOf("TIMESTAMP", "HEART_RATE", "STEPS", "RAW_INTENSITY"),
+            "HEART_RATE IS NOT NULL AND HEART_RATE > 0",
+            null, null, null, "TIMESTAMP DESC", "1"
+        )
         cursor.use {
-            return if (it.moveToFirst()) ActivitySample(it.getLong(0), getIntOrNull(it, 1), getIntOrNull(it, 2), getIntOrNull(it, 3), getIntOrNull(it, 4), getIntOrNull(it, 5)) else null
+            if (!it.moveToFirst()) return null
+            return MiBand5HealthMapper.mapActivitySample(
+                timestampSeconds = it.getLong(0),
+                heartRate = getIntOrNull(it, 1),
+                steps = getIntOrNull(it, 2),
+                rawIntensity = getIntOrNull(it, 3),
+            )
         }
     }
 

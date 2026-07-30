@@ -59,6 +59,8 @@ import me.rerere.hugeicons.stroke.Alert01
 import me.rerere.hugeicons.stroke.Pulse01
 import me.rerere.hugeicons.stroke.Zap
 import me.rerere.rikkahub.data.gadgetbridge.DailySummary
+import me.rerere.rikkahub.data.gadgetbridge.HealthDataSourceInfo
+import me.rerere.rikkahub.data.gadgetbridge.HealthMetric
 import me.rerere.rikkahub.data.gadgetbridge.HealthUiState
 import me.rerere.rikkahub.data.gadgetbridge.SleepSummary
 import me.rerere.rikkahub.data.gadgetbridge.StepsRange
@@ -244,6 +246,14 @@ private fun HealthContent(
         contentPadding = padding + PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        state.sourceInfo?.let { sourceInfo ->
+            item {
+                HealthDataSourceCard(
+                    sourceInfo = sourceInfo,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
         item {
             RealTimeHeartRateCard(
                 heartRate = state.currentHeartRate,
@@ -289,6 +299,57 @@ private fun HealthContent(
         item { Spacer(Modifier.height(8.dp)) }
     }
 }
+
+@Composable
+private fun HealthDataSourceCard(
+    sourceInfo: HealthDataSourceInfo,
+    modifier: Modifier = Modifier,
+) {
+    val ageMinutes = ((System.currentTimeMillis() - sourceInfo.databaseExportedAt)
+        .coerceAtLeast(0L) / 60_000L)
+    val freshnessText = when {
+        ageMinutes < 1 -> "刚刚导出"
+        ageMinutes < 60 -> "${ageMinutes} 分钟前导出"
+        else -> "${ageMinutes / 60} 小时前导出"
+    }
+    val metricsText = sourceInfo.supportedMetrics
+        .sortedBy(HealthMetric::id)
+        .joinToString("、") { it.displayName }
+        .ifBlank { "未识别到可读取的健康指标" }
+
+    Card(modifier = modifier, colors = CustomColors.cardColorsOnSurfaceContainer) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("健康数据来源", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${sourceInfo.source} · ${sourceInfo.manufacturer ?: "未知设备"} · $freshnessText",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (ageMinutes >= 6 * 60) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                "已读取：$metricsText",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private val HealthMetric.displayName: String
+    get() = when (this) {
+        HealthMetric.STEPS -> "步数"
+        HealthMetric.HEART_RATE -> "心率"
+        HealthMetric.SLEEP -> "睡眠"
+        HealthMetric.SPO2 -> "血氧"
+        HealthMetric.STRESS -> "压力"
+        HealthMetric.CALORIES -> "活动消耗"
+    }
 
 // ============ Real-time Heart Rate Card ============
 @Composable
