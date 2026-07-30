@@ -49,10 +49,10 @@ jobs:
           # 生成 debug keystore
           keytool -genkey -v -keystore app/debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Debug,OU=Dev,O=OrangeChat,L=City,S=State,C=CN" -noprompt
 
-      - name: Gradle Build
+      - name: Gradle Test and Build
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew testDebugUnitTest assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
