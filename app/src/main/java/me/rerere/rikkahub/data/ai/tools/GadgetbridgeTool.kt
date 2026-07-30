@@ -272,11 +272,13 @@ private fun buildSourceInfo(sourceInfo: HealthDataSourceInfo): JsonObject = buil
     put("database_age_minutes", ageMinutes)
     put("database_may_be_stale", ageMinutes >= 6 * 60)
     put("supported_metrics", kotlinx.serialization.json.buildJsonArray {
-        sourceInfo.supportedMetrics.sortedBy(HealthMetric::id).forEach { add(it.id) }
+        sourceInfo.supportedMetrics
+            .sortedBy(HealthMetric::id)
+            .forEach { add(kotlinx.serialization.json.JsonPrimitive(it.id)) }
     })
     put("not_exported_metrics", kotlinx.serialization.json.buildJsonArray {
         HealthMetric.entries
             .filterNot(sourceInfo.supportedMetrics::contains)
-            .forEach { add(it.id) }
+            .forEach { add(kotlinx.serialization.json.JsonPrimitive(it.id)) }
     })
 }
