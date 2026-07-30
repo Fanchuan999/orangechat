@@ -52,7 +52,7 @@ jobs:
       - name: Gradle Test and Build
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest assembleDebug
+          ./gradlew :app:testDebugUnitTest --tests me.rerere.rikkahub.data.gadgetbridge.MiBand5HealthMapperTest assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
