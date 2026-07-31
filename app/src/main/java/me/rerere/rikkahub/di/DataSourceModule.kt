@@ -45,6 +45,7 @@ import me.rerere.rikkahub.data.db.migrations.Migration_25_26
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
+import me.rerere.rikkahub.data.sync.companion.CompanionBackupService
 import me.rerere.search.SearchService
 import me.rerere.rikkahub.data.sync.S3Sync
 import okhttp3.Dispatcher
@@ -268,6 +269,14 @@ val dataSourceModule = module {
             context = get(),
             httpClient = get(),
             pluginRepository = get()
+        )
+    }
+
+    single {
+        CompanionBackupService(
+            context = get(),
+            settingsStore = get(),
+            webDavSync = get(),
         )
     }
 

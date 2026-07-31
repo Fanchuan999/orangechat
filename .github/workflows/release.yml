@@ -55,6 +55,7 @@ jobs:
           ./gradlew :app:testDebugUnitTest \
             --tests me.rerere.rikkahub.data.gadgetbridge.MiBand5HealthMapperTest \
             --tests me.rerere.rikkahub.data.sync.BackupPathResolverTest \
+            --tests me.rerere.rikkahub.data.sync.companion.SupabaseBackupClientTest \
             assembleDebug
 
       - name: Upload APK

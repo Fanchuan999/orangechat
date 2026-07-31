@@ -154,6 +154,9 @@ class SettingsStore(
         // 备份提醒
         val BACKUP_REMINDER_CONFIG = stringPreferencesKey("backup_reminder_config")
 
+        // 联动备份
+        val COMPANION_BACKUP_CONFIG = stringPreferencesKey("companion_backup_config")
+
         // 统计
         val LAUNCH_COUNT = intPreferencesKey("launch_count")
 
@@ -285,6 +288,9 @@ class SettingsStore(
                 backupReminderConfig = preferences[BACKUP_REMINDER_CONFIG]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: BackupReminderConfig(),
+                companionBackupConfig = preferences[COMPANION_BACKUP_CONFIG]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: CompanionBackupConfig(),
                 launchCount = preferences[LAUNCH_COUNT] ?: 0,
                 sponsorAlertDismissedAt = preferences[SPONSOR_ALERT_DISMISSED_AT] ?: 0,
                 systemToolsSetting = preferences[SYSTEM_TOOLS_SETTING]?.let {
@@ -478,6 +484,7 @@ class SettingsStore(
             preferences[WEB_SERVER_ACCESS_PASSWORD] = settings.webServerAccessPassword
             preferences[WEB_SERVER_LOCALHOST_ONLY] = settings.webServerLocalhostOnly
             preferences[BACKUP_REMINDER_CONFIG] = JsonInstant.encodeToString(settings.backupReminderConfig)
+            preferences[COMPANION_BACKUP_CONFIG] = JsonInstant.encodeToString(settings.companionBackupConfig)
             preferences[LAUNCH_COUNT] = settings.launchCount
             preferences[SPONSOR_ALERT_DISMISSED_AT] = settings.sponsorAlertDismissedAt
             preferences[SYSTEM_TOOLS_SETTING] = JsonInstant.encodeToString(settings.systemToolsSetting)
@@ -618,6 +625,7 @@ data class Settings(
     val webServerAccessPassword: String = "",
     val webServerLocalhostOnly: Boolean = false,
     val backupReminderConfig: BackupReminderConfig = BackupReminderConfig(),
+    val companionBackupConfig: CompanionBackupConfig = CompanionBackupConfig(),
     val launchCount: Int = 0,
     val sponsorAlertDismissedAt: Int = 0,
     val systemToolsSetting: SystemToolsSetting = SystemToolsSetting(),

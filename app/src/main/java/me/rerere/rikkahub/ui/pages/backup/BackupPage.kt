@@ -34,6 +34,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.pages.backup.components.BackupDialog
 import me.rerere.rikkahub.ui.pages.backup.tabs.ImportExportTab
+import me.rerere.rikkahub.ui.pages.backup.tabs.CompanionBackupTab
 import me.rerere.rikkahub.ui.pages.backup.tabs.ReminderTab
 import me.rerere.rikkahub.ui.pages.backup.tabs.S3Tab
 import me.rerere.rikkahub.ui.pages.backup.tabs.WebDavTab
@@ -42,7 +43,7 @@ import org.koin.androidx.compose.koinViewModel
 
 @Composable
 fun BackupPage(vm: BackupVM = koinViewModel()) {
-    val pagerState = rememberPagerState { 4 }
+    val pagerState = rememberPagerState { 5 }
     val scope = rememberCoroutineScope()
     var showRestartDialog by remember { mutableStateOf(false) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -86,11 +87,16 @@ fun BackupPage(vm: BackupVM = koinViewModel()) {
                 Tab(
                     selected = pagerState.currentPage == 2,
                     onClick = { scope.launch { pagerState.animateScrollToPage(2) } },
-                    text = { Text(stringResource(R.string.backup_page_import_export)) }
+                    text = { Text("联动备份") }
                 )
                 Tab(
                     selected = pagerState.currentPage == 3,
                     onClick = { scope.launch { pagerState.animateScrollToPage(3) } },
+                    text = { Text(stringResource(R.string.backup_page_import_export)) }
+                )
+                Tab(
+                    selected = pagerState.currentPage == 4,
+                    onClick = { scope.launch { pagerState.animateScrollToPage(4) } },
                     text = { Text(stringResource(R.string.backup_page_reminder)) }
                 )
             }
@@ -117,13 +123,20 @@ fun BackupPage(vm: BackupVM = koinViewModel()) {
                     }
 
                     2 -> {
-                        ImportExportTab(
+                        CompanionBackupTab(
                             vm = vm,
                             onShowRestartDialog = { showRestartDialog = true }
                         )
                     }
 
                     3 -> {
+                        ImportExportTab(
+                            vm = vm,
+                            onShowRestartDialog = { showRestartDialog = true }
+                        )
+                    }
+
+                    4 -> {
                         ReminderTab(vm = vm)
                     }
                 }
