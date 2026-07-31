@@ -40,6 +40,10 @@ import java.util.zip.ZipOutputStream
 private const val TAG = "WebDavSync"
 private const val BACKUP_MANIFEST_ENTRY = "backup_manifest.json"
 private const val DISPLAY_ASSETS_PREFIX = "display_assets/"
+private const val PLUGIN_PRIVATE_FILES_PREFIX = "plugin_private/files/"
+private const val PLUGIN_PRIVATE_PREFERENCES_PREFIX = "plugin_private/shared_prefs/"
+private const val PLUGIN_PREFERENCES_FILE_PREFIX = "plugin_data_"
+private const val PLUGIN_PREFERENCES_FILE_SUFFIX = ".xml"
 
 private val displayAssetDirectories = listOf(
     "custom_fonts",
@@ -278,6 +282,35 @@ class WebDavSync(
                     } else {
                         Log.w(TAG, "prepareBackupFile: Plugins folder does not exist or is not a directory")
                     }
+
+                    // PluginDataStore keeps each plugin's actual content in app-private files and
+                    // SharedPreferences. These were previously omitted, so restoring an export only
+                    // recreated the plugin package and settings, not the plugin's saved content.
+                    val pluginDataFolder = File(context.filesDir, "plugin_data")
+                    if (pluginDataFolder.exists() && pluginDataFolder.isDirectory) {
+                        addDirectoryToZip(
+                            zipOut = zipOut,
+                            rootDir = pluginDataFolder,
+                            currentDir = pluginDataFolder,
+                            entryPrefix = PLUGIN_PRIVATE_FILES_PREFIX,
+                        )
+                        Log.i(TAG, "prepareBackupFile: Backed up plugin private files")
+                    }
+
+                    val sharedPreferencesFolder = File(context.applicationInfo.dataDir, "shared_prefs")
+                    sharedPreferencesFolder.listFiles()
+                        ?.filter { preferenceFile ->
+                            preferenceFile.isFile &&
+                                preferenceFile.name.startsWith(PLUGIN_PREFERENCES_FILE_PREFIX) &&
+                                preferenceFile.name.endsWith(PLUGIN_PREFERENCES_FILE_SUFFIX)
+                        }
+                        ?.forEach { preferenceFile ->
+                            addFileToZip(
+                                zipOut = zipOut,
+                                file = preferenceFile,
+                                entryName = "$PLUGIN_PRIVATE_PREFERENCES_PREFIX${preferenceFile.name}",
+                            )
+                        }
                 }
             }
         }
@@ -424,6 +457,16 @@ class WebDavSync(
                                 zipEntry.name.startsWith("${PluginScanner.PLUGINS_DIR}/")
                             ) {
                                 restorePluginEntry(zipIn, zipEntry.name)
+                            } else if (includePlugins &&
+                                config.items.contains(WebDavConfig.BackupItem.FILES) &&
+                                zipEntry.name.startsWith(PLUGIN_PRIVATE_FILES_PREFIX)
+                            ) {
+                                restorePluginPrivateFileEntry(zipIn, zipEntry.name)
+                            } else if (includePlugins &&
+                                config.items.contains(WebDavConfig.BackupItem.FILES) &&
+                                zipEntry.name.startsWith(PLUGIN_PRIVATE_PREFERENCES_PREFIX)
+                            ) {
+                                restorePluginPreferenceEntry(zipIn, zipEntry.name)
                             } else {
                                 Log.i(TAG, "restoreFromBackupFile: Skipping entry ${zipEntry.name}")
                             }
@@ -585,6 +628,52 @@ class WebDavSync(
         } catch (e: Exception) {
             Log.e(TAG, "restoreFromBackupFile: Failed to restore plugin file $entryName", e)
             throw Exception("Failed to restore plugin file $entryName: ${e.message}")
+        }
+    }
+
+    private fun restorePluginPrivateFileEntry(zipIn: ZipInputStream, entryName: String) {
+        val relativePath = entryName.removePrefix(PLUGIN_PRIVATE_FILES_PREFIX)
+        val pluginDataRoot = File(context.filesDir, "plugin_data").apply { mkdirs() }
+        restorePrivatePluginEntry(zipIn, entryName, pluginDataRoot, relativePath)
+    }
+
+    private fun restorePluginPreferenceEntry(zipIn: ZipInputStream, entryName: String) {
+        val fileName = entryName.removePrefix(PLUGIN_PRIVATE_PREFERENCES_PREFIX)
+        if (
+            fileName.isBlank() ||
+            fileName.contains('/') ||
+            !fileName.startsWith(PLUGIN_PREFERENCES_FILE_PREFIX) ||
+            !fileName.endsWith(PLUGIN_PREFERENCES_FILE_SUFFIX)
+        ) {
+            Log.w(TAG, "restoreFromBackupFile: Invalid plugin preferences entry $entryName")
+            return
+        }
+
+        val sharedPreferencesRoot = File(context.applicationInfo.dataDir, "shared_prefs").apply { mkdirs() }
+        restorePrivatePluginEntry(zipIn, entryName, sharedPreferencesRoot, fileName)
+    }
+
+    private fun restorePrivatePluginEntry(
+        zipIn: ZipInputStream,
+        entryName: String,
+        targetRoot: File,
+        relativePath: String,
+    ) {
+        val targetFile = BackupPathResolver.resolveWithin(targetRoot, relativePath)
+        if (targetFile == null) {
+            Log.w(TAG, "restoreFromBackupFile: Invalid plugin private-data entry $entryName")
+            return
+        }
+
+        targetFile.parentFile?.mkdirs()
+        try {
+            FileOutputStream(targetFile).use { outputStream ->
+                zipIn.copyTo(outputStream)
+            }
+            Log.i(TAG, "restoreFromBackupFile: Restored plugin private data $entryName")
+        } catch (e: Exception) {
+            Log.e(TAG, "restoreFromBackupFile: Failed to restore plugin private data $entryName", e)
+            throw Exception("Failed to restore plugin private data $entryName: ${e.message}")
         }
     }
 

@@ -19,6 +19,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import io.pebbletemplates.pebble.PebbleEngine
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.SerialName
@@ -58,6 +59,7 @@ import me.rerere.search.SearchServiceOptions
 import me.rerere.tts.provider.TTSProviderSetting
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
+import java.io.File
 import kotlin.uuid.Uuid
 
 private const val TAG = "PreferencesStore"
@@ -74,7 +76,7 @@ private val Context.settingsStore by preferencesDataStore(
 )
 
 class SettingsStore(
-    context: Context,
+    private val context: Context,
     scope: AppScope,
 ) : KoinComponent {
     companion object {
@@ -502,6 +504,41 @@ class SettingsStore(
 
     suspend fun update(fn: (Settings) -> Settings) {
         update(fn(settingsFlow.value))
+    }
+
+    /**
+     * Restores display-asset paths after an export is imported into an app with a different package name.
+     * The files may have been restored correctly while the saved paths still point at the old app's private
+     * storage, which the new package cannot read.
+     */
+    suspend fun repairDisplayAssetPaths() {
+        val settings = settingsFlowRaw.first()
+        if (settings.init) return
+
+        fun rebind(path: String, directory: String): String {
+            if (path.isBlank() || File(path).isFile || !path.contains("/files/$directory/")) {
+                return path
+            }
+
+            val copiedFile = File(context.filesDir, "$directory/${File(path).name}")
+            return copiedFile.takeIf { it.isFile }?.absolutePath ?: path
+        }
+
+        val display = settings.displaySetting
+        val repairedDisplay = display.copy(
+            customFontPath = rebind(display.customFontPath, "custom_fonts"),
+            inputBackgroundPath = rebind(display.inputBackgroundPath, "input_backgrounds"),
+            drawerBackgroundPath = rebind(display.drawerBackgroundPath, "drawer_backgrounds"),
+            userAvatarFramePath = rebind(display.userAvatarFramePath, "avatar_frames"),
+            aiAvatarFramePath = rebind(display.aiAvatarFramePath, "avatar_frames"),
+            userBubbleImagePath = rebind(display.userBubbleImagePath, "bubble_backgrounds"),
+            assistantBubbleImagePath = rebind(display.assistantBubbleImagePath, "bubble_backgrounds"),
+        )
+
+        if (repairedDisplay != display) {
+            update(settings.copy(displaySetting = repairedDisplay))
+            Log.i(TAG, "repairDisplayAssetPaths: Rebound restored display asset paths")
+        }
     }
 
     suspend fun updateAssistant(assistantId: Uuid) {

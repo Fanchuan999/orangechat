@@ -108,6 +108,10 @@ class RikkaHubApp : Application() {
         // sync upload files to DB
         syncManagedFiles()
 
+        // An export from another package can retain paths inside that app's private files directory.
+        // Rebind any restored display assets to this app's own copied files on launch.
+        repairRestoredDisplayAssetPaths()
+
         // Start WebServer if enabled in settings
         startWebServerIfEnabled()
 
@@ -172,6 +176,16 @@ class RikkaHubApp : Application() {
                 get<FilesManager>().syncFolder()
             }.onFailure {
                 Log.e(TAG, "syncManagedFiles failed", it)
+            }
+        }
+    }
+
+    private fun repairRestoredDisplayAssetPaths() {
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                get<SettingsStore>().repairDisplayAssetPaths()
+            }.onFailure {
+                Log.e(TAG, "repairRestoredDisplayAssetPaths failed", it)
             }
         }
     }
