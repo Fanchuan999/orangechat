@@ -110,6 +110,16 @@ android {
             buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
             buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
         }
+        create("companion") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
+            applicationIdSuffix = ".companion"
+            versionNameSuffix = "-companion"
+            isDebuggable = true
+            // A distinct package is what permits side-by-side installation. Keep the same signing identity so this
+            // companion build can receive future updates without an uninstall.
+            signingConfig = signingConfigs.getByName(if (hasReleaseSigning) "release" else "debug")
+        }
         create("baseline") {
             initWith(getByName("release"))
             matchingFallbacks.add("release")

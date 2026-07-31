@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Daddy</string>
+  <string name="keep_alive_notification_title">Daddy</string>
+  <string name="keep_alive_channel_name">Daddy 后台连接</string>
+  <string name="keep_alive_channel_desc">用于维持 Daddy 的后台连接，确保定时消息等功能稳定工作</string>
+</resources>
