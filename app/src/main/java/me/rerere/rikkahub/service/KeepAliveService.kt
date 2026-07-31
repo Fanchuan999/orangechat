@@ -166,7 +166,9 @@ class KeepAliveService : Service() {
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.w(TAG, "前台服务超时，停止保活服务: startId=$startId, fgsType=$fgsType")
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf(startId)
+        // 不使用 startId 过滤：保活服务可能被多个入口重复请求启动，超时时
+        // 必须无条件结束整个服务，才能在系统给出的短暂宽限期内避免崩溃。
+        stopSelf()
     }
 
     /**
