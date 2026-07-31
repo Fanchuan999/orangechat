@@ -23,7 +23,7 @@ import me.rerere.rikkahub.RouteActivity
  * 前台保活服务，用于提升 App 后台存活能力，确保定时消息等功能稳定运行。
  *
  * 特性：
- * - START_STICKY：被系统杀死后自动重启
+ * - Android 14 及以下使用 START_STICKY，提升后台存活能力
  * - stopWithTask="false"：用户从最近任务列表划掉 App 时服务不被停止
  * - 低优先级常驻通知，低调不打扰用户
  * - 兼容 Android 8.0+ NotificationChannel 要求
@@ -93,7 +93,7 @@ class KeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand")
+        Log.d(TAG, "onStartCommand startId=$startId")
 
         // 构建点击通知后打开应用的 PendingIntent
         val pendingIntent = PendingIntent.getActivity(
@@ -141,14 +141,32 @@ class KeepAliveService : Service() {
             return START_NOT_STICKY
         }
 
-        return START_STICKY
+        // Android 15+ 对 dataSync 前台服务有 6 小时 / 24 小时的配额。该服务不应
+        // 被系统以 sticky 方式在超时后反复拉起，否则会反复触发配额异常或超时崩溃。
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            START_NOT_STICKY
+        } else {
+            START_STICKY
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        super.onDestroy()
         Log.d(TAG, "onDestroy")
+        // 显式移除前台状态和通知，避免服务停止时仍短暂保留前台服务状态。
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        super.onDestroy()
+    }
+
+    /**
+     * Android 15 (API 35) 在 dataSync 前台服务配额耗尽时调用。系统只给几秒钟
+     * 清理时间；不停止服务会抛出 ForegroundServiceDidNotStopInTimeException。
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "前台服务超时，停止保活服务: startId=$startId, fgsType=$fgsType")
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
     }
 
     /**
@@ -159,6 +177,16 @@ class KeepAliveService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         Log.d(TAG, "onTaskRemoved")
+
+        // Android 15+ 的 dataSync 服务不适合用作无限期保活。任务被划掉后若再由
+        // 广播强行重启，会继续消耗 6 小时配额并最终导致应用被系统终止。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            Log.i(TAG, "Android 15+ 任务移除后停止 dataSync 保活服务")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+
         try {
             sendBroadcast(Intent(ACTION_RESTART_KEEP_ALIVE).apply {
                 setPackage(packageName)

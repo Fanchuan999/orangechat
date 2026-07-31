@@ -31,6 +31,12 @@ class KeepAliveRestartReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action == KeepAliveService.ACTION_RESTART_KEEP_ALIVE) {
             Log.d(TAG, "收到保活重启广播")
+            // KeepAliveService 在 Android 15+ 是 dataSync 类型，不能将它作为
+            // 无限期后台保活服务重启，否则会耗尽系统的 6 小时运行配额。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                Log.i(TAG, "Android 15+ 跳过 dataSync 保活服务重启")
+                return
+            }
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(Intent(context, KeepAliveService::class.java))
