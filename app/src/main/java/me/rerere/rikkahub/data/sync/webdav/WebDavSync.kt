@@ -13,10 +13,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.data.files.FileFolders
-import me.rerere.rikkahub.data.files.SkillPaths
+import me.rerere.rikkahub.data.files.FileUtils
+import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.WebDavConfig
+import me.rerere.rikkahub.data.files.SkillPaths
+import me.rerere.rikkahub.data.sync.BackupPathResolver
 import me.rerere.rikkahub.data.datastore.migration.SettingsJsonMigrator
 import me.rerere.rikkahub.plugin.repository.PluginRepository
 import me.rerere.rikkahub.plugin.repository.PluginSettingsExport
@@ -33,6 +36,26 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 private const val TAG = "WebDavSync"
+private const val BACKUP_MANIFEST_ENTRY = "backup_manifest.json"
+private const val DISPLAY_ASSETS_PREFIX = "display_assets/"
+
+private val displayAssetDirectories = listOf(
+    "custom_fonts",
+    "input_backgrounds",
+    "drawer_backgrounds",
+    "avatar_frames",
+    "bubble_backgrounds",
+)
+
+private val displayAssetPaths: List<Pair<String, (DisplaySetting) -> String>> = listOf(
+    "customFontPath" to { it.customFontPath },
+    "inputBackgroundPath" to { it.inputBackgroundPath },
+    "drawerBackgroundPath" to { it.drawerBackgroundPath },
+    "userAvatarFramePath" to { it.userAvatarFramePath },
+    "aiAvatarFramePath" to { it.aiAvatarFramePath },
+    "userBubbleImagePath" to { it.userBubbleImagePath },
+    "assistantBubbleImagePath" to { it.assistantBubbleImagePath },
+)
 
 class WebDavSync(
     private val settingsStore: SettingsStore,
@@ -154,10 +177,21 @@ class WebDavSync(
 
         // Create zip file and backup data
         ZipOutputStream(FileOutputStream(backupFile)).use { zipOut ->
+            val settings = settingsStore.settingsFlow.value
+            val manifest = if (config.items.contains(WebDavConfig.BackupItem.FILES)) {
+                backupDisplayAssets(zipOut, settings.displaySetting)
+            } else {
+                BackupManifest()
+            }
+            addVirtualFileToZip(
+                zipOut = zipOut,
+                name = BACKUP_MANIFEST_ENTRY,
+                content = json.encodeToString(manifest)
+            )
             addVirtualFileToZip(
                 zipOut = zipOut,
                 name = "settings.json",
-                content = json.encodeToString(settingsStore.settingsFlow.value)
+                content = json.encodeToString(settings)
             )
 
             // Backup database files
@@ -249,6 +283,10 @@ class WebDavSync(
     ) = withContext(Dispatchers.IO) {
         Log.i(TAG, "restoreFromBackupFile: Starting restore from ${backupFile.absolutePath}")
 
+        var backupManifest = BackupManifest()
+        var restoredSettings: Settings? = null
+        val restoredDisplayAssets = mutableMapOf<String, File>()
+
         ZipInputStream(FileInputStream(backupFile)).use { zipIn ->
             var entry: ZipEntry?
             while (zipIn.nextEntry.also { entry = it } != null) {
@@ -256,14 +294,18 @@ class WebDavSync(
                     Log.i(TAG, "restoreFromBackupFile: Processing entry ${zipEntry.name}")
 
                     when (zipEntry.name) {
+                        BACKUP_MANIFEST_ENTRY -> {
+                            val manifestJson = zipIn.readBytes().toString(Charsets.UTF_8)
+                            backupManifest = json.decodeFromString<BackupManifest>(manifestJson)
+                            Log.i(TAG, "restoreFromBackupFile: Read backup manifest v${backupManifest.version}")
+                        }
+
                         "settings.json" -> {
                             val settingsJson = zipIn.readBytes().toString(Charsets.UTF_8)
                             Log.i(TAG, "restoreFromBackupFile: Restoring settings")
                             try {
                                 val migratedJson = SettingsJsonMigrator.migrate(settingsJson)
-                                val settings = json.decodeFromString<Settings>(migratedJson)
-                                settingsStore.update(settings)
-                                Log.i(TAG, "restoreFromBackupFile: Settings restored successfully")
+                                restoredSettings = json.decodeFromString<Settings>(migratedJson)
                             } catch (e: Exception) {
                                 Log.e(TAG, "restoreFromBackupFile: Failed to restore settings", e)
                                 throw Exception("Failed to restore settings: ${e.message}")
@@ -290,7 +332,8 @@ class WebDavSync(
                                 dbFile?.let { targetFile ->
                                     Log.i(
                                         TAG,
-                                        "restoreFromBackupFile: Restoring ${zipEntry.name} to ${targetFile.absolutePath}"
+                                        "restoreFromBackupFile: Restoring ${zipEntry.name} " +
+                                            "to ${targetFile.absolutePath}"
                                     )
                                     targetFile.parentFile?.mkdirs()
                                     FileOutputStream(targetFile).use { outputStream ->
@@ -298,7 +341,8 @@ class WebDavSync(
                                     }
                                     Log.i(
                                         TAG,
-                                        "restoreFromBackupFile: Restored ${zipEntry.name} (${targetFile.length()} bytes)"
+                                        "restoreFromBackupFile: Restored ${zipEntry.name} " +
+                                            "(${targetFile.length()} bytes)"
                                     )
                                 }
                             }
@@ -306,33 +350,47 @@ class WebDavSync(
 
                         else -> {
                             if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
+                                zipEntry.name.startsWith(DISPLAY_ASSETS_PREFIX)
+                            ) {
+                                restoreDisplayAssetEntry(zipIn, zipEntry.name, restoredDisplayAssets)
+                            } else if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
                                 zipEntry.name.startsWith("${FileFolders.UPLOAD}/")
                             ) {
-                                val fileName = zipEntry.name.substringAfter("${FileFolders.UPLOAD}/")
-                                if (fileName.isNotEmpty()) {
+                                val relativePath = zipEntry.name.substringAfter("${FileFolders.UPLOAD}/")
+                                if (relativePath.isNotEmpty()) {
                                     val uploadFolder = File(context.filesDir, FileFolders.UPLOAD)
                                     if (!uploadFolder.exists()) {
                                         uploadFolder.mkdirs()
                                         Log.i(TAG, "restoreFromBackupFile: Created upload directory")
                                     }
 
-                                    val targetFile = File(uploadFolder, fileName)
-                                    Log.i(
-                                        TAG,
-                                        "restoreFromBackupFile: Restoring file ${zipEntry.name} to ${targetFile.absolutePath}"
-                                    )
-
-                                    try {
-                                        FileOutputStream(targetFile).use { outputStream ->
-                                            zipIn.copyTo(outputStream)
-                                        }
+                                    val targetFile = BackupPathResolver.resolveWithin(uploadFolder, relativePath)
+                                    if (targetFile == null) {
+                                        Log.w(TAG, "restoreFromBackupFile: Invalid upload entry ${zipEntry.name}")
+                                    } else {
                                         Log.i(
                                             TAG,
-                                            "restoreFromBackupFile: Restored ${zipEntry.name} (${targetFile.length()} bytes)"
+                                            "restoreFromBackupFile: Restoring file ${zipEntry.name} " +
+                                                "to ${targetFile.absolutePath}"
                                         )
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "restoreFromBackupFile: Failed to restore file ${zipEntry.name}", e)
-                                        throw Exception("Failed to restore file ${zipEntry.name}: ${e.message}")
+
+                                        try {
+                                            FileOutputStream(targetFile).use { outputStream ->
+                                                zipIn.copyTo(outputStream)
+                                            }
+                                            Log.i(
+                                                TAG,
+                                                "restoreFromBackupFile: Restored ${zipEntry.name} " +
+                                                    "(${targetFile.length()} bytes)"
+                                            )
+                                        } catch (e: Exception) {
+                                            Log.e(
+                                                TAG,
+                                                "restoreFromBackupFile: Failed to restore file ${zipEntry.name}",
+                                                e
+                                            )
+                                            throw Exception("Failed to restore file ${zipEntry.name}: ${e.message}")
+                                        }
                                     }
                                 }
                             } else if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
@@ -364,7 +422,100 @@ class WebDavSync(
             }
         }
 
+        restoredSettings?.let { settings ->
+            val settingsWithRestoredAssets = restoreDisplayAssetPaths(
+                settings = settings,
+                manifest = backupManifest,
+                restoredAssets = restoredDisplayAssets,
+            )
+            settingsStore.update(settingsWithRestoredAssets)
+            Log.i(TAG, "restoreFromBackupFile: Settings restored successfully")
+        }
+
         Log.i(TAG, "restoreFromBackupFile: Restore completed successfully")
+    }
+
+    private fun backupDisplayAssets(zipOut: ZipOutputStream, displaySetting: DisplaySetting): BackupManifest {
+        displayAssetDirectories.forEach { directoryName ->
+            val directory = File(context.filesDir, directoryName)
+            if (directory.isDirectory) {
+                addDirectoryToZip(
+                    zipOut = zipOut,
+                    rootDir = directory,
+                    currentDir = directory,
+                    entryPrefix = "$DISPLAY_ASSETS_PREFIX$directoryName/"
+                )
+            }
+        }
+
+        val activeAssets = displayAssetPaths.mapNotNull { (key, pathSelector) ->
+            val path = pathSelector(displaySetting)
+            val asset = path.takeIf { it.isNotBlank() }?.let(::File)
+            val relativePath = asset?.let { FileUtils.getRelativePathInFilesDir(context.filesDir, it) }
+            val isDisplayAsset = relativePath?.let { relative ->
+                displayAssetDirectories.any { directory -> relative.startsWith("$directory/") }
+            } == true
+
+            if (asset?.isFile == true && isDisplayAsset && relativePath != null) {
+                key to "$DISPLAY_ASSETS_PREFIX$relativePath"
+            } else {
+                null
+            }
+        }.toMap()
+
+        Log.i(TAG, "prepareBackupFile: Backed up ${activeAssets.size} active display assets")
+        return BackupManifest(displayAssets = activeAssets)
+    }
+
+    private fun restoreDisplayAssetEntry(
+        zipIn: ZipInputStream,
+        entryName: String,
+        restoredAssets: MutableMap<String, File>,
+    ) {
+        val relativePath = entryName.removePrefix(DISPLAY_ASSETS_PREFIX)
+        val isDisplayAsset = displayAssetDirectories.any { directory ->
+            relativePath.startsWith("$directory/")
+        }
+        val targetFile = if (isDisplayAsset) {
+            BackupPathResolver.resolveWithin(context.filesDir, relativePath)
+        } else {
+            null
+        }
+
+        if (targetFile == null) {
+            Log.w(TAG, "restoreFromBackupFile: Invalid display asset entry $entryName")
+            return
+        }
+
+        targetFile.parentFile?.mkdirs()
+        FileOutputStream(targetFile).use { outputStream ->
+            zipIn.copyTo(outputStream)
+        }
+        restoredAssets[entryName] = targetFile
+        Log.i(TAG, "restoreFromBackupFile: Restored display asset $entryName")
+    }
+
+    private fun restoreDisplayAssetPaths(
+        settings: Settings,
+        manifest: BackupManifest,
+        restoredAssets: Map<String, File>,
+    ): Settings {
+        fun restoredPath(key: String): String? = manifest.displayAssets[key]
+            ?.let(restoredAssets::get)
+            ?.absolutePath
+
+        val display = settings.displaySetting
+        return settings.copy(
+            displaySetting = display.copy(
+                customFontPath = restoredPath("customFontPath") ?: display.customFontPath,
+                inputBackgroundPath = restoredPath("inputBackgroundPath") ?: display.inputBackgroundPath,
+                drawerBackgroundPath = restoredPath("drawerBackgroundPath") ?: display.drawerBackgroundPath,
+                userAvatarFramePath = restoredPath("userAvatarFramePath") ?: display.userAvatarFramePath,
+                aiAvatarFramePath = restoredPath("aiAvatarFramePath") ?: display.aiAvatarFramePath,
+                userBubbleImagePath = restoredPath("userBubbleImagePath") ?: display.userBubbleImagePath,
+                assistantBubbleImagePath = restoredPath("assistantBubbleImagePath") ?: display.assistantBubbleImagePath,
+            )
+        )
     }
 
     private fun addFileToZip(zipOut: ZipOutputStream, file: File, entryName: String) {
@@ -406,7 +557,11 @@ class WebDavSync(
         }
 
         val pluginsRoot = PluginScanner(context).pluginsDir.apply { mkdirs() }
-        val targetFile = File(pluginsRoot, relativePath)
+        val targetFile = BackupPathResolver.resolveWithin(pluginsRoot, relativePath)
+        if (targetFile == null) {
+            Log.w(TAG, "restoreFromBackupFile: Invalid plugin entry $entryName")
+            return
+        }
         targetFile.parentFile?.mkdirs()
 
         try {
