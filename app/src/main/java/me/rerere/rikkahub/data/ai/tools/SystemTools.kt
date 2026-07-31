@@ -242,7 +242,7 @@ class SystemTools(private val context: Context, private val settings: Settings) 
                         }
                         putJsonObject("table") {
                             put("type", "string")
-                            put("description", "Table name to query. Common tables: 'chat_messages' (chat history), 'memory_summaries' (diary summaries), 'device_data' (device events). Defaults to 'chat_messages'.")
+                            put("description", "Table name to query. Common tables: 'chat_history' or 'chat_messages' (chat history), 'memory_summaries' (diary summaries), 'device_data' (device events). Defaults to the enabled advanced-memory configuration's message table.")
                         }
                         putJsonObject("count") {
                             put("type", "integer")
@@ -276,9 +276,10 @@ class SystemTools(private val context: Context, private val settings: Settings) 
                     }.toString()))
                 }
 
-                val table = params["table"]?.jsonPrimitive?.contentOrNull ?: "chat_messages"
+                val defaultMemory = externalMemories.first()
+                val table = params["table"]?.jsonPrimitive?.contentOrNull ?: defaultMemory.tableName
                 val memory = externalMemories.firstOrNull { it.tableName == table || it.summariesTableName == table }
-                    ?: externalMemories.first()
+                    ?: defaultMemory
                 val baseUrl = memory.supabaseUrl.trimEnd('/')
                 val apiKey = memory.supabaseKey
 

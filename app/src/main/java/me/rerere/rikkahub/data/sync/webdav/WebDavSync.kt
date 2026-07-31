@@ -7,6 +7,8 @@
 package me.rerere.rikkahub.data.sync.webdav
 
 import android.content.Context
+import android.os.Build
+import android.os.Environment
 import android.util.Log
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Dispatchers
@@ -153,6 +155,17 @@ class WebDavSync(
 
         if (!file.canRead()) {
             throw Exception("Cannot read backup file")
+        }
+
+        // Local exports can include the external Orangechat/plugins directory. A newly installed package
+        // has not received the special all-files grant yet, so fail before restoring any other archive entry.
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            !Environment.isExternalStorageManager()
+        ) {
+            throw Exception(
+                "恢复插件需要「所有文件访问权限」。请在系统设置中允许 Daddy 管理所有文件后重新导入备份。"
+            )
         }
 
         try {
