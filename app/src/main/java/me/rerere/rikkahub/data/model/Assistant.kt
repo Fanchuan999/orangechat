@@ -52,6 +52,9 @@ data class Assistant(
     val allowConversationSystemPrompt: Boolean = false, // 允许对话单独重写 system prompt
     val allowSkipReply: Boolean = false,
     val externalMemoryIds: Set<Uuid> = emptySet(),      // 关联的外置记忆库 ID
+    // 0 means unlimited, preserving the original behavior. These apply only to injected memory content.
+    val manualMemoryPromptTokenBudget: Int = 0,
+    val externalMemoryPromptTokenBudget: Int = 0,
     val splitBubbleByLine: Boolean = false,             // 按模型自己写的换行拆分成多个独立气泡
     val splitUserBubbleByLine: Boolean = false,         // 用户消息按换行拆分成多个独立气泡
 )

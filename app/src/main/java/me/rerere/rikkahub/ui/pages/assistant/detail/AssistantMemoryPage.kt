@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -32,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -48,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEach
@@ -129,6 +132,12 @@ private fun AssistantMemoryContent(
     }
     var pendingDeleteMemory by remember { mutableStateOf<AssistantMemory?>(null) }
     var showExternalMemoryPicker by remember { mutableStateOf(false) }
+    var manualMemoryBudgetInput by remember(assistant.id, assistant.manualMemoryPromptTokenBudget) {
+        mutableStateOf(assistant.manualMemoryPromptTokenBudget.takeIf { it > 0 }?.toString().orEmpty())
+    }
+    var externalMemoryBudgetInput by remember(assistant.id, assistant.externalMemoryPromptTokenBudget) {
+        mutableStateOf(assistant.externalMemoryPromptTokenBudget.takeIf { it > 0 }?.toString().orEmpty())
+    }
 
     // 记忆对话框
     memoryDialogState.EditStateContent { memory, update ->
@@ -277,6 +286,55 @@ private fun AssistantMemoryContent(
                     }
                 }
             )
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("记忆输入预算", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "不会改变“聊天上下文条数”或“单次输出上限”。留空或填 0 表示不限；" +
+                        "Token 为保守估算，最终以模型账单为准。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = manualMemoryBudgetInput,
+                    onValueChange = { value ->
+                        val next = value.filter(Char::isDigit)
+                        manualMemoryBudgetInput = next
+                        onUpdateAssistant(
+                            assistant.copy(manualMemoryPromptTokenBudget = next.toIntOrNull() ?: 0),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("手动长期记忆上限（估算 Token）") },
+                    placeholder = { Text("0 = 不限") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = externalMemoryBudgetInput,
+                    onValueChange = { value ->
+                        val next = value.filter(Char::isDigit)
+                        externalMemoryBudgetInput = next
+                        onUpdateAssistant(
+                            assistant.copy(externalMemoryPromptTokenBudget = next.toIntOrNull() ?: 0),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("外置记忆召回上限（估算 Token）") },
+                    placeholder = { Text("0 = 不限") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                )
+            }
         }
 
         Box(

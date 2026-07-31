@@ -395,7 +395,12 @@ class GenerationHandler(
                 // 记忆
                 if (assistant.enableMemory) {
                     appendLine()
-                    append(buildMemoryPrompt(memories = memories))
+                    append(
+                        buildMemoryPrompt(
+                            memories = memories,
+                            contentTokenBudget = assistant.manualMemoryPromptTokenBudget,
+                        )
+                    )
                 }
  
                 // 外置记忆库召回
@@ -483,11 +488,12 @@ class GenerationHandler(
                                 .flatten()
                         }
                         if (allRecalled.isNotEmpty()) {
-                            appendLine()
-                            appendLine("## 外置记忆库")
-                            allRecalled.reversed().forEachIndexed { index, memory ->
-                                appendLine("${index + 1}. ${memory}")
-                            }
+                            append(
+                                buildExternalMemoryPrompt(
+                                    recalledMemories = allRecalled,
+                                    contentTokenBudget = assistant.externalMemoryPromptTokenBudget,
+                                )
+                            )
                         }
                     }
                 } catch (e: Exception) {
@@ -753,4 +759,3 @@ private fun buildCodeBlockPrompt(): String = buildString {
     appendLine("   - The `edits` mode applies search/replace to the files from your previous `write_files` call. Files not mentioned in `edits` keep their content unchanged.")
     appendLine("   - Always use actual filenames (e.g. `MainActivity.kt`) as code block language tags, not just language names (e.g. `kotlin`).")
 }
- 
