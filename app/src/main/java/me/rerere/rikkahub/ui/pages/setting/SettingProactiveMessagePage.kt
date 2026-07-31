@@ -19,6 +19,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -41,6 +42,8 @@ import me.rerere.rikkahub.ui.components.ui.RiskConfirmDialog
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.data.service.ProactiveMessageService
 import me.rerere.rikkahub.data.service.ProactiveMessageWorker
+import me.rerere.rikkahub.data.datastore.currentSummary
+import me.rerere.rikkahub.data.datastore.expressionLabel
 import org.koin.compose.koinInject
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,7 +95,7 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
             LargeFlexibleTopAppBar(
-                title = { Text("主动消息") },
+                title = { Text("主动消息与情绪") },
                 navigationIcon = { BackButton() },
                 scrollBehavior = scrollBehavior,
             )
@@ -103,6 +106,59 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            item {
+                val moodSetting = settings.companionMoodSetting
+                CardGroup {
+                    item(
+                        headlineContent = { Text("持续情绪引擎") },
+                        supportingContent = {
+                            Text("用本地状态让 Daddy 的语气有连续感。不会单独调用模型，也不会改变主动消息的频率。")
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = moodSetting.enabled,
+                                onCheckedChange = { enabled ->
+                                    vm.updateSettings(
+                                        settings.copy(
+                                            companionMoodSetting = moodSetting.copy(enabled = enabled)
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                    )
+                    if (moodSetting.enabled) {
+                        item(
+                            headlineContent = { Text("语气影响：${moodSetting.expressionLabel()}") },
+                            supportingContent = {
+                                androidx.compose.foundation.layout.Column {
+                                    Text("只加一小句内部语气提示；不会替换 Daddy 原本的人设或系统提示词。")
+                                    Slider(
+                                        value = moodSetting.expressionStrength,
+                                        onValueChange = { strength ->
+                                            vm.updateSettings(
+                                                settings.copy(
+                                                    companionMoodSetting = moodSetting.copy(
+                                                        expressionStrength = strength
+                                                    )
+                                                )
+                                            )
+                                        },
+                                        valueRange = 0.25f..1f,
+                                        steps = 2,
+                                    )
+                                }
+                            }
+                        )
+                        item(
+                            headlineContent = { Text("当前情绪底色") },
+                            supportingContent = {
+                                Text("${moodSetting.currentSummary()}。所有数值仅保存在本机，并会包含在 Daddy 本地备份中。")
+                            }
+                        )
+                    }
+                }
+            }
             item {
                 CardGroup {
                     item(

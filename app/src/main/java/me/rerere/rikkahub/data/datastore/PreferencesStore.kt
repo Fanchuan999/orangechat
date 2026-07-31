@@ -171,6 +171,9 @@ class SettingsStore(
         // 主动消息设置
         val PROACTIVE_MESSAGE_SETTING = stringPreferencesKey("proactive_message_setting")
 
+        // 持续情绪引擎设置与本地状态
+        val COMPANION_MOOD_SETTING = stringPreferencesKey("companion_mood_setting")
+
         // 保活服务设置
         val KEEP_ALIVE_ENABLED = booleanPreferencesKey("keep_alive_enabled")
 
@@ -301,6 +304,9 @@ class SettingsStore(
                 proactiveMessageSetting = preferences[PROACTIVE_MESSAGE_SETTING]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: ProactiveMessageSetting(),
+                companionMoodSetting = preferences[COMPANION_MOOD_SETTING]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: CompanionMoodSetting(),
                 wechatBotSetting = preferences[WECHAT_BOT_SETTING]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: WechatBotSetting(),
@@ -491,6 +497,7 @@ class SettingsStore(
             preferences[SPONSOR_ALERT_DISMISSED_AT] = settings.sponsorAlertDismissedAt
             preferences[SYSTEM_TOOLS_SETTING] = JsonInstant.encodeToString(settings.systemToolsSetting)
             preferences[PROACTIVE_MESSAGE_SETTING] = JsonInstant.encodeToString(settings.proactiveMessageSetting)
+            preferences[COMPANION_MOOD_SETTING] = JsonInstant.encodeToString(settings.companionMoodSetting)
             preferences[WECHAT_BOT_SETTING] = JsonInstant.encodeToString(settings.wechatBotSetting)
             preferences[QQ_BOT_SETTING] = JsonInstant.encodeToString(settings.qqBotSetting)
             preferences[KEEP_ALIVE_ENABLED] = settings.keepAliveEnabled
@@ -667,6 +674,7 @@ data class Settings(
     val sponsorAlertDismissedAt: Int = 0,
     val systemToolsSetting: SystemToolsSetting = SystemToolsSetting(),
     val proactiveMessageSetting: ProactiveMessageSetting = ProactiveMessageSetting(),
+    val companionMoodSetting: CompanionMoodSetting = CompanionMoodSetting(),
     val wechatBotSetting: WechatBotSetting = WechatBotSetting(),
     val qqBotSetting: QqBotSetting = QqBotSetting(),
     val keepAliveEnabled: Boolean = false,

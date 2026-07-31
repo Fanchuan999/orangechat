@@ -53,6 +53,7 @@ import me.rerere.rikkahub.data.ai.transformers.visualTransforms
 import me.rerere.rikkahub.data.ai.tools.buildMemoryTools
 import me.rerere.rikkahub.data.ai.tools.buildWriteFilesTool
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.datastore.promptContext
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
@@ -553,6 +554,14 @@ class GenerationHandler(
                     appendLine()
                     appendLine("## Message Bubbles")
                     appendLine("Your reply will be automatically split into separate chat bubbles at every line break (\\n) you write, similar to how a person sends several short texts in a row instead of one long message. You are fully in control of this: write a line break whenever you want the previous thought/sentence to appear as its own bubble, and keep things on the same line when they belong together. Do not insert blank lines purely for spacing — every line break becomes a new bubble, so use them intentionally. Exception: line breaks inside fenced code blocks (```) and Markdown tables are preserved as-is and will NOT create new bubbles, since those must stay intact as a single block.")
+                }
+
+                // Keep this dynamic cue at the end so providers with prefix caching can still reuse
+                // the assistant prompt, memories, tool definitions, and plugin instructions above.
+                settings.companionMoodSetting.promptContext().takeIf { it.isNotBlank() }?.let { moodPrompt ->
+                    appendLine()
+                    appendLine()
+                    append(moodPrompt)
                 }
  
             }

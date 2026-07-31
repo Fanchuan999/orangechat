@@ -51,6 +51,7 @@ import me.rerere.ai.core.Tool
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
 import me.rerere.rikkahub.data.service.MemoryBankService
+import me.rerere.rikkahub.data.service.CompanionMoodEngine
 import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.ToolApprovalState
@@ -168,6 +169,7 @@ class ChatService(
     private val workspaceRepository: WorkspaceRepository,
     private val memoryBankService: MemoryBankService,
     private val folderRepository: FolderRepository,
+    private val companionMoodEngine: CompanionMoodEngine,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
@@ -494,6 +496,10 @@ class ChatService(
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to save user message to external memory", e)
                 }
+
+                // Local-only continuity state. This does not trigger a model call or notification.
+                runCatching { companionMoodEngine.recordUserMessage() }
+                    .onFailure { Log.w(TAG, "Failed to update companion mood after user message", it) }
 
                 // 开始补全
                 if (answer) {
@@ -1048,6 +1054,9 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
             }.onFailure { e ->
                 Log.w(TAG, "Failed to trigger message_received event", e)
             }
+
+            runCatching { companionMoodEngine.recordAssistantMessage() }
+                .onFailure { Log.w(TAG, "Failed to update companion mood after assistant message", it) }
 
             launchWithConversationReference(conversationId) {
                 generateTitle(conversationId, finalConversation)

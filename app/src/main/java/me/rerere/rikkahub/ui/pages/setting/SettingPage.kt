@@ -276,8 +276,8 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                     item(
                         onClick = { navController.navigate(Screen.SettingProactiveMessage) },
                         leadingContent = { Icon(HugeIcons.WavingHand01, null) },
-                        supportingContent = { Text("AI 在设定间隔内主动发消息，有记忆有上下文") },
-                        headlineContent = { Text("主动消息") },
+                        supportingContent = { Text("主动消息，以及让语气有延续感的本地情绪引擎") },
+                        headlineContent = { Text("主动消息与情绪") },
                     )
                     item(
                         onClick = { navController.navigate(Screen.SettingWeixinBot) },

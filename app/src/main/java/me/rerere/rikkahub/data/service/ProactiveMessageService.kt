@@ -71,6 +71,7 @@ import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.data.datastore.ProactiveMessageSetting
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.datastore.promptContext
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.findModelById
@@ -407,6 +408,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
     private val pluginToolProvider: PluginToolProvider by inject()
     private val json: Json by inject()
     private val chatService: ChatService by inject()
+    private val companionMoodEngine: CompanionMoodEngine by inject()
     private val proactiveMessageService = ProactiveMessageService()
 
     companion object {
@@ -712,6 +714,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     saveProactiveMessage(
                         settings, assistant, conversationId, conversation
                     )
+                    runCatching { companionMoodEngine.recordProactiveMessage() }
+                        .onFailure { Log.w(TAG, "Failed to update companion mood after proactive message", it) }
                     // 同步保存 AI 主动消息 / 激进模式回复到外置记忆库（Supabase）
                     // 保证日记总结（DiarySummaryService 只读 Supabase chat_messages 表）和记忆召回能看到这部分内容
                     try {
@@ -908,6 +912,14 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     appendLine()
                     appendLine(deviceEventContext)
                 }
+            }
+
+            // Keep the short mood cue as the final dynamic suffix. This also covers aggressive
+            // device-event triggers, which do not build the regular proactive context above.
+            settings.companionMoodSetting.promptContext(proactive = true).takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                appendLine()
+                append(it)
             }
         }
     }
