@@ -166,7 +166,7 @@ fun CompanionBackupTab(
                             if (isExporting) {
                                 "正在备份 Ombre、Termux 和 Supabase…"
                             } else {
-                                "包括橘瓣完整数据、聊天记忆、Ombre 记忆、Termux 配置和 termux-mcp 桥。"
+                                "包括橘瓣、Ombre、Termux Bridge、.env 与全部个人配置；请仅保存到可信位置。"
                             },
                         )
                     },
@@ -209,7 +209,8 @@ fun CompanionBackupTab(
             Text(
                 "会优先使用已安装的 termux-bridge（127.0.0.1:8080）。仅在它不可用时，才需要在 Termux 的 " +
                     "~/.termux/termux.properties 添加 allow-external-apps=true 并重启 Termux。" +
-                    "termux-mcp 的 .env、私钥和软链接不会被打包。",
+                    "此个人完整备份会包含 .env、Supabase/模型配置和 Bridge 脚本；不要分享、上传网盘或发送聊天软件。" +
+                        "软链接仍会被拒绝，防止导入时写入到意外位置。",
             )
         }
     }

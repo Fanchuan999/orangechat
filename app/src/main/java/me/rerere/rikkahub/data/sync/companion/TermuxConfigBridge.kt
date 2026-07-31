@@ -21,7 +21,7 @@ import java.util.UUID
 
 /**
  * Uses the installed local termux-bridge server first, then Termux's documented RunCommand bridge as a fallback.
- * The application never asks Termux to read Ombre's .env files or any API-key store.
+ * Personal complete backups intentionally include the user's local service configuration and credentials.
  */
 internal class TermuxConfigBridge(
     private val context: Context,
@@ -160,14 +160,18 @@ internal class TermuxConfigBridge(
             items="${'$'}items ${'$'}directory"
           fi
         done
-        [ -n "${'$'}items" ] || { echo "No Termux configuration folders found" >&2; exit 13; }
+        for file in .Ombre-Brain/.env Ombre-Brain/config.yaml termux_bridge.py start_services.sh; do
+          if [ -f "${'$'}HOME/${'$'}file" ]; then
+            if [ -L "${'$'}HOME/${'$'}file" ]; then
+              echo "Refusing to archive symbolic link ${'$'}file" >&2
+              exit 13
+            fi
+            items="${'$'}items ${'$'}file"
+          fi
+        done
+        [ -n "${'$'}items" ] || { echo "No Termux files found for backup" >&2; exit 14; }
         tar -C "${'$'}HOME" \
-          --exclude='termux-mcp/.env' \
-          --exclude='termux-mcp/.env.*' \
           --exclude='termux-mcp/node_modules/.bin' \
-          --exclude='*.pem' \
-          --exclude='*.key' \
-          --exclude='id_rsa*' \
           -czf "${'$'}temporary" ${'$'}items
         mv "${'$'}temporary" "${'$'}output"
     """.trimIndent()
@@ -179,7 +183,8 @@ internal class TermuxConfigBridge(
         staging="${'$'}HOME/.cache/orangechat-restore-$id"
         tar -tzf "${'$'}archive" | while IFS= read -r path; do
           case "${'$'}path" in
-            .termux|.termux/*|.shortcuts|.shortcuts/*|bin|bin/*|termux-mcp|termux-mcp/*) ;;
+            .termux|.termux/*|.shortcuts|.shortcuts/*|bin|bin/*|termux-mcp|termux-mcp/*|\
+            .Ombre-Brain/.env|Ombre-Brain/config.yaml|termux_bridge.py|start_services.sh) ;;
             *) echo "Unsafe Termux archive path: ${'$'}path" >&2; exit 21 ;;
           esac
         done
@@ -194,6 +199,19 @@ internal class TermuxConfigBridge(
           if [ -d "${'$'}staging/${'$'}directory" ]; then
             mkdir -p "${'$'}HOME/${'$'}directory"
             cp -R "${'$'}staging/${'$'}directory/." "${'$'}HOME/${'$'}directory/"
+          fi
+        done
+        if [ -f "${'$'}staging/.Ombre-Brain/.env" ]; then
+          mkdir -p "${'$'}HOME/.Ombre-Brain"
+          cp "${'$'}staging/.Ombre-Brain/.env" "${'$'}HOME/.Ombre-Brain/.env"
+        fi
+        if [ -f "${'$'}staging/Ombre-Brain/config.yaml" ]; then
+          mkdir -p "${'$'}HOME/Ombre-Brain"
+          cp "${'$'}staging/Ombre-Brain/config.yaml" "${'$'}HOME/Ombre-Brain/config.yaml"
+        fi
+        for file in termux_bridge.py start_services.sh; do
+          if [ -f "${'$'}staging/${'$'}file" ]; then
+            cp "${'$'}staging/${'$'}file" "${'$'}HOME/${'$'}file"
           fi
         done
         rm -rf "${'$'}staging"
