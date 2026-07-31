@@ -32,6 +32,7 @@ data class CompanionBackupExportResult(
 
 data class CompanionBackupRestoreResult(
     val supabaseReport: SupabaseRestoreReport,
+    val externalMcpStatuses: List<ExternalMcpServiceStatus>,
 )
 
 /** Coordinates a complete local companion backup without persisting Ombre's password. */
@@ -42,6 +43,7 @@ class CompanionBackupService(
 ) {
     private val termuxConfigBridge = TermuxConfigBridge(context)
     private val supabaseBackupClient = SupabaseBackupClient()
+    private val externalMcpServiceChecker = ExternalMcpServiceChecker()
 
     suspend fun export(
         ombreBaseUrl: String,
@@ -115,7 +117,10 @@ class CompanionBackupService(
                 File(workDir, SUPABASE_ARCHIVE),
             )
             termuxConfigBridge.restoreConfigArchive(File(workDir, TERMUX_ARCHIVE))
-            CompanionBackupRestoreResult(supabaseReport)
+            CompanionBackupRestoreResult(
+                supabaseReport = supabaseReport,
+                externalMcpStatuses = externalMcpServiceChecker.check(restoredSettings),
+            )
         } finally {
             workDir.deleteRecursively()
             ombrePassword.fill('\u0000')

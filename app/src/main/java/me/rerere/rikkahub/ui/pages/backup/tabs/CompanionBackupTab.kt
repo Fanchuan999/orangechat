@@ -101,8 +101,14 @@ fun CompanionBackupTab(
             }.onSuccess { result ->
                 val skipped = result.supabaseReport.skippedTables
                 val suffix = if (skipped.isEmpty()) "" else " Supabase 跳过：${skipped.joinToString()}。"
+                val mcpSuffix = result.externalMcpStatuses
+                    .takeIf { it.isNotEmpty() }
+                    ?.joinToString(separator = "；", prefix = " 本机 MCP：") { status ->
+                        "${status.name}${if (status.isReachable) "已连通" else "未就绪（打开/安装对应 APK 后重试）"}"
+                    }
+                    .orEmpty()
                 toaster.show(
-                    "联动恢复完成：恢复 ${result.supabaseReport.restoredRows} 条 Supabase 记录。$suffix",
+                    "联动恢复完成：恢复 ${result.supabaseReport.restoredRows} 条 Supabase 记录。$mcpSuffix$suffix",
                     type = ToastType.Success,
                 )
                 onShowRestartDialog()
