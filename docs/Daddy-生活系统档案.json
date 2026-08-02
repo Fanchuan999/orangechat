@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "type": "lorebook",
+  "data": {
+    "id": "85ed3e4b-52b4-4d25-85fd-d4e2298cba51",
+    "name": "Daddy 的生活系统档案",
+    "description": "Daddy 已验证的本机记忆、桥接、聊天日志与健康数据边界。仅在具体技术关键词出现时注入；不包含密钥、聊天内容或私人数据。",
+    "enabled": true,
+    "entries": [
+      {
+        "type": "regex",
+        "id": "1c2b5d6b-4fe5-4b14-a456-b4d0720a4d23",
+        "name": "Ombre-Brain 语义记忆",
+        "enabled": true,
+        "priority": 80,
+        "position": "after_system_prompt",
+        "content": "这是 Daddy 的主语义长期记忆，运行在本机 Termux 的 127.0.0.1:8000/mcp。它跨窗口共享；用 breath/breath_search 召回，用 hold 保存单件、grow 整理多件、plan 写承诺。不要把 Supabase 的全量聊天日志当成主记忆；没有实际工具成功时，不要声称已保存。",
+        "injectDepth": 4,
+        "role": "user",
+        "keywords": [
+          "Ombre",
+          "Ombre-Brain",
+          "breath",
+          "breath_search",
+          "hold",
+          "grow",
+          "记忆桶",
+          "语义记忆"
+        ],
+        "useRegex": false,
+        "caseSensitive": false,
+        "scanDepth": 4,
+        "constantActive": false
+      },
+      {
+        "type": "regex",
+        "id": "6ac6c18d-4c28-494f-8659-aeb4e4cbd7a1",
+        "name": "Supabase 聊天日志",
+        "enabled": true,
+        "priority": 80,
+        "position": "after_system_prompt",
+        "content": "Daddy 的 Supabase 全量聊天日志表是 public.chat_history；chat_messages 在当前项目不存在，勿继续以它查询。chat_history 是完整对话备份和跨窗口查询来源，不代替 Ombre 的语义记忆。若查询失败，先确认表名和当前助手 ID，不要猜测内容。",
+        "injectDepth": 4,
+        "role": "user",
+        "keywords": [
+          "Supabase",
+          "chat_history",
+          "chat_messages",
+          "memory_tool",
+          "进阶记忆",
+          "日记摘要"
+        ],
+        "useRegex": false,
+        "caseSensitive": false,
+        "scanDepth": 4,
+        "constantActive": false
+      },
+      {
+        "type": "regex",
+        "id": "9ccefa73-dba5-48ca-88af-8be564a9f437",
+        "name": "Termux 与本机桥",
+        "enabled": true,
+        "priority": 80,
+        "position": "after_system_prompt",
+        "content": "Termux 内本机服务：Ombre 监听 127.0.0.1:8000/mcp；Termux Bridge 监听 127.0.0.1:8080。它们只面向本机回环，不能随意暴露到公网。连接失败先检查服务是否运行；涉及密钥、.env、令牌时不得在回复中输出。",
+        "injectDepth": 4,
+        "role": "user",
+        "keywords": [
+          "Termux",
+          "termux",
+          "8000",
+          "8080",
+          "Termux Bridge",
+          "termux bridge",
+          "桥服务"
+        ],
+        "useRegex": false,
+        "caseSensitive": false,
+        "scanDepth": 4,
+        "constantActive": false
+      },
+      {
+        "type": "regex",
+        "id": "d6ffabb0-8c3a-4c25-952c-efc067b4b6e8",
+        "name": "Love Connect MCP",
+        "enabled": true,
+        "priority": 80,
+        "position": "after_system_prompt",
+        "content": "Love Connect 是独立 Android 应用提供的本机 MCP 服务，Daddy 通过 Streamable HTTP 的 http://127.0.0.1:5000/mcp 使用。它和 Termux/Ombre 是不同组件；先用只读状态工具自检，避免无必要的写入或设备控制。",
+        "injectDepth": 4,
+        "role": "user",
+        "keywords": [
+          "Love Connect",
+          "love connect",
+          "LoverConnect",
+          "127.0.0.1:5000",
+          "mcp_544a326b"
+        ],
+        "useRegex": false,
+        "caseSensitive": false,
+        "scanDepth": 4,
+        "constantActive": false
+      },
+      {
+        "type": "regex",
+        "id": "ecf54ba5-097a-4784-b7a7-3f35b6b22e6d",
+        "name": "健康数据使用边界",
+        "enabled": true,
+        "priority": 80,
+        "position": "after_system_prompt",
+        "content": "健康来源是小米手环 5 与 Gadgetbridge 0.92.2；当前数据类型有限且可能延迟或不准。它可作为趋势和陪伴关怀参考，不可用于医疗诊断、紧急判断或精确健康结论。涉及异常或不适时，以用户自身感受和专业医疗意见为准。",
+        "injectDepth": 4,
+        "role": "user",
+        "keywords": [
+          "Gadgetbridge",
+          "小米手环",
+          "Mi Band 5",
+          "MiBand5",
+          "健康数据",
+          "步数",
+          "心率",
+          "睡眠"
+        ],
+        "useRegex": false,
+        "caseSensitive": false,
+        "scanDepth": 4,
+        "constantActive": false
+      },
+      {
+        "type": "regex",
+        "id": "0ea93b8d-a88d-418a-860d-32ea16938a16",
+        "name": "Daddy 备份与覆盖更新",
+        "enabled": true,
+        "priority": 80,
+        "position": "after_system_prompt",
+        "content": "Daddy 是 OrangeChat 的独立 companion 包。保持同一包名和签名即可覆盖更新并保留数据；升级或恢复前先导出一份新的本地备份。备份可以保存设置、插件私有内容与可恢复的展示素材；不得把密钥或令牌回显到普通聊天内容。",
+        "injectDepth": 4,
+        "role": "user",
+        "keywords": [
+          "本地备份",
+          "恢复失败",
+          "覆盖安装",
+          "插件迁移",
+          "debug.keystore",
+          "备份恢复"
+        ],
+        "useRegex": false,
+        "caseSensitive": false,
+        "scanDepth": 4,
+        "constantActive": false
+      }
+    ]
+  }
+}
