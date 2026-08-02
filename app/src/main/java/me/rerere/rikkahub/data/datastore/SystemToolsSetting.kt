@@ -50,6 +50,9 @@ data class SystemToolsSetting(
     // Feature 14: Gadgetbridge health data
     val gadgetbridgeEnabled: Boolean = false,
     val gadgetbridgeDbPath: String = "",
+    // A compact companion cue is injected only while the Gadgetbridge tool is enabled.
+    // Keeping it independently switchable lets the user prefer fully on-demand reads.
+    val gadgetbridgeHealthAwarenessEnabled: Boolean = true,
 
     // Feature 15: Alarm
     val alarmEnabled: Boolean = false,
@@ -122,4 +125,16 @@ data class SystemToolsSetting(
         if (fingerprintEnabled) options.add(me.rerere.rikkahub.data.ai.tools.SystemToolOption.Fingerprint)
         return options
     }
+}
+
+/**
+ * Keeps the model aware of an enabled wearable connection without sending live health data on
+ * every turn. The model still has to choose the read-only tool when the conversation warrants it.
+ */
+fun SystemToolsSetting.gadgetbridgePromptContext(): String {
+    if (!gadgetbridgeEnabled || !gadgetbridgeHealthAwarenessEnabled) return ""
+
+    return "【健康感知】已连接 Gadgetbridge 手环数据。谈到睡眠、疲劳、心率、运动、身体不适、作息，" +
+        "或在早晚适合自然关心近况时，可按需调用 get_gadgetbridge_data；先读数据再说，不猜测，" +
+        "同一段聊天别反复查询。数据只用于生活关怀，不作诊断。"
 }

@@ -54,6 +54,7 @@ import me.rerere.rikkahub.data.ai.tools.buildMemoryTools
 import me.rerere.rikkahub.data.ai.tools.buildWriteFilesTool
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.continuityProfileFor
+import me.rerere.rikkahub.data.datastore.gadgetbridgePromptContext
 import me.rerere.rikkahub.data.datastore.promptContext
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.datastore.findModelById
@@ -560,6 +561,12 @@ class GenerationHandler(
                 // Keep dynamic continuity after the stable assistant context. It never replaces the
                 // user's normal context-message count or the assistant's existing memories.
                 settings.continuityProfileFor(assistant.id).promptContext().takeIf { it.isNotBlank() }?.let {
+                    appendLine()
+                    appendLine()
+                    append(it)
+                }
+
+                settings.systemToolsSetting.gadgetbridgePromptContext().takeIf { it.isNotBlank() }?.let {
                     appendLine()
                     appendLine()
                     append(it)

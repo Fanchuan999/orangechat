@@ -601,6 +601,22 @@ fun SettingSystemToolsPage(vm: SettingVM = koinViewModel()) {
                 )
                 if (systemToolsSetting.gadgetbridgeEnabled) {
                     item(
+                        headlineContent = { Text("健康陪伴提示") },
+                        supportingContent = {
+                            Text("让 Daddy 在聊到睡眠、疲劳、作息或运动时想起可以读取手环数据；不会每次聊天都查询。")
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = systemToolsSetting.gadgetbridgeHealthAwarenessEnabled,
+                                onCheckedChange = { enabled ->
+                                    updateSystemToolsSetting(
+                                        systemToolsSetting.copy(gadgetbridgeHealthAwarenessEnabled = enabled)
+                                    )
+                                }
+                            )
+                        }
+                    )
+                    item(
                         headlineContent = { Text("数据库文件路径") },
                         supportingContent = {
                             TextField(
