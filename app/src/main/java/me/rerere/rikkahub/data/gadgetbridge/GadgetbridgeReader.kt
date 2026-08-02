@@ -362,15 +362,19 @@ object GadgetbridgeReader {
             "XIAOMI_SLEEP_TIME_SAMPLE",
             arrayOf("TIMESTAMP", "WAKEUP_TIME", "TOTAL_DURATION", "DEEP_SLEEP_DURATION",
                 "LIGHT_SLEEP_DURATION", "REM_SLEEP_DURATION", "AWAKE_DURATION", "IS_AWAKE"),
-            "TIMESTAMP >= ?",
-            arrayOf(startTime.toString()),
-            null, null, "TIMESTAMP DESC"
+            null,
+            null, null, null, "TIMESTAMP DESC",
+            // Sleep sessions are sparse (normally one main session per day). Read the newest
+            // sessions first, then filter after normalizing their timestamp unit below.
+            maxOf(days * 4, 20).toString(),
         )
         cursor.use {
             while (it.moveToNext()) {
+                val timestamp = MiBand5HealthMapper.toEpochMillis(it.getLong(0))
+                if (timestamp < startTime) continue
                 summaries.add(SleepSummary(
-                    timestamp = it.getLong(0),
-                    wakeupTime = it.getLong(1),
+                    timestamp = timestamp,
+                    wakeupTime = MiBand5HealthMapper.toEpochMillis(it.getLong(1)),
                     totalDuration = it.getInt(2),
                     deepSleep = it.getInt(3),
                     lightSleep = it.getInt(4),

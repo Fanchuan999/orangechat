@@ -72,13 +72,21 @@ data class ActivitySample(
 
 /** Mi Band 5 exports activity timestamps in epoch seconds. */
 internal object MiBand5HealthMapper {
+    /**
+     * Gadgetbridge's Mi Band activity records use epoch seconds. Sleep exports have existed with
+     * both seconds and milliseconds across schema/device migrations, so infer the unit from the
+     * magnitude instead of assuming one table layout forever.
+     */
+    fun toEpochMillis(timestamp: Long): Long =
+        if (timestamp in -99_999_999_999L..99_999_999_999L) timestamp * 1_000L else timestamp
+
     fun mapActivitySample(
         timestampSeconds: Long,
         heartRate: Int?,
         steps: Int?,
         rawIntensity: Int?,
     ): ActivitySample = ActivitySample(
-        timestamp = timestampSeconds * 1000L,
+        timestamp = toEpochMillis(timestampSeconds),
         heartRate = heartRate,
         steps = steps,
         // RAW_INTENSITY is movement intensity, not the user's stress level.

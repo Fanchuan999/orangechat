@@ -6,6 +6,12 @@ import org.junit.Test
 
 class MiBand5HealthMapperTest {
     @Test
+    fun `normalizes Xiaomi sleep timestamps stored as seconds or milliseconds`() {
+        assertEquals(1_722_345_678_000L, MiBand5HealthMapper.toEpochMillis(1_722_345_678L))
+        assertEquals(1_722_345_678_000L, MiBand5HealthMapper.toEpochMillis(1_722_345_678_000L))
+    }
+
+    @Test
     fun `maps Mi Band seconds to milliseconds without mislabeling intensity`() {
         val sample = MiBand5HealthMapper.mapActivitySample(
             timestampSeconds = 1_722_345_678L,
