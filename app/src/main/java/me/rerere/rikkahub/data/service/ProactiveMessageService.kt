@@ -71,6 +71,7 @@ import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.data.datastore.ProactiveMessageSetting
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.datastore.continuityProfileFor
 import me.rerere.rikkahub.data.datastore.promptContext
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
@@ -912,6 +913,12 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     appendLine()
                     appendLine(deviceEventContext)
                 }
+            }
+
+            settings.continuityProfileFor(assistant.id).promptContext().takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                appendLine()
+                append(it)
             }
 
             // Keep the short mood cue as the final dynamic suffix. This also covers aggressive

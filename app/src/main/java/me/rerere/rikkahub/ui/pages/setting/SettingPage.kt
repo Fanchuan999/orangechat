@@ -280,6 +280,11 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         headlineContent = { Text("主动消息与情绪") },
                     )
                     item(
+                        onClick = { navController.navigate(Screen.SettingContinuity) },
+                        supportingContent = { Text("为当前助手保存近期生活线和当前状态卡，按字数预算带入聊天") },
+                        headlineContent = { Text("生活线与状态卡") },
+                    )
+                    item(
                         onClick = { navController.navigate(Screen.SettingWeixinBot) },
                         leadingContent = { Icon(HugeIcons.MessageMultiple01, null) },
                         supportingContent = { Text("把微信号变成 AI 入口，扫码登录后用微信收发消息") },
