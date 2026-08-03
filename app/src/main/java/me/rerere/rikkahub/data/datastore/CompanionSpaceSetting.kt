@@ -29,6 +29,12 @@ data class DiaryCandidate(
     val content: String,
     val createdAtMillis: Long = System.currentTimeMillis(),
     val ombreSavedAtMillis: Long? = null,
+    /** Number of today's plain-text turns considered when this draft was made. */
+    val sourceMessageCount: Int = 0,
+    /** Total original characters across those turns, before any local excerpting. */
+    val sourceCharacterCount: Int = 0,
+    /** True when a busy day needed a short local excerpt from each turn. */
+    val sourceUsesExcerpts: Boolean = false,
 )
 
 fun CompanionSpaceSetting.withCandidate(candidate: DiaryCandidate): CompanionSpaceSetting = copy(

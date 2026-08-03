@@ -130,7 +130,7 @@ fun CompanionSpacePage(
                     item(
                         headlineContent = { Text("先生成，再由你决定留下什么") },
                         supportingContent = {
-                            Text("Daddy 只读取当前助手最近 18 条文字来写一小段候选。生成不会写入任何长期记忆；你确认后才会调用 Ombre 的 hold。")
+                            Text("Daddy 会读取今天所有聊天窗口里的纯文字来写一小段候选。对话特别长时，它会保留每一条的本地短引子，不会只剩最后 18 条。生成不会写入长期记忆；你确认后才会调用 Ombre 的 hold。")
                         },
                     )
                     item(
@@ -163,6 +163,14 @@ fun CompanionSpacePage(
                             supportingContent = {
                                 Column {
                                     Text("生成于 ${candidate.createdAtMillis.toDisplayTime()}")
+                                    if (candidate.sourceMessageCount > 0) {
+                                        val sourceDescription = if (candidate.sourceUsesExcerpts) {
+                                            "今天 ${candidate.sourceMessageCount} 条文字（共 ${candidate.sourceCharacterCount} 字）：每条已保留短引子"
+                                        } else {
+                                            "今天 ${candidate.sourceMessageCount} 条文字（共 ${candidate.sourceCharacterCount} 字）：全文已用于整理"
+                                        }
+                                        Text(sourceDescription, modifier = Modifier.padding(top = 4.dp))
+                                    }
                                     OutlinedTextField(
                                         value = draftText,
                                         onValueChange = { draftText = it.take(1_200) },
