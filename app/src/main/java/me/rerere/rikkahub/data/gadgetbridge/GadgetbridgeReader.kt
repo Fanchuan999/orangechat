@@ -13,6 +13,7 @@ import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.roundToInt
 
 private const val TAG = "GadgetbridgeReader"
 
@@ -308,7 +309,10 @@ object GadgetbridgeReader {
         val summaries = mutableListOf<DailySummary>()
         // Mi Band 5 没有日汇总表——从 MI_BAND_ACTIVITY_SAMPLE 聚合步数
         val cursor = db.rawQuery(
-            "SELECT MIN(TIMESTAMP) as ts, SUM(COALESCE(STEPS,0)) as total_steps " +
+            "SELECT MIN(TIMESTAMP) as ts, SUM(COALESCE(STEPS,0)) as total_steps, " +
+            "MIN(CASE WHEN HEART_RATE BETWEEN 25 AND 240 THEN HEART_RATE END) as hr_min, " +
+            "MAX(CASE WHEN HEART_RATE BETWEEN 25 AND 240 THEN HEART_RATE END) as hr_max, " +
+            "AVG(CASE WHEN HEART_RATE BETWEEN 25 AND 240 THEN HEART_RATE END) as hr_avg " +
             "FROM MI_BAND_ACTIVITY_SAMPLE WHERE TIMESTAMP >= ? " +
             "GROUP BY strftime('%Y-%m-%d', datetime(TIMESTAMP, 'unixepoch')) ORDER BY ts ASC",
             arrayOf(startTime.toString())
@@ -323,9 +327,9 @@ object GadgetbridgeReader {
                         date = date,
                         steps = it.getInt(1),
                         hrResting = null,
-                        hrMax = null,
-                        hrMin = null,
-                        hrAvg = null,
+                        hrMax = getIntOrNull(it, 3),
+                        hrMin = getIntOrNull(it, 2),
+                        hrAvg = if (it.isNull(4)) null else it.getDouble(4).roundToInt(),
                         stressAvg = null,
                         calories = null,
                         spo2Avg = null,
@@ -340,7 +344,9 @@ object GadgetbridgeReader {
         val cursor = db.query(
             "MI_BAND_ACTIVITY_SAMPLE",
             arrayOf("TIMESTAMP", "HEART_RATE", "STEPS", "RAW_INTENSITY"),
-            "HEART_RATE IS NOT NULL AND HEART_RATE > 0",
+            // Mi Band 5 stores 255 when this sample has no heart-rate measurement.
+            // Pick the most recent plausible BPM instead of surfacing that sentinel as real data.
+            "HEART_RATE BETWEEN 25 AND 240",
             null, null, null, "TIMESTAMP DESC", "1"
         )
         cursor.use {

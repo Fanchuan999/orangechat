@@ -257,6 +257,7 @@ private fun HealthContent(
         item {
             RealTimeHeartRateCard(
                 heartRate = state.currentHeartRate,
+                measuredAt = state.currentHeartRateMeasuredAt,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -266,6 +267,15 @@ private fun HealthContent(
                 calories = state.todayCalories,
                 spo2 = state.latestSpo2,
                 stress = state.latestStress,
+                supportsCalories = HealthMetric.CALORIES in (state.sourceInfo?.supportedMetrics ?: emptySet()),
+                supportsSpo2 = HealthMetric.SPO2 in (state.sourceInfo?.supportedMetrics ?: emptySet()),
+                supportsStress = HealthMetric.STRESS in (state.sourceInfo?.supportedMetrics ?: emptySet()),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        item {
+            SleepSummaryCard(
+                summaries = state.sleepSummaries,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -284,15 +294,11 @@ private fun HealthContent(
             )
         }
         item {
-            SleepSummaryCard(
-                summaries = state.sleepSummaries,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        item {
             Spo2AndStressCard(
                 spo2 = state.latestSpo2,
                 stress = state.latestStress,
+                supportsSpo2 = HealthMetric.SPO2 in (state.sourceInfo?.supportedMetrics ?: emptySet()),
+                supportsStress = HealthMetric.STRESS in (state.sourceInfo?.supportedMetrics ?: emptySet()),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -355,6 +361,7 @@ private val HealthMetric.displayName: String
 @Composable
 private fun RealTimeHeartRateCard(
     heartRate: Int?,
+    measuredAt: Long?,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier, colors = CustomColors.cardColorsOnSurfaceContainer) {
@@ -377,14 +384,26 @@ private fun RealTimeHeartRateCard(
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text("实时心率", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("最近有效心率", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (heartRate != null && heartRate > 0) {
                     Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("$heartRate", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.error)
                         Text("BPM", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
                     }
+                    measuredAt?.let {
+                        Text(
+                            "记录于 ${Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("M/d HH:mm"))} · 同步后更新",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 } else {
-                    Text("暂无数据", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("暂无有效测量", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "同步手环后会显示最近一次有效心率",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -398,6 +417,9 @@ private fun TodayOverviewCard(
     calories: Int?,
     spo2: Int?,
     stress: Int?,
+    supportsCalories: Boolean,
+    supportsSpo2: Boolean,
+    supportsStress: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier, colors = CustomColors.cardColorsOnSurfaceContainer) {
@@ -405,9 +427,9 @@ private fun TodayOverviewCard(
             Text("今日概览", style = MaterialTheme.typography.titleMedium)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 OverviewItem(icon = HugeIcons.Zap, label = "步数", value = steps.toString(), tint = MaterialTheme.colorScheme.primary)
-                OverviewItem(icon = HugeIcons.Pulse01, label = "卡路里", value = calories?.toString() ?: "--", tint = Color(0xFFFF6B35))
-                OverviewItem(icon = HugeIcons.Zap, label = "血氧", value = if (spo2 != null) "${spo2}%" else "--", tint = Color(0xFF4FC3F7))
-                OverviewItem(icon = HugeIcons.Alert01, label = "压力", value = stress?.toString() ?: "--", tint = Color(0xFFAB47BC))
+                OverviewItem(icon = HugeIcons.Pulse01, label = "卡路里", value = calories?.toString() ?: if (supportsCalories) "--" else "不支持", tint = Color(0xFFFF6B35))
+                OverviewItem(icon = HugeIcons.Zap, label = "血氧", value = if (spo2 != null) "${spo2}%" else if (supportsSpo2) "--" else "不支持", tint = Color(0xFF4FC3F7))
+                OverviewItem(icon = HugeIcons.Alert01, label = "压力", value = stress?.toString() ?: if (supportsStress) "--" else "不支持", tint = Color(0xFFAB47BC))
             }
         }
     }
@@ -646,63 +668,82 @@ private fun SleepSummaryCard(
     summaries: List<SleepSummary>,
     modifier: Modifier = Modifier,
 ) {
-    if (summaries.isEmpty()) return
-
     Card(modifier = modifier, colors = CustomColors.cardColorsOnSurfaceContainer) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(imageVector = HugeIcons.Alert01, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color(0xFF7E57C2))
-                Text("最近睡眠", style = MaterialTheme.typography.titleMedium)
+                Column {
+                    Text("睡眠统计", style = MaterialTheme.typography.titleMedium)
+                    Text("最近 7 次记录", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
 
-            summaries.take(7).forEachIndexed { index, summary ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Top,
+            if (summaries.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(96.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
-                    val dateFormatter = remember { DateTimeFormatter.ofPattern("M/d") }
-                    val startDate = Instant.ofEpochMilli(summary.timestamp)
-                        .atZone(ZoneId.systemDefault()).toLocalDate()
-                        .format(dateFormatter)
-                    val startTime = Instant.ofEpochMilli(summary.timestamp)
-                        .atZone(ZoneId.systemDefault()).toLocalTime()
-                        .format(timeFormatter)
-                    val endTime = Instant.ofEpochMilli(summary.wakeupTime)
-                        .atZone(ZoneId.systemDefault()).toLocalTime()
-                        .format(timeFormatter)
-                    val hours = summary.totalDuration / 60
-                    val mins = summary.totalDuration % 60
+                    Text(
+                        "暂未读取到睡眠记录。同步手环后回到此页即可刷新。",
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                SleepDurationChart(
+                    summaries = summaries.take(7).reversed(),
+                    modifier = Modifier.fillMaxWidth().height(132.dp),
+                )
 
-                    Column {
-                        Text(
-                            if (summary.isNap) "小憩" else "睡眠",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            "$startDate $startTime - $endTime",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                summaries.take(7).forEachIndexed { index, summary ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
+                        val dateFormatter = remember { DateTimeFormatter.ofPattern("M/d") }
+                        val startDate = Instant.ofEpochMilli(summary.timestamp)
+                            .atZone(ZoneId.systemDefault()).toLocalDate()
+                            .format(dateFormatter)
+                        val startTime = Instant.ofEpochMilli(summary.timestamp)
+                            .atZone(ZoneId.systemDefault()).toLocalTime()
+                            .format(timeFormatter)
+                        val endTime = Instant.ofEpochMilli(summary.wakeupTime)
+                            .atZone(ZoneId.systemDefault()).toLocalTime()
+                            .format(timeFormatter)
+                        val hours = summary.totalDuration / 60
+                        val mins = summary.totalDuration % 60
 
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            "${hours}h ${mins}min",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        if (!summary.isNap && summary.totalDuration > 0) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("深${summary.deepSleep}m", style = MaterialTheme.typography.labelSmall, color = Color(0xFF1565C0))
-                                Text("浅${summary.lightSleep}m", style = MaterialTheme.typography.labelSmall, color = Color(0xFF64B5F6))
-                                Text("REM${summary.remSleep}m", style = MaterialTheme.typography.labelSmall, color = Color(0xFFAB47BC))
+                        Column {
+                            Text(
+                                if (summary.isNap) "小憩" else "睡眠",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                "$startDate $startTime - $endTime",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                "${hours}h ${mins}min",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            if (!summary.isNap && summary.totalDuration > 0) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("深${summary.deepSleep}m", style = MaterialTheme.typography.labelSmall, color = Color(0xFF1565C0))
+                                    Text("浅${summary.lightSleep}m", style = MaterialTheme.typography.labelSmall, color = Color(0xFF64B5F6))
+                                    Text("REM${summary.remSleep}m", style = MaterialTheme.typography.labelSmall, color = Color(0xFFAB47BC))
+                                }
                             }
                         }
                     }
-                }
-                if (index < summaries.take(7).size - 1) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                    if (index < summaries.take(7).size - 1) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                    }
                 }
             }
         }
@@ -714,11 +755,23 @@ private fun SleepSummaryCard(
 private fun Spo2AndStressCard(
     spo2: Int?,
     stress: Int?,
+    supportsSpo2: Boolean,
+    supportsStress: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier, colors = CustomColors.cardColorsOnSurfaceContainer) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("血氧 & 压力", style = MaterialTheme.typography.titleMedium)
+            if (!supportsSpo2 || !supportsStress) {
+                Text(
+                    "小米手环 5 的 Gadgetbridge 导出不提供${listOfNotNull(
+                        if (!supportsSpo2) "血氧" else null,
+                        if (!supportsStress) "压力" else null,
+                    ).joinToString("、")}，所以不会伪造数值。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -731,6 +784,7 @@ private fun Spo2AndStressCard(
                     label = "血氧",
                     unit = "%",
                     color = Color(0xFF4FC3F7),
+                    isSupported = supportsSpo2,
                     modifier = Modifier.size(100.dp),
                 )
                 // Stress circular indicator
@@ -741,6 +795,7 @@ private fun Spo2AndStressCard(
                     label = "压力",
                     unit = "",
                     color = Color(0xFFAB47BC),
+                    isSupported = supportsStress,
                     modifier = Modifier.size(100.dp),
                 )
             }
@@ -756,6 +811,7 @@ private fun CircularIndicator(
     label: String,
     unit: String,
     color: Color,
+    isSupported: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val backgroundColor = MaterialTheme.colorScheme.surfaceVariant
@@ -800,9 +856,72 @@ private fun CircularIndicator(
                     color = textColor,
                 )
             } else {
-                Text("--", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (isSupported) "暂无" else "不支持",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun SleepDurationChart(
+    summaries: List<SleepSummary>,
+    modifier: Modifier = Modifier,
+) {
+    val textMeasurer = rememberTextMeasurer()
+    val barColor = Color(0xFF7E57C2)
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val dateFormatter = remember { DateTimeFormatter.ofPattern("M/d") }
+    val maxMinutes = summaries.maxOfOrNull { it.totalDuration }?.coerceAtLeast(60) ?: 60
+
+    Canvas(modifier = modifier) {
+        val chartHeight = size.height - 28f
+        val slotWidth = size.width / summaries.size.coerceAtLeast(1)
+        val barWidth = slotWidth * 0.58f
+
+        summaries.forEachIndexed { index, summary ->
+            val durationHeight = (summary.totalDuration.toFloat() / maxMinutes) * chartHeight * 0.78f
+            val x = index * slotWidth + (slotWidth - barWidth) / 2f
+            drawRoundRect(
+                color = barColor.copy(alpha = if (summary.isNap) 0.55f else 1f),
+                topLeft = Offset(x, chartHeight - durationHeight),
+                size = Size(barWidth, durationHeight),
+                cornerRadius = CornerRadius(5f, 5f),
+            )
+
+            val hours = summary.totalDuration / 60
+            val durationText = if (hours > 0) "${hours}h" else "${summary.totalDuration}m"
+            val durationLayout = textMeasurer.measure(
+                durationText,
+                style = androidx.compose.ui.text.TextStyle(
+                    color = labelColor,
+                    fontSize = with(density) { 9.dp.toSp() },
+                ),
+            )
+            drawText(
+                durationLayout,
+                topLeft = Offset(x + barWidth / 2 - durationLayout.size.width / 2, (chartHeight - durationHeight - 14f).coerceAtLeast(0f)),
+            )
+
+            val dateText = Instant.ofEpochMilli(summary.timestamp)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+                .format(dateFormatter)
+            val dateLayout = textMeasurer.measure(
+                dateText,
+                style = androidx.compose.ui.text.TextStyle(
+                    color = labelColor,
+                    fontSize = with(density) { 9.dp.toSp() },
+                ),
+            )
+            drawText(
+                dateLayout,
+                topLeft = Offset(x + barWidth / 2 - dateLayout.size.width / 2, chartHeight + 5f),
+            )
         }
     }
 }

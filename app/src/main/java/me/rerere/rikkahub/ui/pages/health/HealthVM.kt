@@ -114,6 +114,7 @@ class HealthVM(
                     isLoading = false, dbFileExists = true,
                     sourceInfo = snapshot.sourceInfo,
                     currentHeartRate = latestActivity?.heartRate,
+                    currentHeartRateMeasuredAt = latestActivity?.takeIf { it.heartRate != null }?.timestamp,
                     dailySummaries7 = dailySummaries7,
                     dailySummaries30 = dailySummaries30,
                     sleepSummaries = sleepSummaries,

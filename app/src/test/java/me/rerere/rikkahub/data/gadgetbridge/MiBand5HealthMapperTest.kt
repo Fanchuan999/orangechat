@@ -27,4 +27,11 @@ class MiBand5HealthMapperTest {
         assertNull(sample.stress)
         assertNull(sample.spo2)
     }
+
+    @Test
+    fun `ignores the Mi Band unknown heart rate sentinel`() {
+        assertNull(MiBand5HealthMapper.validHeartRate(255))
+        assertNull(MiBand5HealthMapper.validHeartRate(0))
+        assertEquals(72, MiBand5HealthMapper.validHeartRate(72))
+    }
 }

@@ -73,6 +73,12 @@ data class ActivitySample(
 /** Mi Band 5 exports activity timestamps in epoch seconds. */
 internal object MiBand5HealthMapper {
     /**
+     * Mi Band activity exports use 255 as an "unknown / not measured" marker for heart rate.
+     * Treat it as absent instead of presenting it as a physiologically impossible BPM value.
+     */
+    fun validHeartRate(value: Int?): Int? = value?.takeIf { it in 25..240 }
+
+    /**
      * Gadgetbridge's Mi Band activity records use epoch seconds. Sleep exports have existed with
      * both seconds and milliseconds across schema/device migrations, so infer the unit from the
      * magnitude instead of assuming one table layout forever.
@@ -87,7 +93,7 @@ internal object MiBand5HealthMapper {
         rawIntensity: Int?,
     ): ActivitySample = ActivitySample(
         timestamp = toEpochMillis(timestampSeconds),
-        heartRate = heartRate,
+        heartRate = validHeartRate(heartRate),
         steps = steps,
         // RAW_INTENSITY is movement intensity, not the user's stress level.
         stress = null,
@@ -116,6 +122,7 @@ data class HealthUiState(
     val dbFileExists: Boolean = true,
     val sourceInfo: HealthDataSourceInfo? = null,
     val currentHeartRate: Int? = null,
+    val currentHeartRateMeasuredAt: Long? = null,
     val dailySummaries7: List<DailySummary> = emptyList(),
     val dailySummaries30: List<DailySummary> = emptyList(),
     val sleepSummaries: List<SleepSummary> = emptyList(),
