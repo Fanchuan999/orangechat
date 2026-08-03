@@ -69,6 +69,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.data.datastore.ProactiveMessageSetting
+import me.rerere.rikkahub.data.datastore.CompanionProactiveDecision
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.continuityProfileFor
@@ -465,13 +466,31 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         CoroutineScope(Dispatchers.IO).launch {
             var conversationId: kotlin.uuid.Uuid? = null
             try {
-                val settings = settingsStore.settingsFlow.first()
+                var settings = settingsStore.settingsFlow.first()
                 val proactiveSetting = settings.proactiveMessageSetting
 
                 // 激进模式设备事件触发时，不检查主动消息开关（可独立工作）
                 if (!proactiveSetting.enabled && !isFromDeviceEvent) {
                     stopSelf()
                     return@launch
+                }
+
+                // Ordinary timer wakes first pass through the local "jiwen"-style
+                // rhythm gate. It never calls the model when the answer is wait.
+                // Aggressive device-event wakes keep their existing behaviour so a
+                // sleep/late-night follow-up is not silently suppressed.
+                if (!isFromDeviceEvent) {
+                    when (val decision = companionMoodEngine.decideScheduledProactiveMessage()) {
+                        CompanionProactiveDecision.Contact -> {
+                            settings = settingsStore.settingsFlow.first()
+                        }
+                        CompanionProactiveDecision.Observe,
+                        CompanionProactiveDecision.FindActivity -> {
+                            Log.i(TAG, "Scheduled proactive message skipped by local rhythm: $decision")
+                            stopSelf()
+                            return@launch
+                        }
+                    }
                 }
 
                 val prefs = getSharedPreferences(ProactiveMessageService.PREFS_NAME, Context.MODE_PRIVATE)

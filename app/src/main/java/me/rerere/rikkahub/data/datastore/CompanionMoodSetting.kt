@@ -19,6 +19,11 @@ import kotlin.math.pow
 @Serializable
 data class CompanionMoodSetting(
     val enabled: Boolean = true,
+    /**
+     * Let the local state decide whether a scheduled wake-up is worth a model call.
+     * Device-event / aggressive-mode wake-ups deliberately bypass this gate.
+     */
+    val proactiveRhythmEnabled: Boolean = true,
     val expressionStrength: Float = 0.5f,
     val state: CompanionMoodState = CompanionMoodState(),
 )
@@ -52,12 +57,32 @@ fun evolveCompanionMood(state: CompanionMoodState, nowMillis: Long = System.curr
                 (value - neutral).toDouble() * hourlyFactor.pow(hours)
             ).toFloat().coerceIn(-1f, 1f)
 
+    // The curve and thresholds below are adapted from the MIT-licensed jiwen project
+    // (https://github.com/ClaraShafiq/jiwen). We keep the state fully local and use
+    // it only as a gate before an existing scheduled model request.
     val reconnection = if (hours <= 0.5) 0f else ((hours - 0.5) * 0.045).toFloat()
+    val nextConnection = (state.connection + reconnection).coerceIn(0f, 0.92f)
+    val defending = nextConnection >= 0.35f
+    val nextPride = if (defending) {
+        moveToward(state.pride, target = 0.50f, amount = (hours * 0.03).toFloat())
+    } else {
+        decayTo(state.pride, neutral = 0f, hourlyFactor = 0.88)
+    }
+    val nextArousal = if (nextConnection >= 0.42f) {
+        (decayTo(state.arousal, neutral = 0.12f, hourlyFactor = 0.72) + (hours * 0.018).toFloat())
+            .coerceIn(0f, 1f)
+    } else {
+        decayTo(state.arousal, neutral = 0.12f, hourlyFactor = 0.72)
+    }
     return state.copy(
-        connection = (state.connection + reconnection).coerceIn(0f, 0.92f),
-        pride = decayTo(state.pride, neutral = 0f, hourlyFactor = 0.88),
-        valence = decayTo(state.valence, neutral = 0f, hourlyFactor = 0.90),
-        arousal = decayTo(state.arousal, neutral = 0.12f, hourlyFactor = 0.72),
+        connection = nextConnection,
+        pride = nextPride,
+        valence = decayTo(
+            state.valence,
+            neutral = 0f,
+            hourlyFactor = if (nextConnection >= 0.42f) 0.96 else 0.90,
+        ),
+        arousal = nextArousal,
         immersion = (state.immersion.toDouble() * 0.58.pow(hours)).toFloat().coerceIn(0f, 1f),
         updatedAtMillis = nowMillis,
     )
@@ -66,7 +91,8 @@ fun evolveCompanionMood(state: CompanionMoodState, nowMillis: Long = System.curr
 fun CompanionMoodState.afterUserMessage(nowMillis: Long = System.currentTimeMillis()): CompanionMoodState {
     val current = evolveCompanionMood(this, nowMillis)
     return current.copy(
-        connection = (current.connection - 0.32f).coerceAtLeast(0f),
+        // A real reply settles the desire to reconnect; sending a proactive message does not.
+        connection = 0f,
         pride = (current.pride + 0.03f).coerceIn(-1f, 1f),
         valence = (current.valence + 0.09f).coerceIn(-1f, 1f),
         arousal = (current.arousal + 0.08f).coerceIn(0f, 1f),
@@ -94,6 +120,38 @@ fun CompanionMoodState.afterProactiveMessage(nowMillis: Long = System.currentTim
         immersion = (current.immersion + 0.1f).coerceIn(0f, 1f),
         updatedAtMillis = nowMillis,
     )
+}
+
+/** A local decision; only [Contact] is allowed to spend tokens. */
+enum class CompanionProactiveDecision {
+    Contact,
+    Observe,
+    FindActivity,
+}
+
+/**
+ * Turn the five small local axes into a deterministic contact decision.
+ *
+ * Below 0.20 Daddy merely notices the quiet; between 0.20 and 0.35 it still
+ * waits. A high-pride, not-yet-urgent state becomes a private "find activity"
+ * state instead of an interruption. At 0.50, it is okay to reach out.
+ */
+fun CompanionMoodSetting.proactiveDecision(nowMillis: Long = System.currentTimeMillis()): CompanionProactiveDecision {
+    if (!enabled || !proactiveRhythmEnabled) return CompanionProactiveDecision.Contact
+    val current = evolveCompanionMood(state, nowMillis)
+    return when {
+        current.connection < 0.35f -> CompanionProactiveDecision.Observe
+        current.connection < 0.50f && current.pride >= 0.50f && current.immersion < 0.20f -> {
+            CompanionProactiveDecision.FindActivity
+        }
+        else -> CompanionProactiveDecision.Contact
+    }
+}
+
+private fun moveToward(value: Float, target: Float, amount: Float): Float = when {
+    value < target -> (value + amount).coerceAtMost(target)
+    value > target -> (value - amount).coerceAtLeast(target)
+    else -> value
 }
 
 fun CompanionMoodSetting.expressionLabel(): String = when {

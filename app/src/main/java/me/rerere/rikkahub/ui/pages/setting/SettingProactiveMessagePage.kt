@@ -112,7 +112,7 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                     item(
                         headlineContent = { Text("持续情绪引擎") },
                         supportingContent = {
-                            Text("用本地状态让 Daddy 的语气有连续感。不会单独调用模型，也不会改变主动消息的频率。")
+                            Text("用本地状态让 Daddy 的语气有连续感。它本身不调用模型；还可以在普通定时唤醒前判断是否真的值得打扰你。")
                         },
                         trailingContent = {
                             Switch(
@@ -128,6 +128,26 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                         }
                     )
                     if (moodSetting.enabled) {
+                        item(
+                            headlineContent = { Text("用情绪节奏决定要不要主动找你") },
+                            supportingContent = {
+                                Text("普通定时消息会先本地判断“只是想想、先去做点事、或该开口”。只有该开口时才消耗 token；激进模式的设备事件不受它限制。")
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = moodSetting.proactiveRhythmEnabled,
+                                    onCheckedChange = { enabled ->
+                                        vm.updateSettings(
+                                            settings.copy(
+                                                companionMoodSetting = moodSetting.copy(
+                                                    proactiveRhythmEnabled = enabled
+                                                )
+                                            )
+                                        )
+                                    }
+                                )
+                            }
+                        )
                         item(
                             headlineContent = { Text("语气影响：${moodSetting.expressionLabel()}") },
                             supportingContent = {
@@ -445,7 +465,7 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                     item(
                         headlineContent = { Text("说明") },
                         supportingContent = {
-                            Text("启用后，AI 会在设定的最小和最大间隔之间随机一个时间点主动给你发消息。你回复后计时器重置，重新开始随机计时；不回复则继续循环发消息。AI 可以自己思考选择要不要回复，如果觉得没什么好说的可以跳过。\n\n提示：同时使用 AlarmManager + WorkManager 双重调度，确保消息能准时触发。\n\n强制跳转：开启后 AI 会自行判断是否需要拉起屏幕。")
+                            Text("启用后，系统会在设定区间内安排一次检查。打开“用情绪节奏决定要不要主动找你”后，Daddy 会先在本机判断这次只是想想、先缓一缓，还是确实想开口；只有最后一种才调用模型。你回复后，想念值会重新归零。\n\n提示：同时使用 AlarmManager + WorkManager 双重调度，确保消息能准时触发。\n\n强制跳转：开启后 AI 会自行判断是否需要拉起屏幕。")
                         },
                     )
                 }

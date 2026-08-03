@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.datastore
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,8 +22,35 @@ class CompanionMoodSettingTest {
 
         val refreshed = state.afterUserMessage(nowMillis = 1_000L)
 
-        assertTrue(refreshed.connection < state.connection)
+        assertEquals(0f, refreshed.connection)
         assertTrue(refreshed.immersion > state.immersion)
+    }
+
+    @Test
+    fun scheduledRhythmWaitsBeforeSpendingTokens() {
+        val waiting = CompanionMoodSetting(
+            state = CompanionMoodState(connection = 0.24f, updatedAtMillis = 1_000L)
+        )
+        val ready = CompanionMoodSetting(
+            state = CompanionMoodState(connection = 0.52f, updatedAtMillis = 1_000L)
+        )
+
+        assertEquals(CompanionProactiveDecision.Observe, waiting.proactiveDecision(nowMillis = 1_000L))
+        assertEquals(CompanionProactiveDecision.Contact, ready.proactiveDecision(nowMillis = 1_000L))
+    }
+
+    @Test
+    fun prideCanChooseAQuietActivityInsteadOfAnInterruption() {
+        val setting = CompanionMoodSetting(
+            state = CompanionMoodState(
+                connection = 0.42f,
+                pride = 0.62f,
+                immersion = 0.1f,
+                updatedAtMillis = 1_000L,
+            )
+        )
+
+        assertEquals(CompanionProactiveDecision.FindActivity, setting.proactiveDecision(nowMillis = 1_000L))
     }
 
     @Test
