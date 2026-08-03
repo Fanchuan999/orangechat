@@ -219,8 +219,6 @@ class CompanionDiaryService(
                     "title" to JsonPrimitive(candidate.title),
                     // Ombre's hold schema accepts one comma-separated string, not a JSON list.
                     "tags" to JsonPrimitive("diary,user-confirmed"),
-                    "importance" to JsonPrimitive(0.55),
-                    "pinned" to JsonPrimitive(false),
                 )
             ),
         )
