@@ -45,6 +45,7 @@ import me.rerere.rikkahub.data.db.migrations.Migration_25_26
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.service.CompanionMoodEngine
+import me.rerere.rikkahub.data.service.CompanionDiaryService
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.rikkahub.data.sync.companion.CompanionBackupService
 import me.rerere.search.SearchService
@@ -274,6 +275,15 @@ val dataSourceModule = module {
     }
 
     single { CompanionMoodEngine(settingsStore = get()) }
+
+    single {
+        CompanionDiaryService(
+            settingsStore = get(),
+            conversationRepository = get(),
+            providerManager = get(),
+            mcpManager = get(),
+        )
+    }
 
     single {
         CompanionBackupService(

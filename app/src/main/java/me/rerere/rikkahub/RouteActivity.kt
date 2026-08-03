@@ -126,6 +126,7 @@ import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceDetailPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspacePage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceTerminalPage
 import me.rerere.rikkahub.ui.pages.favorite.FavoritePage
+import me.rerere.rikkahub.ui.pages.companion.CompanionSpacePage
 import me.rerere.rikkahub.ui.pages.health.HealthPage
 import me.rerere.rikkahub.ui.pages.history.HistoryPage
 import me.rerere.rikkahub.ui.pages.imggen.ImageGenPage
@@ -700,6 +701,10 @@ entry<Screen.Extensions> {
                                 SettingContinuityPage()
                             }
 
+                            entry<Screen.CompanionSpace> {
+                                CompanionSpacePage()
+                            }
+
                             entry<Screen.SettingWeixinBot> {
                                 SettingWeixinBotPage()
                             }
@@ -1079,6 +1084,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingContinuity : Screen
+
+    @Serializable
+    data object CompanionSpace : Screen
 
     @Serializable
     data object SettingWeixinBot : Screen

@@ -285,6 +285,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         headlineContent = { Text("生活线与状态卡") },
                     )
                     item(
+                        onClick = { navController.navigate(Screen.CompanionSpace) },
+                        leadingContent = { Icon(HugeIcons.InLove, null) },
+                        supportingContent = { Text("日记候选先由你确认，再写入 Ombre；信件和共同活动也会放在这里") },
+                        headlineContent = { Text("Daddy 的小屋") },
+                    )
+                    item(
                         onClick = { navController.navigate(Screen.SettingWeixinBot) },
                         leadingContent = { Icon(HugeIcons.MessageMultiple01, null) },
                         supportingContent = { Text("把微信号变成 AI 入口，扫码登录后用微信收发消息") },

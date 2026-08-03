@@ -177,6 +177,9 @@ class SettingsStore(
         // 助手的近期生活线与当前状态卡
         val COMPANION_CONTINUITY_PROFILES = stringPreferencesKey("companion_continuity_profiles")
 
+        // Daddy 小屋：日记候选等本地、可备份的陪伴内容
+        val COMPANION_SPACE_SETTING = stringPreferencesKey("companion_space_setting")
+
         // 保活服务设置
         val KEEP_ALIVE_ENABLED = booleanPreferencesKey("keep_alive_enabled")
 
@@ -313,6 +316,9 @@ class SettingsStore(
                 companionContinuityProfiles = preferences[COMPANION_CONTINUITY_PROFILES]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: emptyList(),
+                companionSpaceSetting = preferences[COMPANION_SPACE_SETTING]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: CompanionSpaceSetting(),
                 wechatBotSetting = preferences[WECHAT_BOT_SETTING]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: WechatBotSetting(),
@@ -508,6 +514,7 @@ class SettingsStore(
             preferences[PROACTIVE_MESSAGE_SETTING] = JsonInstant.encodeToString(settings.proactiveMessageSetting)
             preferences[COMPANION_MOOD_SETTING] = JsonInstant.encodeToString(settings.companionMoodSetting)
             preferences[COMPANION_CONTINUITY_PROFILES] = JsonInstant.encodeToString(settings.companionContinuityProfiles)
+            preferences[COMPANION_SPACE_SETTING] = JsonInstant.encodeToString(settings.companionSpaceSetting)
             preferences[WECHAT_BOT_SETTING] = JsonInstant.encodeToString(settings.wechatBotSetting)
             preferences[QQ_BOT_SETTING] = JsonInstant.encodeToString(settings.qqBotSetting)
             preferences[KEEP_ALIVE_ENABLED] = settings.keepAliveEnabled
@@ -686,6 +693,7 @@ data class Settings(
     val proactiveMessageSetting: ProactiveMessageSetting = ProactiveMessageSetting(),
     val companionMoodSetting: CompanionMoodSetting = CompanionMoodSetting(),
     val companionContinuityProfiles: List<CompanionContinuityProfile> = emptyList(),
+    val companionSpaceSetting: CompanionSpaceSetting = CompanionSpaceSetting(),
     val wechatBotSetting: WechatBotSetting = WechatBotSetting(),
     val qqBotSetting: QqBotSetting = QqBotSetting(),
     val keepAliveEnabled: Boolean = false,
