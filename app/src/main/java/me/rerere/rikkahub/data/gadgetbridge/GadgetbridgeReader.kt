@@ -390,7 +390,94 @@ object GadgetbridgeReader {
                 ))
             }
         }
-        return summaries
+        if (summaries.isNotEmpty()) return summaries
+
+        // Some Mi Band 5 exports do not populate XIAOMI_SLEEP_TIME_SAMPLE even though
+        // Gadgetbridge has the per-minute sleep stages in MI_BAND_ACTIVITY_SAMPLE. The
+        // Mi Band provider maps raw kinds 4/5 to deep/light sleep, respectively.
+        return readSleepSummariesXiaomiFromActivityStages(db, startTime, days)
+    }
+
+    /**
+     * Rebuild Xiaomi sleep sessions from consecutive activity samples as a compatibility
+     * fallback. It runs only when the dedicated sleep-summary table produced no sessions.
+     */
+    private fun readSleepSummariesXiaomiFromActivityStages(
+        db: SQLiteDatabase,
+        startTimeMs: Long,
+        days: Int,
+    ): List<SleepSummary> {
+        if (!tableHasColumns(db, "MI_BAND_ACTIVITY_SAMPLE", setOf("TIMESTAMP", "RAW_KIND"))) {
+            return emptyList()
+        }
+
+        data class SleepStage(val timestampMs: Long, val rawKind: Int)
+
+        val sampleLimit = maxOf(days * 24 * 60 + 240, 10_000)
+        val stages = mutableListOf<SleepStage>()
+        try {
+            db.query(
+                "MI_BAND_ACTIVITY_SAMPLE",
+                arrayOf("TIMESTAMP", "RAW_KIND"),
+                "RAW_KIND IN (4, 5)",
+                null,
+                null,
+                null,
+                "TIMESTAMP DESC",
+                sampleLimit.toString(),
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val timestampMs = MiBand5HealthMapper.toEpochMillis(cursor.getLong(0))
+                    if (timestampMs >= startTimeMs) {
+                        stages += SleepStage(timestampMs, cursor.getInt(1))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "小米逐分钟睡眠阶段读取失败", e)
+            return emptyList()
+        }
+
+        if (stages.isEmpty()) return emptyList()
+
+        val sessions = mutableListOf<SleepSummary>()
+        val sortedStages = stages.sortedBy(SleepStage::timestampMs)
+        val maxContinuousGapMs = 15 * 60 * 1000L
+        var sessionStart = sortedStages.first().timestampMs
+        var previousTimestamp = sessionStart
+        var deepMinutes = 0
+        var lightMinutes = 0
+
+        fun finishSession() {
+            val wakeupTime = previousTimestamp + 60_000L
+            val totalMinutes = ((wakeupTime - sessionStart) / 60_000L).toInt()
+            // Ignore small fragments caused by an incomplete activity sync.
+            if (totalMinutes >= 60) {
+                sessions += SleepSummary(
+                    timestamp = sessionStart,
+                    wakeupTime = wakeupTime,
+                    totalDuration = totalMinutes,
+                    deepSleep = deepMinutes,
+                    lightSleep = lightMinutes,
+                    remSleep = 0,
+                    awakeDuration = 0,
+                    isAwake = false,
+                )
+            }
+        }
+
+        sortedStages.forEach { stage ->
+            if (stage.timestampMs - previousTimestamp > maxContinuousGapMs) {
+                finishSession()
+                sessionStart = stage.timestampMs
+                deepMinutes = 0
+                lightMinutes = 0
+            }
+            if (stage.rawKind == 4) deepMinutes++ else lightMinutes++
+            previousTimestamp = stage.timestampMs
+        }
+        finishSession()
+        return sessions.sortedByDescending(SleepSummary::timestamp)
     }
 
     private fun readLatestSpo2AndStressXiaomi(db: SQLiteDatabase): Pair<Int?, Int?> {
