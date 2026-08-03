@@ -8,7 +8,6 @@ package me.rerere.rikkahub.data.service
 
 import android.util.Log
 import kotlinx.coroutines.flow.first
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import me.rerere.ai.core.MessageRole
@@ -218,7 +217,8 @@ class CompanionDiaryService(
                 mapOf(
                     "content" to JsonPrimitive(candidate.content),
                     "title" to JsonPrimitive(candidate.title),
-                    "tags" to JsonArray(listOf(JsonPrimitive("diary"), JsonPrimitive("user-confirmed"))),
+                    // Ombre's hold schema accepts one comma-separated string, not a JSON list.
+                    "tags" to JsonPrimitive("diary,user-confirmed"),
                     "importance" to JsonPrimitive(0.55),
                     "pinned" to JsonPrimitive(false),
                 )
