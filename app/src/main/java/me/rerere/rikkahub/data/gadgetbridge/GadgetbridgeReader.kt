@@ -197,9 +197,15 @@ object GadgetbridgeReader {
                     if (tableHasColumns(db, "MI_BAND_ACTIVITY_SAMPLE", setOf("HEART_RATE"))) {
                         add(HealthMetric.HEART_RATE)
                     }
-                    if (tableHasColumns(db, "XIAOMI_SLEEP_TIME_SAMPLE", setOf("TIMESTAMP", "WAKEUP_TIME"))) {
+                    // Mi Band 5 commonly leaves the newer summary table empty, but its
+                    // per-minute activity table still contains recoverable sleep stages.
+                    if (
+                        tableHasColumns(db, "XIAOMI_SLEEP_TIME_SAMPLE", setOf("TIMESTAMP", "WAKEUP_TIME")) ||
+                        tableHasColumns(db, "MI_BAND_ACTIVITY_SAMPLE", setOf("TIMESTAMP", "RAW_KIND"))
+                    ) {
                         add(HealthMetric.SLEEP)
                     }
+                    if (readLatestStressXiaomi(db) != null) add(HealthMetric.STRESS)
                 }
                 Manufacturer.HUAWEI -> {
                     if (tableHasColumns(db, "HUAWEI_ACTIVITY_SAMPLE", setOf("STEPS"))) add(HealthMetric.STEPS)
@@ -306,6 +312,7 @@ object GadgetbridgeReader {
         val now = LocalDate.now()
         val startTime = now.minusDays(days.toLong())
             .atStartOfDay(ZoneId.systemDefault()).toInstant().epochSecond
+        val stressByDate = readDailyStressAveragesXiaomi(db, startTime * 1_000L)
         val summaries = mutableListOf<DailySummary>()
         // Mi Band 5 没有日汇总表——从 MI_BAND_ACTIVITY_SAMPLE 聚合步数
         val cursor = db.rawQuery(
@@ -330,7 +337,7 @@ object GadgetbridgeReader {
                         hrMax = getIntOrNull(it, 3),
                         hrMin = getIntOrNull(it, 2),
                         hrAvg = if (it.isNull(4)) null else it.getDouble(4).roundToInt(),
-                        stressAvg = null,
+                        stressAvg = stressByDate[date],
                         calories = null,
                         spo2Avg = null,
                     )
@@ -393,9 +400,8 @@ object GadgetbridgeReader {
         if (summaries.isNotEmpty()) return summaries
 
         // Some Mi Band 5 exports do not populate XIAOMI_SLEEP_TIME_SAMPLE even though
-        // Gadgetbridge has the per-minute sleep stages in MI_BAND_ACTIVITY_SAMPLE. The
-        // Mi Band provider maps raw kinds 4/5 to deep/light sleep, respectively.
-        return readSleepSummariesXiaomiFromActivityStages(db, startTime, days)
+        // Gadgetbridge has the per-minute stages in MI_BAND_ACTIVITY_SAMPLE.
+        return readSleepSummariesXiaomiFromActivityStages(db, startTime)
     }
 
     /**
@@ -405,32 +411,36 @@ object GadgetbridgeReader {
     private fun readSleepSummariesXiaomiFromActivityStages(
         db: SQLiteDatabase,
         startTimeMs: Long,
-        days: Int,
     ): List<SleepSummary> {
         if (!tableHasColumns(db, "MI_BAND_ACTIVITY_SAMPLE", setOf("TIMESTAMP", "RAW_KIND"))) {
             return emptyList()
         }
 
-        data class SleepStage(val timestampMs: Long, val rawKind: Int)
+        data class ActivityStage(val timestampMs: Long, val rawKind: Int)
 
-        val sampleLimit = maxOf(days * 24 * 60 + 240, 10_000)
-        val stages = mutableListOf<SleepStage>()
+        // Gadgetbridge's MiBand2SampleProvider (also used for Mi Band 5) restores the
+        // low four bits of RAW_KIND and carries 0 / 10 forward from the prior state.
+        // Read one extra day so a session already in progress at the range boundary can
+        // be reconstructed correctly.
+        val lookbackStartSeconds = (
+            (startTimeMs - 24 * 60 * 60 * 1_000L) / 1_000L
+        ).coerceAtLeast(0L)
+        val stages = mutableListOf<ActivityStage>()
         try {
             db.query(
                 "MI_BAND_ACTIVITY_SAMPLE",
                 arrayOf("TIMESTAMP", "RAW_KIND"),
-                "RAW_KIND IN (4, 5)",
+                "TIMESTAMP >= ?",
+                arrayOf(lookbackStartSeconds.toString()),
                 null,
                 null,
-                null,
-                "TIMESTAMP DESC",
-                sampleLimit.toString(),
+                "TIMESTAMP ASC",
             ).use { cursor ->
                 while (cursor.moveToNext()) {
-                    val timestampMs = MiBand5HealthMapper.toEpochMillis(cursor.getLong(0))
-                    if (timestampMs >= startTimeMs) {
-                        stages += SleepStage(timestampMs, cursor.getInt(1))
-                    }
+                    stages += ActivityStage(
+                        timestampMs = MiBand5HealthMapper.toEpochMillis(cursor.getLong(0)),
+                        rawKind = cursor.getInt(1),
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -441,20 +451,22 @@ object GadgetbridgeReader {
         if (stages.isEmpty()) return emptyList()
 
         val sessions = mutableListOf<SleepSummary>()
-        val sortedStages = stages.sortedBy(SleepStage::timestampMs)
         val maxContinuousGapMs = 15 * 60 * 1000L
-        var sessionStart = sortedStages.first().timestampMs
-        var previousTimestamp = sessionStart
+        var previousActivityKind: Int? = null
+        var sessionStart: Long? = null
+        var previousTimestamp: Long? = null
         var deepMinutes = 0
         var lightMinutes = 0
 
         fun finishSession() {
-            val wakeupTime = previousTimestamp + 60_000L
-            val totalMinutes = ((wakeupTime - sessionStart) / 60_000L).toInt()
+            val start = sessionStart ?: return
+            val previous = previousTimestamp ?: return
+            val wakeupTime = previous + 60_000L
+            val totalMinutes = ((wakeupTime - start) / 60_000L).toInt()
             // Ignore small fragments caused by an incomplete activity sync.
-            if (totalMinutes >= 60) {
+            if (totalMinutes >= 60 && wakeupTime >= startTimeMs) {
                 sessions += SleepSummary(
-                    timestamp = sessionStart,
+                    timestamp = start,
                     wakeupTime = wakeupTime,
                     totalDuration = totalMinutes,
                     deepSleep = deepMinutes,
@@ -464,16 +476,30 @@ object GadgetbridgeReader {
                     isAwake = false,
                 )
             }
+            sessionStart = null
+            previousTimestamp = null
+            deepMinutes = 0
+            lightMinutes = 0
         }
 
-        sortedStages.forEach { stage ->
-            if (stage.timestampMs - previousTimestamp > maxContinuousGapMs) {
+        stages.forEach { stage ->
+            val activityKind = MiBand5HealthMapper.resolveActivityKind(
+                rawKind = stage.rawKind,
+                previousKind = previousActivityKind,
+            )
+            if (activityKind != null) previousActivityKind = activityKind
+
+            if (!MiBand5HealthMapper.isSleepActivityKind(activityKind)) {
                 finishSession()
-                sessionStart = stage.timestampMs
-                deepMinutes = 0
-                lightMinutes = 0
+                return@forEach
             }
-            if (stage.rawKind == 4) deepMinutes++ else lightMinutes++
+
+            val previous = previousTimestamp
+            if (previous != null && stage.timestampMs - previous > maxContinuousGapMs) {
+                finishSession()
+            }
+            if (sessionStart == null) sessionStart = stage.timestampMs
+            if (activityKind == MiBand5HealthMapper.TYPE_DEEP_SLEEP) deepMinutes++ else lightMinutes++
             previousTimestamp = stage.timestampMs
         }
         finishSession()
@@ -481,13 +507,61 @@ object GadgetbridgeReader {
     }
 
     private fun readLatestSpo2AndStressXiaomi(db: SQLiteDatabase): Pair<Int?, Int?> {
-        val startSec = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().epochSecond
-        var spo2: Int? = null
-        var stress: Int? = null
-        // Mi Band 5 不支持 SPO2 和 STRESS
-        spo2 = null
-        stress = null
-        return Pair(spo2, stress)
+        // Mi Band 5 has no blood-oxygen export in this database. It does export stress
+        // measurements in HUAMI_STRESS_SAMPLE when stress tracking is enabled.
+        return null to readLatestStressXiaomi(db)
+    }
+
+    private fun readLatestStressXiaomi(db: SQLiteDatabase): Int? {
+        if (!tableHasColumns(db, "HUAMI_STRESS_SAMPLE", setOf("TIMESTAMP", "STRESS"))) return null
+        return try {
+            db.query(
+                "HUAMI_STRESS_SAMPLE",
+                arrayOf("STRESS"),
+                "STRESS BETWEEN 1 AND 100",
+                null,
+                null,
+                null,
+                "TIMESTAMP DESC",
+                "1",
+            ).use { cursor ->
+                if (cursor.moveToFirst()) getIntOrNull(cursor, 0) else null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "小米最新压力读取失败", e)
+            null
+        }
+    }
+
+    private fun readDailyStressAveragesXiaomi(
+        db: SQLiteDatabase,
+        startTimeMs: Long,
+    ): Map<LocalDate, Int> {
+        if (!tableHasColumns(db, "HUAMI_STRESS_SAMPLE", setOf("TIMESTAMP", "STRESS"))) return emptyMap()
+        return try {
+            val stressByDate = mutableMapOf<LocalDate, MutableList<Int>>()
+            db.query(
+                "HUAMI_STRESS_SAMPLE",
+                arrayOf("TIMESTAMP", "STRESS"),
+                "TIMESTAMP >= ? AND STRESS BETWEEN 1 AND 100",
+                arrayOf(startTimeMs.toString()),
+                null,
+                null,
+                "TIMESTAMP ASC",
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val stress = getIntOrNull(cursor, 1) ?: continue
+                    val date = Instant.ofEpochMilli(cursor.getLong(0))
+                        .atZone(ZoneId.systemDefault())
+                        .toLocalDate()
+                    stressByDate.getOrPut(date) { mutableListOf() } += stress
+                }
+            }
+            stressByDate.mapValues { (_, values) -> values.average().roundToInt() }
+        } catch (e: Exception) {
+            Log.w(TAG, "小米每日压力读取失败", e)
+            emptyMap()
+        }
     }
 
     // ==================== 华为实现 ====================

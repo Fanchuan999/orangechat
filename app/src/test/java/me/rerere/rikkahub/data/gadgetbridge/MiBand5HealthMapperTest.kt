@@ -34,4 +34,13 @@ class MiBand5HealthMapperTest {
         assertNull(MiBand5HealthMapper.validHeartRate(0))
         assertEquals(72, MiBand5HealthMapper.validHeartRate(72))
     }
+
+    @Test
+    fun `restores Mi Band 5 sleep kinds from the low nibble and carry forward markers`() {
+        assertEquals(9, MiBand5HealthMapper.resolveActivityKind(0xF9, previousKind = 1))
+        assertEquals(9, MiBand5HealthMapper.resolveActivityKind(0xF0, previousKind = 9))
+        assertEquals(9, MiBand5HealthMapper.resolveActivityKind(0xFA, previousKind = 9))
+        assertEquals(11, MiBand5HealthMapper.resolveActivityKind(0xFB, previousKind = 9))
+        assertEquals(12, MiBand5HealthMapper.resolveActivityKind(0x7C, previousKind = 11))
+    }
 }

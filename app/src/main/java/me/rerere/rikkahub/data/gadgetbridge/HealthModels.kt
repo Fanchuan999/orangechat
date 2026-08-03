@@ -72,11 +72,31 @@ data class ActivitySample(
 
 /** Mi Band 5 exports activity timestamps in epoch seconds. */
 internal object MiBand5HealthMapper {
+    /** Gadgetbridge's MiBand2SampleProvider is also used by Mi Band 5. */
+    const val TYPE_LIGHT_SLEEP = 9
+    const val TYPE_IGNORE = 10
+    const val TYPE_DEEP_SLEEP = 11
+
     /**
      * Mi Band activity exports use 255 as an "unknown / not measured" marker for heart rate.
      * Treat it as absent instead of presenting it as a physiologically impossible BPM value.
      */
     fun validHeartRate(value: Int?): Int? = value?.takeIf { it in 25..240 }
+
+    /**
+     * Mi Band activity samples encode the state in the low four bits. A low-nibble 0
+     * means "same as the prior state" and 10 means "ignore"; Gadgetbridge carries both
+     * forward when it renders the device's sleep timeline.
+     */
+    fun resolveActivityKind(rawKind: Int, previousKind: Int?): Int? {
+        return when (val kind = rawKind and 0x0f) {
+            0, TYPE_IGNORE -> previousKind
+            else -> kind
+        }
+    }
+
+    fun isSleepActivityKind(kind: Int?): Boolean =
+        kind == TYPE_LIGHT_SLEEP || kind == TYPE_DEEP_SLEEP
 
     /**
      * Gadgetbridge's Mi Band activity records use epoch seconds. Sleep exports have existed with
