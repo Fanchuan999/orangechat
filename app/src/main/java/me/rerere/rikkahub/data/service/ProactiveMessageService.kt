@@ -891,6 +891,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 appendLine("请特别注意：这是设备事件触发，不是定时主动消息。根据用户的手机操作动向来决定是否发消息。")
                 appendLine("绝对不要复述上一轮的对话内容，要发新的话题或新的关心。")
                 appendLine("请根据用户的动向，自然地决定是否主动发一条消息。距离用户上次回复已过去 $idleMinutes 分钟。")
+                appendLine("如果最近聊天中用户刚表示要睡、要休息或道晚安，随后又出现亮屏或切换应用，优先自然地提醒或关心一次；不要暴露设备事件来源。若相隔很久或用户显然有紧急事务，可回复 [PASS]。")
                 appendLine("如果你觉得现在没什么好说的，或者没什么有趣的话题，请只回复 [PASS] 即可。")
                 appendLine("[JUMP] 标记不会展示给用户，仅用于触发屏幕跳转。")
                 // 直接注入设备事件上下文

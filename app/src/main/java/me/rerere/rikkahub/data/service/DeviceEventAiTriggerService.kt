@@ -56,6 +56,8 @@ class DeviceEventAiTriggerService : Service() {
     companion object {
         const val NOTIFICATION_ID = 20005
         private const val POLL_INTERVAL_MS = 3000L
+        private const val PREFS_NAME = "aggressive_mode"
+        private const val KEY_LAST_TRIGGER_TIME = "last_trigger_time"
         // 默认防抖延迟（毫秒），仅在读取设置失败/值非法时兜底使用
         private const val DEFAULT_DEBOUNCE_DELAY_MS = 30_000L
 
@@ -110,6 +112,9 @@ class DeviceEventAiTriggerService : Service() {
 
     // 上次 AI 思考时间，用于限流
     private var lastAiTriggerTimeMs: Long = 0L
+    // A cancelled debounce can reach triggerAiThinking at the same instant as its replacement.
+    // Serialize the entire claim so one event burst can never create two AI requests.
+    private val triggerMutex = Mutex()
 
     private data class DeviceEvent(
         val type: String,        // screen_on, screen_off, app_switch, home
@@ -295,52 +300,65 @@ class DeviceEventAiTriggerService : Service() {
     }
 
     private suspend fun triggerAiThinking() {
-        try {
-            val settingsStore = GlobalContext.get().get<SettingsStore>()
-            val settings = settingsStore.settingsFlowRaw.first()
-            val proactiveSetting = settings.proactiveMessageSetting
+        triggerMutex.withLock {
+            try {
+                val settingsStore = GlobalContext.get().get<SettingsStore>()
+                val settings = settingsStore.settingsFlowRaw.first()
+                val proactiveSetting = settings.proactiveMessageSetting
 
-            // 检查是否仍启用（激进模式可独立工作，不依赖主动消息开关）
-            if (!proactiveSetting.aggressiveModeEnabled) {
-                Log.d(TAG, "Aggressive mode disabled, skip")
-                return
+                // 检查是否仍启用（激进模式可独立工作，不依赖主动消息开关）
+                if (!proactiveSetting.aggressiveModeEnabled) {
+                    Log.d(TAG, "Aggressive mode disabled, skip")
+                    return@withLock
+                }
+
+                // Keep the rate limit across a short service restart as well as within this process.
+                val minIntervalMs = proactiveSetting.aggressiveMinIntervalSeconds * 1000L
+                val now = System.currentTimeMillis()
+                val persistedLastTriggerTime = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getLong(KEY_LAST_TRIGGER_TIME, 0L)
+                val effectiveLastTriggerTime = maxOf(lastAiTriggerTimeMs, persistedLastTriggerTime)
+                if (now - effectiveLastTriggerTime < minIntervalMs) {
+                    Log.d(
+                        TAG,
+                        "Rate limited, skip (${(now - effectiveLastTriggerTime) / 1000}s < " +
+                            "${proactiveSetting.aggressiveMinIntervalSeconds}s)"
+                    )
+                    return@withLock
+                }
+
+                // 取出缓冲区事件
+                val events = eventBufferMutex.withLock {
+                    val copy = eventBuffer.toList()
+                    eventBuffer.clear()
+                    copy
+                }
+
+                if (events.isEmpty()) {
+                    Log.d(TAG, "No events to process")
+                    return@withLock
+                }
+
+                lastAiTriggerTimeMs = now
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .putLong(KEY_LAST_TRIGGER_TIME, now)
+                    .apply()
+                Log.d(TAG, "Triggering AI thinking with ${events.size} events")
+
+                // 构建事件上下文
+                val eventContext = buildEventContext(events)
+
+                // 复用 ProactiveMessageTriggerService 的 AI 思考逻辑
+                val triggerIntent = Intent(this@DeviceEventAiTriggerService, ProactiveMessageTriggerService::class.java).apply {
+                    putExtra(ProactiveMessageTriggerService.EXTRA_FORCE_TRIGGER, true)
+                    putExtra(ProactiveMessageTriggerService.EXTRA_DEVICE_EVENT_CONTEXT, eventContext)
+                }
+                startForegroundService(triggerIntent)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "triggerAiThinking failed", e)
             }
-
-            // 限流检查
-            val minIntervalMs = proactiveSetting.aggressiveMinIntervalSeconds * 1000L
-            val now = System.currentTimeMillis()
-            if (now - lastAiTriggerTimeMs < minIntervalMs) {
-                Log.d(TAG, "Rate limited, skip (${(now - lastAiTriggerTimeMs) / 1000}s < ${proactiveSetting.aggressiveMinIntervalSeconds}s)")
-                return
-            }
-
-            // 取出缓冲区事件
-            val events = eventBufferMutex.withLock {
-                val copy = eventBuffer.toList()
-                eventBuffer.clear()
-                copy
-            }
-
-            if (events.isEmpty()) {
-                Log.d(TAG, "No events to process")
-                return
-            }
-
-            lastAiTriggerTimeMs = now
-            Log.d(TAG, "Triggering AI thinking with ${events.size} events")
-
-            // 构建事件上下文
-            val eventContext = buildEventContext(events)
-
-            // 复用 ProactiveMessageTriggerService 的 AI 思考逻辑
-            val triggerIntent = Intent(this@DeviceEventAiTriggerService, ProactiveMessageTriggerService::class.java).apply {
-                putExtra(ProactiveMessageTriggerService.EXTRA_FORCE_TRIGGER, true)
-                putExtra(ProactiveMessageTriggerService.EXTRA_DEVICE_EVENT_CONTEXT, eventContext)
-            }
-            startForegroundService(triggerIntent)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "triggerAiThinking failed", e)
         }
     }
 

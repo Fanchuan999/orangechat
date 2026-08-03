@@ -33,6 +33,7 @@ import androidx.core.content.ContextCompat
 import coil3.SingletonImageLoader
 import coil3.target.ImageViewTarget
 import coil3.request.ImageRequest
+import coil3.request.allowHardware
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -311,6 +312,9 @@ class FloatingBubbleService : Service() {
                 val loader = SingletonImageLoader.get(this@FloatingBubbleService)
                 val request = ImageRequest.Builder(this@FloatingBubbleService)
                     .data(url)
+                    // Overlay windows may be rendered in software on some devices (including
+                    // iQOO/OriginOS). A hardware bitmap cannot be drawn by ImageView there.
+                    .allowHardware(false)
                     .target(ImageViewTarget(imageView))
                     .build()
                 loader.execute(request)
