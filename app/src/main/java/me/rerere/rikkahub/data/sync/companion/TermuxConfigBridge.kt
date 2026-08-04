@@ -46,6 +46,22 @@ class TermuxConfigBridge(
         )
     }
 
+    /**
+     * Uses Termux's documented RunCommand entry point directly. This is more
+     * reliable than the tiny local bridge for a first-time setup command that
+     * creates several files and installs an isolated Python environment.
+     */
+    suspend fun executeDirectlyAndWait(
+        command: String,
+        completionFile: File,
+        timeoutMessage: String,
+        waitAttempts: Int,
+    ) = withContext(Dispatchers.IO) {
+        require(isTermuxInstalled()) { "没有检测到可用的 Termux。" }
+        launchCommand(command = command, workDir = TERMUX_HOME)
+        waitForFile(completionFile, timeoutMessage, waitAttempts)
+    }
+
     suspend fun exportConfigArchive(): File = withContext(Dispatchers.IO) {
         val output = sharedFile("termux_config_${UUID.randomUUID()}.tar.gz")
         executeWithFallback(

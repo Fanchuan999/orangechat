@@ -59,7 +59,7 @@ class AmapMcpService(
 
         val resultFile = resultFile()
         resultFile.delete()
-        termuxConfigBridge.executeAndWait(
+        termuxConfigBridge.executeDirectlyAndWait(
             command = launchSetupCommand(cleanedKey, resultFile),
             completionFile = resultFile,
             timeoutMessage = "高德路线服务在四分钟内没有准备好。请打开 Termux 看看 ~/daddy-amap/setup.log。",
