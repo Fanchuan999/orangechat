@@ -26,4 +26,14 @@ data class ProactiveMessageSetting(
     val aggressiveDebounceSeconds: Int = 30,
     // 悬浮球：主动消息到达时以 Telegram 风格悬浮球提醒，点击直接进入聊天页
     val floatingBubbleEnabled: Boolean = false,
+    // 晚安守夜：只在用户本人明确道晚安后运行，不依赖泛用的激进模式。
+    val nightWatchSetting: NightWatchSetting = NightWatchSetting(),
+)
+
+@Serializable
+data class NightWatchSetting(
+    val enabled: Boolean = false,
+    // 用户确认的规则：道晚安后 10 分钟开始观察；之后每 10 分钟最多提醒一次。
+    val firstCheckMinutes: Int = 10,
+    val repeatIntervalMinutes: Int = 10,
 )

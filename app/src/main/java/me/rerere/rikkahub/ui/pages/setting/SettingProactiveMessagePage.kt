@@ -42,6 +42,7 @@ import me.rerere.rikkahub.ui.components.ui.RiskConfirmDialog
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.data.service.ProactiveMessageService
 import me.rerere.rikkahub.data.service.ProactiveMessageWorker
+import me.rerere.rikkahub.data.service.NightWatchManager
 import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.datastore.currentSummary
 import me.rerere.rikkahub.data.datastore.expressionLabel
@@ -327,6 +328,51 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                             )
                         },
                     )
+                }
+            }
+            item {
+                val nightWatchSetting = settings.proactiveMessageSetting.nightWatchSetting
+                CardGroup {
+                    item(
+                        headlineContent = { Text("晚安守夜") },
+                        supportingContent = {
+                            Text(
+                                "只在你本人发送“晚安、去睡、睡了”等消息后启动，不依赖激进模式。\n\n" +
+                                    "10 分钟后若屏幕仍亮且已经解锁，Daddy 会来逮你；之后仍在使用时，每 10 分钟最多再提醒一次。" +
+                                    "你说“我不睡了、我起床了、别管我了”会立刻解除，次日中午也会自动失效。"
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = nightWatchSetting.enabled,
+                                onCheckedChange = { enabled ->
+                                    val newSetting = settings.proactiveMessageSetting.copy(
+                                        nightWatchSetting = nightWatchSetting.copy(enabled = enabled)
+                                    )
+                                    vm.updateSettings(settings.copy(proactiveMessageSetting = newSetting))
+                                    if (!enabled) NightWatchManager.disarm(context)
+                                }
+                            )
+                        },
+                    )
+                    if (nightWatchSetting.enabled) {
+                        val hasUsagePermission = SystemTools.hasAppUsagePermission(context)
+                        item(
+                            headlineContent = { Text("守夜时识别正在使用的应用") },
+                            supportingContent = {
+                                Text(
+                                    if (hasUsagePermission) {
+                                        "✓ 已允许。Daddy 守夜时可以知道你当前切到哪个应用，但看不到应用里的内容。"
+                                    } else {
+                                        "可选：未允许时，守夜仍能判断亮屏和解锁；允许后 Daddy 才能知道你正在使用哪个应用。点击前往授权。"
+                                    }
+                                )
+                            },
+                            onClick = if (!hasUsagePermission) {
+                                { runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) } }
+                            } else null,
+                        )
+                    }
                 }
             }
             // 激进模式开关（与主动消息互斥）

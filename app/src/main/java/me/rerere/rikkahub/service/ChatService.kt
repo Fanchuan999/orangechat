@@ -52,6 +52,7 @@ import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.service.CompanionMoodEngine
+import me.rerere.rikkahub.data.service.NightWatchManager
 import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.ToolApprovalState
@@ -500,6 +501,21 @@ class ChatService(
                 // Local-only continuity state. This does not trigger a model call or notification.
                 runCatching { companionMoodEngine.recordUserMessage() }
                     .onFailure { Log.w(TAG, "Failed to update companion mood after user message", it) }
+
+                // 晚安守夜只识别用户本人刚刚发出的纯文本，不读模型消息、插件事件或历史记录。
+                // 这里写入本地状态/启动前台守夜服务，不会立即调用模型或增加本轮 token。
+                val userText = processedContent.mapNotNull { part ->
+                    (part as? UIMessagePart.Text)?.text
+                }.joinToString("\n")
+                runCatching {
+                    NightWatchManager.onActualUserMessage(
+                        context = context,
+                        setting = settings.proactiveMessageSetting.nightWatchSetting,
+                        assistantId = assistant.id.toString(),
+                        conversationId = conversationId.toString(),
+                        text = userText,
+                    )
+                }.onFailure { Log.w(TAG, "Failed to update night watch after user message", it) }
 
                 // 开始补全
                 if (answer) {

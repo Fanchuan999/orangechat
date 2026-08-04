@@ -258,6 +258,16 @@
         android:value="device event ai trigger for proactive messaging" />
     </service>
 
+    <!-- Night Watch Service: only active after an actual bedtime message, until cancelled or next noon -->
+    <service
+      android:name=".data.service.NightWatchService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="user-requested bedtime routine and screen-state reminder" />
+    </service>
+
     <!-- Supabase Sync Receiver -->
     <receiver
       android:name=".data.service.SupabaseSyncReceiver"

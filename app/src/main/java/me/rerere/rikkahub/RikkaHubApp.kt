@@ -38,6 +38,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.service.DailySummaryService
 import me.rerere.rikkahub.data.service.DeviceEventAiTriggerService
 import me.rerere.rikkahub.data.service.DeviceEventTrackingService
+import me.rerere.rikkahub.data.service.NightWatchManager
 import me.rerere.rikkahub.data.service.ProactiveMessageService
 import me.rerere.rikkahub.data.service.SupabaseSyncService
 import me.rerere.rikkahub.service.ChatService
@@ -117,6 +118,9 @@ class RikkaHubApp : Application() {
 
         // Reschedule proactive message alarm if enabled
         rescheduleProactiveMessageIfEnabled()
+
+        // If Android restarts this process during the same night, resume the still-valid watch.
+        NightWatchManager.startIfArmed(this)
 
         // Reschedule Supabase sync alarm if enabled
         rescheduleSupabaseSyncIfEnabled()

@@ -420,6 +420,9 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         const val EXTRA_FORCE_TRIGGER = "force_trigger"
         // 激进模式设备事件上下文（由 DeviceEventAiTriggerService 传入）
         const val EXTRA_DEVICE_EVENT_CONTEXT = "device_event_context"
+        // 守夜等有明确来源的主动触发需要回到用户当时说晚安的那个助手与对话。
+        const val EXTRA_TARGET_ASSISTANT_ID = "target_assistant_id"
+        const val EXTRA_TARGET_CONVERSATION_ID = "target_conversation_id"
 
         // 保护 last_triggered_time 的 check-then-act 竞态（防止 AlarmManager 与 WorkManager
         // 前后脚触发导致"最小间隔"被砍半）。纯同步 SharedPreferences 读写，无挂起点，用对象锁即可。
@@ -453,6 +456,10 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         // 激进模式设备事件上下文（由 DeviceEventAiTriggerService 传入）
         val deviceEventContext = intent?.getStringExtra(EXTRA_DEVICE_EVENT_CONTEXT)
         val isFromDeviceEvent = deviceEventContext != null
+        val targetAssistantId = intent?.getStringExtra(EXTRA_TARGET_ASSISTANT_ID)
+            ?.let { value -> runCatching { kotlin.uuid.Uuid.parse(value) }.getOrNull() }
+        val targetConversationId = intent?.getStringExtra(EXTRA_TARGET_CONVERSATION_ID)
+            ?.let { value -> runCatching { kotlin.uuid.Uuid.parse(value) }.getOrNull() }
         if (isForceTrigger) {
             Log.d(TAG, "Force trigger${if (isFromDeviceEvent) " from device event" else " from gateway poll"}, will skip min interval check")
         }
@@ -525,7 +532,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 }
 
                 // 获取助手
-                val assistant = settings.assistants.find { it.id.toString() == proactiveSetting.assistantId }
+                val assistant = settings.assistants.find { it.id == targetAssistantId }
+                    ?: settings.assistants.find { it.id.toString() == proactiveSetting.assistantId }
                     ?: settings.getCurrentAssistant()
                 val assistantUuid = assistant.id
                 val model = settings.findModelById(assistant.chatModelId ?: settings.chatModelId)
@@ -538,10 +546,15 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 }
 
                 // 找到最近的对话
-                val recentConversations = conversationRepository.getRecentConversations(assistantUuid, limit = 1)
-                val conversation = if (recentConversations.isNotEmpty()) {
-                    conversationRepository.getConversationById(recentConversations.first().id)
-                } else null
+                val conversation = targetConversationId?.let { requestedId ->
+                    conversationRepository.getConversationById(requestedId)
+                        ?.takeIf { it.assistantId == assistantUuid }
+                } ?: run {
+                    val recentConversations = conversationRepository.getRecentConversations(assistantUuid, limit = 1)
+                    if (recentConversations.isNotEmpty()) {
+                        conversationRepository.getConversationById(recentConversations.first().id)
+                    } else null
+                }
 
                 conversationId = conversation?.id ?: kotlin.uuid.Uuid.random()
                 val conversationId = conversationId!!

@@ -323,6 +323,13 @@ class DeviceEventAiTriggerService : Service() {
                     return@withLock
                 }
 
+                // 两个功能可以同时开启；但用户已经说晚安时，专用守夜服务拥有优先权。
+                // 这样同一段手机使用不会被泛用激进模式和守夜模式各触发一次。
+                if (NightWatchManager.isArmed(this@DeviceEventAiTriggerService)) {
+                    Log.d(TAG, "Night watch is armed, defer generic aggressive trigger")
+                    return@withLock
+                }
+
                 // Keep the rate limit across a short service restart as well as within this process.
                 val minIntervalMs = proactiveSetting.aggressiveMinIntervalSeconds * 1000L
                 val now = System.currentTimeMillis()
