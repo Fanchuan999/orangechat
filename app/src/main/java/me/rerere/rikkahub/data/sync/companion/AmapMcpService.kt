@@ -34,7 +34,7 @@ class AmapMcpService(
             val existing = settings.mcpServers.firstOrNull { server ->
                 server.commonOptions.name == MCP_DISPLAY_NAME || serverUrl(server) == MCP_URL
             }
-            val server = McpServerConfig.StreamableHTTPServer(
+            val server = McpServerConfig.SseTransportServer(
                 id = existing?.id ?: kotlin.uuid.Uuid.random(),
                 commonOptions = McpCommonOptions(enable = true, name = MCP_DISPLAY_NAME),
                 url = MCP_URL,
@@ -116,9 +116,10 @@ class AmapMcpService(
         set -eu
         base="${'$'}HOME/daddy-amap"
         . "${'$'}base/.env"
+        export AMAP_MAPS_API_KEY
         export FASTMCP_HOST=127.0.0.1
         export FASTMCP_PORT=8001
-        exec "${'$'}base/venv/bin/python" -m amap_mcp_server streamable-http
+        exec "${'$'}base/venv/bin/python" -m amap_mcp_server sse
     """.trimIndent() + "\n"
 
     private fun installScript(): String = """
@@ -181,7 +182,7 @@ class AmapMcpService(
 
     private companion object {
         const val MCP_DISPLAY_NAME = "Daddy · 高德路线"
-        const val MCP_URL = "http://127.0.0.1:8001/mcp"
+        const val MCP_URL = "http://127.0.0.1:8001/sse"
         const val READY_MARKER = "daddy-amap-ready"
         const val SETUP_WAIT_ATTEMPTS = 320
     }
