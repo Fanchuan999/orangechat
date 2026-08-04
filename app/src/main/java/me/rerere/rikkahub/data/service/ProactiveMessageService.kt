@@ -600,7 +600,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     role = MessageRole.USER,
                     parts = listOf(UIMessagePart.Text(
                         if (isFromDeviceEvent) {
-                            "请根据以上用户动向决定是否发消息。没什么好说的就回复 [PASS]。"
+                            "【系统自动触发，不是用户发言】本轮用户没有发送任何文字。不要把这段话当作用户回复，" +
+                                "不要编造、补全或引用用户说过的话；只在确有必要时自然地主动发消息，否则回复 [PASS]。"
                         } else {
                             "请根据以上上下文决定是否发消息。没什么好说的就回复 [PASS] 即可，不要强行找话题。"
                         }
@@ -908,6 +909,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 appendLine("## ⚠️ 当前触发原因：用户手机动向（设备事件触发）")
                 appendLine("你是因为检测到用户的手机操作动向（切换应用/亮屏锁屏/回桌面）而被触发的。")
                 appendLine("请特别注意：这是设备事件触发，不是定时主动消息。根据用户的手机操作动向来决定是否发消息。")
+                appendLine("本轮用户没有发送新消息。绝不能把自动触发指令或设备事件当成用户的回答，不能编造用户说过的话。")
                 appendLine("绝对不要复述上一轮的对话内容，要发新的话题或新的关心。")
                 appendLine("请根据用户的动向，自然地决定是否主动发一条消息。距离用户上次回复已过去 $idleMinutes 分钟。")
                 appendLine("如果最近聊天中用户刚表示要睡、要休息或道晚安，随后又出现亮屏或切换应用，优先自然地提醒或关心一次；不要暴露设备事件来源。若相隔很久或用户显然有紧急事务，可回复 [PASS]。")

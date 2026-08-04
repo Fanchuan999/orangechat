@@ -36,6 +36,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.rerere.rikkahub.DEVICE_EVENT_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import org.koin.core.context.GlobalContext
 import java.text.SimpleDateFormat
@@ -46,8 +47,8 @@ private const val TAG = "DeviceEventAiTrigger"
 
 /**
  * 激进模式常驻前台服务：
- * - 监听亮屏/锁屏（ACTION_SCREEN_ON / ACTION_SCREEN_OFF 动态广播）
- * - 每 3 秒轮询 UsageStatsManager.queryEvents 检测应用切换/回桌面
+ * - 监听亮屏/锁屏/解锁（ACTION_SCREEN_ON / ACTION_SCREEN_OFF / ACTION_USER_PRESENT）
+ * - 每 3 秒轮询 UsageStatsManager.queryEvents 检测应用切换/回桌面（需要使用情况访问权限）
  * - 收到事件后按用户设置的秒数防抖（批量收集），默认 30 秒，限流检查后触发 AI 思考
  * - AI 思考复用 ProactiveMessageTriggerService 的核心逻辑
  */
@@ -109,6 +110,7 @@ class DeviceEventAiTriggerService : Service() {
     // 上次轮询时记录的前台包名，用于检测切换
     private var lastForegroundPackage: String? = null
     private var lastPollTimeMs: Long = 0L
+    private var hasLoggedMissingUsagePermission = false
 
     // 上次 AI 思考时间，用于限流
     private var lastAiTriggerTimeMs: Long = 0L
@@ -134,6 +136,7 @@ class DeviceEventAiTriggerService : Service() {
                     val eventType = when (intent?.action) {
                         Intent.ACTION_SCREEN_ON -> "screen_on"
                         Intent.ACTION_SCREEN_OFF -> "screen_off"
+                        Intent.ACTION_USER_PRESENT -> "user_present"
                         else -> null
                     } ?: return
                     val now = System.currentTimeMillis()
@@ -146,6 +149,7 @@ class DeviceEventAiTriggerService : Service() {
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_ON)
                 addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_USER_PRESENT)
             }
             ContextCompat.registerReceiver(
                 this,
@@ -199,7 +203,8 @@ class DeviceEventAiTriggerService : Service() {
                 try {
                     val now = System.currentTimeMillis()
                     val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                    if (usm != null) {
+                    if (usm != null && SystemTools.hasAppUsagePermission(this@DeviceEventAiTriggerService)) {
+                        hasLoggedMissingUsagePermission = false
                         val events = usm.queryEvents(lastPollTimeMs - 5000, now)
                         val event = UsageEvents.Event()
                         var detectedForeground: String? = null
@@ -207,7 +212,10 @@ class DeviceEventAiTriggerService : Service() {
 
                         while (events.hasNextEvent()) {
                             events.getNextEvent(event)
-                            if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
+                            val movedToForeground = event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                                    event.eventType == UsageEvents.Event.ACTIVITY_RESUMED)
+                            if (movedToForeground) {
                                 detectedForeground = event.packageName
                                 detectedAppName = getAppName(event.packageName)
                             }
@@ -230,6 +238,9 @@ class DeviceEventAiTriggerService : Service() {
                             }
                             lastForegroundPackage = detectedForeground
                         }
+                    } else if (!hasLoggedMissingUsagePermission) {
+                        hasLoggedMissingUsagePermission = true
+                        Log.w(TAG, "Usage access is missing; screen and unlock events still work, but app switches cannot be observed")
                     }
                     lastPollTimeMs = now
                 } catch (e: Exception) {
@@ -372,6 +383,7 @@ class DeviceEventAiTriggerService : Service() {
             val desc = when (event.type) {
                 "screen_on" -> "亮屏"
                 "screen_off" -> "锁屏"
+                "user_present" -> "解锁并开始使用手机"
                 "app_switch" -> "切换到应用 ${event.appName}"
                 "home" -> "回到桌面"
                 else -> event.type

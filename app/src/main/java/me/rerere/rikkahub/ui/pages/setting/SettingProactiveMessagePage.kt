@@ -42,6 +42,7 @@ import me.rerere.rikkahub.ui.components.ui.RiskConfirmDialog
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.data.service.ProactiveMessageService
 import me.rerere.rikkahub.data.service.ProactiveMessageWorker
+import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.datastore.currentSummary
 import me.rerere.rikkahub.data.datastore.expressionLabel
 import org.koin.compose.koinInject
@@ -83,6 +84,9 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                 try {
                     val intent = android.content.Intent(context, me.rerere.rikkahub.data.service.DeviceEventAiTriggerService::class.java)
                     context.startForegroundService(intent)
+                    if (!SystemTools.hasAppUsagePermission(context)) {
+                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    }
                 } catch (e: Exception) {
                     android.util.Log.e("SettingProactiveMessage", "Failed to start aggressive mode service", e)
                 }
@@ -331,7 +335,7 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                     item(
                         headlineContent = { Text("激进模式") },
                         supportingContent = {
-                            Text("开启后，每次手机切换应用、开屏锁屏、回到桌面都会触发 AI 思考。AI 会根据用户的手机动向自主决定是否主动发消息或切屏。\n\n可以独立开启，不需要同时开启主动消息。\n\n这是一个常驻前台服务，会持续小幅耗电。需要开启使用情况访问权限。\n\nAI 大多数时候会选择 [PASS] 跳过，只在觉得有话要说时才会发消息。")
+                            Text("开启后，亮屏、锁屏、解锁、切换应用或回到桌面都会被记录；安静达到“防抖等待”后，Daddy 才会思考一次。它会遵守最小间隔，避免每次点屏幕都消耗 token。\n\n可以独立开启，不需要同时开启主动消息。应用切换与回桌面需要“使用情况访问”权限；亮屏、锁屏与解锁不需要。\n\nAI 大多数时候会选择 [PASS] 跳过，只在觉得有话要说时才会发消息。")
                         },
                         trailingContent = {
                             Switch(
@@ -350,6 +354,26 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                     )
                     // 最小间隔设置（仅当激进模式开启时显示）
                     if (settings.proactiveMessageSetting.aggressiveModeEnabled) {
+                        val hasUsagePermission = SystemTools.hasAppUsagePermission(context)
+                        item(
+                            headlineContent = { Text("应用切换感知权限") },
+                            supportingContent = {
+                                Text(
+                                    if (hasUsagePermission) {
+                                        "✓ 已允许。Daddy 可以感知切换应用和回到桌面。"
+                                    } else {
+                                        "⚠ 未允许。亮屏、锁屏和解锁仍可触发；切换应用与回到桌面无法感知。点击前往授权。"
+                                    }
+                                )
+                            },
+                            onClick = if (!hasUsagePermission) {
+                                {
+                                    runCatching {
+                                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                                    }
+                                }
+                            } else null,
+                        )
                         item(
                             headlineContent = { Text("激进模式最小间隔 (秒)") },
                             supportingContent = {
