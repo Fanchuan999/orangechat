@@ -29,4 +29,22 @@ class CompanionSpaceSettingTest {
         assertEquals("候选6", candidates.diaryCandidates.first().title)
         assertEquals("候选65", candidates.diaryCandidates.last().title)
     }
+
+    @Test
+    fun littleHouseItemsReplaceByIdAndCanBeRemoved() {
+        val photo = CompanionPhoto(uri = "file:///photo.jpg", createdAtMillis = 1L)
+        val task = CompanionSharedTask(content = "一起看一部电影", createdAtMillis = 2L)
+
+        val setting = CompanionSpaceSetting()
+            .withPhoto(photo)
+            .withPhoto(photo.copy(caption = "第一张照片"))
+            .withSharedTask(task)
+            .withSharedTask(task.copy(completed = true))
+
+        assertEquals(1, setting.photos.size)
+        assertEquals("第一张照片", setting.photos.single().caption)
+        assertEquals(true, setting.sharedTasks.single().completed)
+        assertEquals(0, setting.withoutPhoto(photo.id).photos.size)
+        assertEquals(0, setting.withoutSharedTask(task.id).sharedTasks.size)
+    }
 }

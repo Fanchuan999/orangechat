@@ -46,6 +46,7 @@ import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.service.CompanionMoodEngine
 import me.rerere.rikkahub.data.service.CompanionDiaryService
+import me.rerere.rikkahub.data.service.CompanionSpaceService
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.rikkahub.data.sync.companion.CompanionBackupService
 import me.rerere.search.SearchService
@@ -284,6 +285,8 @@ val dataSourceModule = module {
             mcpManager = get(),
         )
     }
+
+    single { CompanionSpaceService(settingsStore = get()) }
 
     single {
         CompanionBackupService(
