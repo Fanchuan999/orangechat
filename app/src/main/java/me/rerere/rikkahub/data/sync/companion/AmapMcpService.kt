@@ -13,6 +13,7 @@ import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.datastore.AmapRouteSetting
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import java.io.File
+import java.util.Base64
 import java.util.UUID
 
 /**
@@ -59,8 +60,8 @@ class AmapMcpService(
 
         val resultFile = resultFile()
         resultFile.delete()
-        termuxConfigBridge.executeDirectlyAndWait(
-            command = launchSetupCommand(cleanedKey, resultFile),
+        termuxConfigBridge.executeViaLocalBridgeAndWait(
+            commands = bridgeBootstrapCommands(cleanedKey, resultFile),
             completionFile = resultFile,
             timeoutMessage = "高德路线服务在四分钟内没有准备好。请打开 Termux 看看 ~/daddy-amap/setup.log。",
             waitAttempts = SETUP_WAIT_ATTEMPTS,
@@ -85,68 +86,87 @@ class AmapMcpService(
         return File(directory, "amap_setup_${UUID.randomUUID()}.result")
     }
 
-    private fun launchSetupCommand(apiKey: String, resultFile: File): String {
-        val setupScript = """
-            set -eu
-            base="${'$'}HOME/daddy-amap"
-            result=${shellQuote(resultFile.absolutePath)}
-            mkdir -p "${'$'}base" "${'$'}HOME/.termux/boot"
-            {
-              command -v python >/dev/null 2>&1 || { echo 'Termux 里没有 Python；请先安装 Python。'; exit 31; }
-              printf '%s\\n' ${shellQuote("AMAP_MAPS_API_KEY=$apiKey")} > "${'$'}base/.env"
-              chmod 600 "${'$'}base/.env"
-              cat > "${'$'}base/start-amap-mcp.sh" <<'SCRIPT'
-            #!/data/data/com.termux/files/usr/bin/bash
-            set -eu
-            base="${'$'}HOME/daddy-amap"
-            . "${'$'}base/.env"
-            export FASTMCP_HOST=127.0.0.1
-            export FASTMCP_PORT=8001
-            exec "${'$'}base/venv/bin/python" -m amap_mcp_server streamable-http
-            SCRIPT
-              cat > "${'$'}base/install-amap-mcp.sh" <<'SCRIPT'
-            #!/data/data/com.termux/files/usr/bin/bash
-            set -eu
-            base="${'$'}HOME/daddy-amap"
-            mkdir -p "${'$'}base"
-            if [ ! -x "${'$'}base/venv/bin/python" ]; then
-              python -m venv "${'$'}base/venv"
-            fi
-            if ! "${'$'}base/venv/bin/python" -c 'import amap_mcp_server' >/dev/null 2>&1; then
-              "${'$'}base/venv/bin/python" -m pip install --disable-pip-version-check amap-mcp-server
-            fi
-            if [ -f "${'$'}base/amap-mcp.pid" ] && kill -0 "${'$'}(cat "${'$'}base/amap-mcp.pid")" 2>/dev/null; then
-              kill "${'$'}(cat "${'$'}base/amap-mcp.pid")" || true
-              sleep 1
-            fi
-            nohup "${'$'}base/start-amap-mcp.sh" > "${'$'}base/amap-mcp.log" 2>&1 &
-            echo "${'$'}!" > "${'$'}base/amap-mcp.pid"
-            SCRIPT
-              cat > "${'$'}HOME/.termux/boot/start-daddy-amap.sh" <<'SCRIPT'
-            #!/data/data/com.termux/files/usr/bin/bash
-            set -eu
-            base="${'$'}HOME/daddy-amap"
-            [ -x "${'$'}base/install-amap-mcp.sh" ] || exit 0
-            nohup "${'$'}base/install-amap-mcp.sh" > "${'$'}base/boot.log" 2>&1 &
-            SCRIPT
-              chmod 700 "${'$'}base/start-amap-mcp.sh" "${'$'}base/install-amap-mcp.sh" "${'$'}HOME/.termux/boot/start-daddy-amap.sh"
-              "${'$'}base/install-amap-mcp.sh"
-              for attempt in ${'$'}(seq 1 20); do
-                if (echo > /dev/tcp/127.0.0.1/8001) >/dev/null 2>&1; then
-                  printf '%s' ${shellQuote(READY_MARKER)} > "${'$'}result"
-                  exit 0
-                fi
-                sleep 1
-              done
-              echo '高德 MCP 没有监听 8001 端口。' >&2
-              exit 32
-            } > "${'$'}base/setup.log" 2>&1 || {
-              message="${'$'}(tail -n 1 "${'$'}base/setup.log" 2>/dev/null || echo '请查看 setup.log')"
-              printf 'error: %s' "${'$'}message" > "${'$'}result"
-            }
-        """.trimIndent()
-        return "nohup bash -c ${shellQuote(setupScript)} >/dev/null 2>&1 &"
+    /**
+     * The older local bridge is dependable for short commands but silently
+     * drops a very large one. Write the four tiny scripts separately, then
+     * launch the long-running installer in the background.
+     */
+    private fun bridgeBootstrapCommands(apiKey: String, resultFile: File): List<String> {
+        val base = "${'$'}HOME/daddy-amap"
+        val boot = "${'$'}HOME/.termux/boot"
+        return listOf(
+            "mkdir -p \"$base\" \"$boot\"",
+            "printf '%s\\n' ${shellQuote("AMAP_MAPS_API_KEY=$apiKey")} > \"$base/.env\" && chmod 600 \"$base/.env\"",
+            writeScriptCommand("$base/start-amap-mcp.sh", startScript()),
+            writeScriptCommand("$base/install-amap-mcp.sh", installScript()),
+            writeScriptCommand("$base/setup-amap-mcp.sh", setupScript()),
+            writeScriptCommand("$boot/start-daddy-amap.sh", bootScript()),
+            "chmod 700 \"$base/start-amap-mcp.sh\" \"$base/install-amap-mcp.sh\" \"$base/setup-amap-mcp.sh\" \"$boot/start-daddy-amap.sh\"",
+            "nohup \"$base/setup-amap-mcp.sh\" ${shellQuote(resultFile.absolutePath)} >/dev/null 2>&1 &",
+        )
     }
+
+    private fun writeScriptCommand(path: String, script: String): String {
+        val encoded = Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_8))
+        return "printf %s ${shellQuote(encoded)} | base64 -d > \"$path\""
+    }
+
+    private fun startScript(): String = """
+        #!/data/data/com.termux/files/usr/bin/bash
+        set -eu
+        base="${'$'}HOME/daddy-amap"
+        . "${'$'}base/.env"
+        export FASTMCP_HOST=127.0.0.1
+        export FASTMCP_PORT=8001
+        exec "${'$'}base/venv/bin/python" -m amap_mcp_server streamable-http
+    """.trimIndent() + "\n"
+
+    private fun installScript(): String = """
+        #!/data/data/com.termux/files/usr/bin/bash
+        set -eu
+        base="${'$'}HOME/daddy-amap"
+        mkdir -p "${'$'}base"
+        command -v python >/dev/null 2>&1 || { echo 'Termux 里没有 Python；请先安装 Python。'; exit 31; }
+        if [ ! -x "${'$'}base/venv/bin/python" ]; then
+          python -m venv "${'$'}base/venv"
+        fi
+        if ! "${'$'}base/venv/bin/python" -c 'import amap_mcp_server' >/dev/null 2>&1; then
+          "${'$'}base/venv/bin/python" -m pip install --disable-pip-version-check amap-mcp-server
+        fi
+        if [ -f "${'$'}base/amap-mcp.pid" ] && kill -0 "${'$'}(cat "${'$'}base/amap-mcp.pid")" 2>/dev/null; then
+          kill "${'$'}(cat "${'$'}base/amap-mcp.pid")" || true
+          sleep 1
+        fi
+        nohup "${'$'}base/start-amap-mcp.sh" > "${'$'}base/amap-mcp.log" 2>&1 &
+        echo "${'$'}!" > "${'$'}base/amap-mcp.pid"
+    """.trimIndent() + "\n"
+
+    private fun setupScript(): String = """
+        #!/data/data/com.termux/files/usr/bin/bash
+        set -u
+        base="${'$'}HOME/daddy-amap"
+        result="${'$'}{1:?Missing result file}"
+        mkdir -p "${'$'}(dirname "${'$'}result")"
+        if "${'$'}base/install-amap-mcp.sh" > "${'$'}base/setup.log" 2>&1; then
+          for attempt in ${'$'}(seq 1 200); do
+            if (echo > /dev/tcp/127.0.0.1/8001) >/dev/null 2>&1; then
+              printf '%s' '$READY_MARKER' > "${'$'}result"
+              exit 0
+            fi
+            sleep 1
+          done
+        fi
+        message="${'$'}(tail -n 1 "${'$'}base/setup.log" 2>/dev/null || echo '请查看 setup.log')"
+        printf 'error: %s' "${'$'}message" > "${'$'}result"
+    """.trimIndent() + "\n"
+
+    private fun bootScript(): String = """
+        #!/data/data/com.termux/files/usr/bin/bash
+        set -eu
+        base="${'$'}HOME/daddy-amap"
+        [ -x "${'$'}base/install-amap-mcp.sh" ] || exit 0
+        nohup "${'$'}base/install-amap-mcp.sh" > "${'$'}base/boot.log" 2>&1 &
+    """.trimIndent() + "\n"
 
     private fun serverUrl(server: McpServerConfig): String = when (server) {
         is McpServerConfig.SseTransportServer -> server.url

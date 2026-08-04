@@ -62,6 +62,21 @@ class TermuxConfigBridge(
         waitForFile(completionFile, timeoutMessage, waitAttempts)
     }
 
+    /**
+     * Sends a small sequence of commands through the user's existing local
+     * bridge. This intentionally avoids the Android-side RUN_COMMAND
+     * permission, which some OEM Termux builds do not expose to the user.
+     */
+    suspend fun executeViaLocalBridgeAndWait(
+        commands: List<String>,
+        completionFile: File,
+        timeoutMessage: String,
+        waitAttempts: Int,
+    ) = withContext(Dispatchers.IO) {
+        commands.forEach(::runWithLocalBridge)
+        waitForFile(completionFile, timeoutMessage, waitAttempts)
+    }
+
     suspend fun exportConfigArchive(): File = withContext(Dispatchers.IO) {
         val output = sharedFile("termux_config_${UUID.randomUUID()}.tar.gz")
         executeWithFallback(
