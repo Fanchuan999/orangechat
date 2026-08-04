@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -59,6 +60,7 @@ import me.rerere.rikkahub.data.datastore.currentSummary
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.service.CompanionDiaryService
 import me.rerere.rikkahub.data.service.CompanionSpaceService
+import me.rerere.rikkahub.data.sync.companion.AmapMcpService
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.context.LocalNavController
@@ -75,6 +77,7 @@ fun CompanionSpacePage(
     vm: SettingVM = koinInject(),
     diaryService: CompanionDiaryService = koinInject(),
     spaceService: CompanionSpaceService = koinInject(),
+    amapMcpService: AmapMcpService = koinInject(),
     filesManager: FilesManager = koinInject(),
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -92,6 +95,8 @@ fun CompanionSpacePage(
     var showAnniversaryEditor by remember { mutableStateOf(false) }
     var showLetterEditor by remember { mutableStateOf(false) }
     var photoCaptionTarget by remember { mutableStateOf<CompanionPhoto?>(null) }
+    var showAmapSetup by remember { mutableStateOf(false) }
+    var installingAmap by remember { mutableStateOf(false) }
 
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -183,6 +188,26 @@ fun CompanionSpacePage(
         )
     }
 
+    if (showAmapSetup) {
+        AmapSetupDialog(
+            initialApiKey = space.amapRouteSetting.apiKey,
+            installing = installingAmap,
+            onDismiss = { if (!installingAmap) showAmapSetup = false },
+            onSave = { apiKey ->
+                installingAmap = true
+                scope.launch {
+                    amapMcpService.saveAndInstall(apiKey)
+                        .onSuccess {
+                            snackbar.showSnackbar("高德路线已经连上 Daddy 了，可以直接问路线。")
+                            showAmapSetup = false
+                        }
+                        .onFailure { error -> snackbar.showSnackbar(error.message ?: "高德路线服务没有安装成功。") }
+                    installingAmap = false
+                }
+            },
+        )
+    }
+
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
@@ -208,6 +233,42 @@ fun CompanionSpacePage(
                         headlineContent = { Text(settings.companionMoodSetting.currentSummary()) },
                         supportingContent = {
                             Text("这是本地情绪引擎的状态卡，不会调用模型。点这里可编辑生活线与状态卡。")
+                        },
+                    )
+                }
+            }
+
+            item {
+                CardGroup(title = { Text("高德路线") }) {
+                    item(
+                        headlineContent = {
+                            Text(
+                                if (space.amapRouteSetting.apiKey.isBlank()) {
+                                    "让 Daddy 帮你规划怎么去"
+                                } else {
+                                    "路线服务已保存，可随时重新启动"
+                                }
+                            )
+                        },
+                        supportingContent = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "支持步行、骑行、驾车、公交与距离查询。服务只在本机 127.0.0.1:8001 运行，" +
+                                        "不会把你的路线服务暴露到网络上。"
+                                )
+                                Button(
+                                    enabled = !installingAmap,
+                                    onClick = { showAmapSetup = true },
+                                ) {
+                                    Text(
+                                        when {
+                                            installingAmap -> "正在准备高德服务…"
+                                            space.amapRouteSetting.apiKey.isBlank() -> "填写高德 Key 并启动"
+                                            else -> "重新安装 / 更换 Key"
+                                        }
+                                    )
+                                }
+                            }
                         },
                     )
                 }
@@ -605,6 +666,43 @@ private fun PhotoCaptionDialog(
         },
         confirmButton = { Button(onClick = { onSave(caption) }) { Text("保存") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun AmapSetupDialog(
+    initialApiKey: String,
+    installing: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+) {
+    var apiKey by remember(initialApiKey) { mutableStateOf(initialApiKey) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("连接 Daddy 的高德路线") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("请粘贴高德开放平台创建的“Web 服务”类型 Key。Daddy 会在 Termux 安装路线服务，并固定连接本机地址。")
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it.trim().take(128) },
+                    label = { Text("高德 Web 服务 Key") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Text("按你的备份习惯，Key 会保存在本机 Daddy 设置和 Termux 配置备份中；不会上传到别的服务。")
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = apiKey.length >= 16 && !installing,
+                onClick = { onSave(apiKey) },
+            ) { Text(if (installing) "正在安装…" else "保存并启动") }
+        },
+        dismissButton = {
+            TextButton(enabled = !installing, onClick = onDismiss) { Text("取消") }
+        },
     )
 }
 

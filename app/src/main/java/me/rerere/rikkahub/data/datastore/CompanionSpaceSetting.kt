@@ -20,6 +20,15 @@ data class CompanionSpaceSetting(
     val anniversaries: List<CompanionAnniversary> = emptyList(),
     val letters: List<CompanionLetter> = emptyList(),
     val sharedTasks: List<CompanionSharedTask> = emptyList(),
+    /** Kept locally so Daddy's normal backup can restore the Amap service key too. */
+    val amapRouteSetting: AmapRouteSetting = AmapRouteSetting(),
+)
+
+/** The local-only configuration for Daddy's Termux-hosted Amap MCP service. */
+@Serializable
+data class AmapRouteSetting(
+    val apiKey: String = "",
+    val configuredAtMillis: Long? = null,
 )
 
 /** A local image reference in the companion-space photo wall. */

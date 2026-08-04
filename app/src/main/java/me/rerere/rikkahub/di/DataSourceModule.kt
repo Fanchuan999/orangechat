@@ -48,7 +48,9 @@ import me.rerere.rikkahub.data.service.CompanionMoodEngine
 import me.rerere.rikkahub.data.service.CompanionDiaryService
 import me.rerere.rikkahub.data.service.CompanionSpaceService
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
+import me.rerere.rikkahub.data.sync.companion.AmapMcpService
 import me.rerere.rikkahub.data.sync.companion.CompanionBackupService
+import me.rerere.rikkahub.data.sync.companion.TermuxConfigBridge
 import me.rerere.search.SearchService
 import me.rerere.rikkahub.data.sync.S3Sync
 import okhttp3.Dispatcher
@@ -287,6 +289,14 @@ val dataSourceModule = module {
     }
 
     single { CompanionSpaceService(settingsStore = get()) }
+
+    single {
+        AmapMcpService(
+            context = get(),
+            settingsStore = get(),
+            termuxConfigBridge = TermuxConfigBridge(get()),
+        )
+    }
 
     single {
         CompanionBackupService(

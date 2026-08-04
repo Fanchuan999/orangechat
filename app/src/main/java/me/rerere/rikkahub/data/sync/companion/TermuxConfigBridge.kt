@@ -23,9 +23,29 @@ import java.util.UUID
  * Uses the installed local termux-bridge server first, then Termux's documented RunCommand bridge as a fallback.
  * Personal complete backups intentionally include the user's local service configuration and credentials.
  */
-internal class TermuxConfigBridge(
+class TermuxConfigBridge(
     private val context: Context,
 ) {
+    /**
+     * Runs a small, Daddy-owned setup job in Termux and waits for its result file.
+     * The job itself is normally backgrounded, so long package installs do not hold
+     * the local bridge HTTP request open.
+     */
+    suspend fun executeAndWait(
+        command: String,
+        completionFile: File,
+        timeoutMessage: String,
+        waitAttempts: Int,
+    ) = withContext(Dispatchers.IO) {
+        executeWithFallback(
+            command = command,
+            completionFile = completionFile,
+            timeoutMessage = timeoutMessage,
+            bridgeWaitAttempts = waitAttempts,
+            fallbackWaitAttempts = waitAttempts,
+        )
+    }
+
     suspend fun exportConfigArchive(): File = withContext(Dispatchers.IO) {
         val output = sharedFile("termux_config_${UUID.randomUUID()}.tar.gz")
         executeWithFallback(
@@ -71,10 +91,12 @@ internal class TermuxConfigBridge(
         command: String,
         completionFile: File,
         timeoutMessage: String,
+        bridgeWaitAttempts: Int = BRIDGE_WAIT_ATTEMPTS,
+        fallbackWaitAttempts: Int = FILE_WAIT_ATTEMPTS,
     ) {
         val bridgeFailure = runCatching {
             runWithLocalBridge(command)
-            waitForFile(completionFile, timeoutMessage, BRIDGE_WAIT_ATTEMPTS)
+            waitForFile(completionFile, timeoutMessage, bridgeWaitAttempts)
         }.exceptionOrNull()
         if (bridgeFailure == null) return
 
@@ -85,7 +107,7 @@ internal class TermuxConfigBridge(
         waitForFile(
             file = completionFile,
             timeoutMessage = "$timeoutMessage 同时，Termux 官方命令接口也未能完成。",
-            attempts = FILE_WAIT_ATTEMPTS,
+            attempts = fallbackWaitAttempts,
         )
     }
 
@@ -145,7 +167,7 @@ internal class TermuxConfigBridge(
         temporary="${'$'}output.tmp"
         mkdir -p "${'$'}(dirname "${'$'}output")"
         items=""
-        for directory in .termux .shortcuts bin termux-mcp; do
+        for directory in .termux .shortcuts bin termux-mcp daddy-amap; do
           if [ -e "${'$'}HOME/${'$'}directory" ]; then
             if [ "${'$'}directory" = termux-mcp ]; then
               links="${'$'}(find "${'$'}HOME/${'$'}directory" \
@@ -183,7 +205,7 @@ internal class TermuxConfigBridge(
         staging="${'$'}HOME/.cache/orangechat-restore-$id"
         tar -tzf "${'$'}archive" | while IFS= read -r path; do
           case "${'$'}path" in
-            .termux|.termux/*|.shortcuts|.shortcuts/*|bin|bin/*|termux-mcp|termux-mcp/*|\
+            .termux|.termux/*|.shortcuts|.shortcuts/*|bin|bin/*|termux-mcp|termux-mcp/*|daddy-amap|daddy-amap/*|\
             .Ombre-Brain/.env|Ombre-Brain/config.yaml|termux_bridge.py|start_services.sh) ;;
             *) echo "Unsafe Termux archive path: ${'$'}path" >&2; exit 21 ;;
           esac
@@ -195,7 +217,7 @@ internal class TermuxConfigBridge(
           echo "Unsafe symbolic link in Termux archive" >&2
           exit 22
         fi
-        for directory in .termux .shortcuts bin termux-mcp; do
+        for directory in .termux .shortcuts bin termux-mcp daddy-amap; do
           if [ -d "${'$'}staging/${'$'}directory" ]; then
             mkdir -p "${'$'}HOME/${'$'}directory"
             cp -R "${'$'}staging/${'$'}directory/." "${'$'}HOME/${'$'}directory/"
@@ -214,6 +236,10 @@ internal class TermuxConfigBridge(
             cp "${'$'}staging/${'$'}file" "${'$'}HOME/${'$'}file"
           fi
         done
+        if [ -x "${'$'}HOME/daddy-amap/install-amap-mcp.sh" ]; then
+          nohup "${'$'}HOME/daddy-amap/install-amap-mcp.sh" \
+            > "${'$'}HOME/daddy-amap/restore.log" 2>&1 &
+        fi
         rm -rf "${'$'}staging"
         : > "${'$'}completion"
     """.trimIndent()
