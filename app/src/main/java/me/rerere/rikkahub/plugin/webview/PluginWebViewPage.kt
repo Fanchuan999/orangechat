@@ -763,8 +763,21 @@ fun PluginWebViewPage(
                             // 禁用原生长按选择菜单 - 通过CSS/JS控制，不再用原生拦截
                             // （原生setOnLongClickListener会阻止批注模式的文字选择）
 
-                            val htmlFile = File(pluginInfo.directory, htmlEntryPath)
-                            if (htmlFile.exists()) {
+                            // Android 11+ installs plugin code in the managed app-private
+                            // directory. A page opened from an older detail screen can still
+                            // carry a legacy PluginInfo path, so resolve the managed copy here
+                            // and fall back only for plugins that have not been migrated yet.
+                            val managedHtmlFile = File(
+                                File(pluginManager.getPluginsDirectory(), pluginId),
+                                htmlEntryPath
+                            )
+                            val htmlFile = when {
+                                managedHtmlFile.isFile -> managedHtmlFile
+                                File(pluginInfo.directory, htmlEntryPath).isFile ->
+                                    File(pluginInfo.directory, htmlEntryPath)
+                                else -> null
+                            }
+                            if (htmlFile != null) {
                                 loadUrl("file://${htmlFile.absolutePath}")
                             } else {
                                 loadData(
