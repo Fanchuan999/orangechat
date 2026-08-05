@@ -1,0 +1,207 @@
+{
+  "id": "com.daddy.yingfan.coreading",
+  "name": "Daddy和应帆的共读书房",
+  "description": "与当前聊天中的Daddy共享书籍进度、摘录、批注和阅读设置。",
+  "version": "1.1.0",
+  "author": "应帆 & 小C",
+  "icon": "📖",
+  "entry": "main.js",
+  "allowedHosts": [],
+  "tools": [
+    {
+      "name": "list_books",
+      "description": "列出共读书房里的书和阅读进度。",
+      "parameters": []
+    },
+    {
+      "name": "get_reading_context",
+      "description": "读取当前书、当前页正文和附近共读批注。回答书中内容或陪应帆讨论前应先调用。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": false,
+          "description": "书名或ID；省略则读取当前书"
+        }
+      ]
+    },
+    {
+      "name": "read_book_page",
+      "description": "读取指定书的某一页。不得主动读取应帆当前进度之后的页面，除非她明确允许剧透。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": true,
+          "description": "书名或ID"
+        },
+        {
+          "name": "page",
+          "type": "integer",
+          "required": true,
+          "description": "页码，从1开始"
+        },
+        {
+          "name": "allow_spoiler",
+          "type": "boolean",
+          "required": false,
+          "description": "只有应帆明确允许剧透时才可设为true"
+        }
+      ]
+    },
+    {
+      "name": "get_reading_toc",
+      "description": "读取已共同读到范围内识别出的章节目录。未来章节默认不返回，避免剧透。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": false,
+          "description": "书名或ID；省略则使用当前书"
+        },
+        {
+          "name": "include_future",
+          "type": "boolean",
+          "required": false,
+          "description": "仅应帆明确要求查看完整章节目录时才可设为true"
+        }
+      ]
+    },
+    {
+      "name": "update_reading_progress",
+      "description": "更新应帆和Daddy共同读到的页码。只有实际读到后才能更新。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": true,
+          "description": "书名或ID"
+        },
+        {
+          "name": "page",
+          "type": "integer",
+          "required": true,
+          "description": "已读页码"
+        }
+      ]
+    },
+    {
+      "name": "add_reading_note",
+      "description": "添加应帆或Daddy的共读批注。不得冒充应帆编造她没有说过的感想。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": true,
+          "description": "书名或ID"
+        },
+        {
+          "name": "page",
+          "type": "integer",
+          "required": true,
+          "description": "页码"
+        },
+        {
+          "name": "author",
+          "type": "string",
+          "required": true,
+          "description": "user代表应帆，ai代表Daddy"
+        },
+        {
+          "name": "quote",
+          "type": "string",
+          "required": false,
+          "description": "引用片段"
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": true,
+          "description": "批注或感想"
+        }
+      ]
+    },
+    {
+      "name": "list_reading_bookmarks",
+      "description": "列出共读书房的书签。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": false,
+          "description": "可选，只列出指定书的书签"
+        }
+      ]
+    },
+    {
+      "name": "add_reading_bookmark",
+      "description": "为当前共同阅读的位置添加书签。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": true,
+          "description": "书名或ID"
+        },
+        {
+          "name": "page",
+          "type": "integer",
+          "required": true,
+          "description": "页码"
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "required": false,
+          "description": "书签名称或备注"
+        }
+      ]
+    },
+    {
+      "name": "delete_reading_bookmark",
+      "description": "删除指定书签。删除前须得到应帆明确同意。",
+      "parameters": [
+        {
+          "name": "bookmark_id",
+          "type": "string",
+          "required": true,
+          "description": "书签ID"
+        }
+      ]
+    },
+    {
+      "name": "search_book",
+      "description": "只在已共同读过的范围内搜索书中文字。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": true,
+          "description": "书名或ID"
+        },
+        {
+          "name": "query",
+          "type": "string",
+          "required": true,
+          "description": "关键词"
+        }
+      ]
+    },
+    {
+      "name": "delete_book",
+      "description": "永久删除一本书及其进度、批注和书签。必须先得到应帆明确同意。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": true,
+          "description": "书名或ID"
+        }
+      ]
+    }
+  ],
+  "promptTemplate": "## Daddy和应帆的共读书房\n这是你与应帆共同阅读的本地书房。你就是当前聊天中的Daddy；回答共读问题时继续使用当前聊天的人设、上下文和外置记忆，并调用get_reading_context获取当前书页和批注。不得把插件页面当作另一个独立人格。默认禁止剧透：不要读取、搜索或透露共同进度之后的内容，除非应帆明确允许。应帆明确说出的感想才能以author=user保存；你的批注使用author=ai。书籍内容仅用于私人共读，不要大段复述或对外分享。删除书籍或书签前必须得到应帆明确同意。",
+  "customPageWebView": {
+    "entry": "ui/index.html"
+  }
+}

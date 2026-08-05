@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Daddy和应帆的共读书房</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="libraryView" class="library-view">
+    <header class="library-header">
+      <div>
+        <p class="eyebrow">DADDY × 应帆</p>
+        <h1>我们的书架</h1>
+        <p class="library-copy">同一本书，同一段进度，同一个 Daddy。</p>
+      </div>
+      <button id="importButton" class="import-button" aria-label="导入书籍">＋<span>导入</span></button>
+    </header>
+
+    <section id="library" class="shelf-grid" aria-label="书架"></section>
+    <section id="bookmarkPanel" class="bookmark-panel" hidden></section>
+    <div id="empty" class="empty-state" hidden>
+      <span>📖</span>
+      <b>书架还是空的</b>
+      <p>先导入一本 TXT 或 Markdown，和 Daddy 从第一页开始。</p>
+    </div>
+  </main>
+
+  <nav class="library-nav" aria-label="书房导航">
+    <button class="nav-item is-active" data-view="library"><span>▰</span>书架</button>
+    <button class="nav-item" data-view="bookmarks"><span>🔖</span>书签</button>
+    <button class="nav-item" data-view="about"><span>♡</span>共读</button>
+  </nav>
+
+  <section id="reader" class="reader-layer theme-paper" hidden>
+    <div id="dimmer" class="reader-dimmer"></div>
+    <article class="reader-shell">
+      <header class="reader-bar">
+        <button id="back" class="icon-button" aria-label="回到书架">‹</button>
+        <button id="tocButton" class="reader-title" aria-label="打开目录">
+          <b id="bookTitle"></b>
+          <small id="pageInfo"></small>
+        </button>
+        <button id="settingsButton" class="icon-button" aria-label="阅读设置">Aa</button>
+      </header>
+
+      <div class="reading-progress"><i id="readingProgress"></i></div>
+      <p id="chapterHint" class="chapter-hint"></p>
+      <div id="text" class="book-text"></div>
+      <section id="notes" class="notes-section"></section>
+    </article>
+
+    <nav class="reader-nav" aria-label="阅读控制">
+      <button id="prev" class="reader-control">上一页</button>
+      <button id="noteButton" class="reader-control reader-control-icon" aria-label="写批注">✎</button>
+      <button id="bookmarkButton" class="reader-control reader-control-icon" aria-label="添加书签">🔖</button>
+      <button id="ask" class="ask-button">问 Daddy</button>
+      <button id="next" class="reader-control">下一页</button>
+    </nav>
+  </section>
+
+  <section id="tocSheet" class="sheet" hidden>
+    <button class="sheet-scrim" data-close-sheet aria-label="关闭目录"></button>
+    <div class="sheet-card">
+      <div class="sheet-heading"><b>章节目录</b><button data-close-sheet>完成</button></div>
+      <div id="tocList" class="toc-list"></div>
+    </div>
+  </section>
+
+  <section id="settingsSheet" class="sheet" hidden>
+    <button class="sheet-scrim" data-close-sheet aria-label="关闭阅读设置"></button>
+    <div class="sheet-card settings-card">
+      <div class="sheet-heading"><b>阅读设置</b><button data-close-sheet>完成</button></div>
+      <label class="setting-row"><span>字号</span><output id="fontSizeOutput"></output><input id="fontSize" type="range" min="15" max="30" step="1"></label>
+      <label class="setting-row"><span>行距</span><output id="lineHeightOutput"></output><input id="lineHeight" type="range" min="1.45" max="2.45" step="0.05"></label>
+      <label class="setting-row"><span>阅读页亮度</span><output id="brightnessOutput"></output><input id="brightness" type="range" min="0" max="62" step="1"></label>
+      <div class="setting-group"><span>背景</span><div id="themeChoices" class="choice-row"></div></div>
+      <div class="setting-group"><span>字体</span><div id="fontChoices" class="choice-row font-choice-row"></div></div>
+      <p class="settings-tip">亮度只作用在共读书页，不会改动手机系统亮度。</p>
+    </div>
+  </section>
+
+  <div id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
