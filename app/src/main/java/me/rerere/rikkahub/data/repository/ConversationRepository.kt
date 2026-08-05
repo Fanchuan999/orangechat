@@ -60,6 +60,17 @@ class ConversationRepository(
         }
     }
 
+    /**
+     * Lightweight list for first-party surfaces that let the user choose an
+     * existing conversation.  Message nodes deliberately stay unloaded here:
+     * callers only need the title, assistant and timestamps to render a picker.
+     */
+    suspend fun getAllConversations(): List<Conversation> {
+        return conversationDAO.getAll().first().map { entity ->
+            conversationEntityToConversation(entity, emptyList())
+        }
+    }
+
     fun getConversationsOfAssistant(assistantId: Uuid): Flow<List<Conversation>> {
         return conversationDAO
             .getConversationsOfAssistant(assistantId.toString())

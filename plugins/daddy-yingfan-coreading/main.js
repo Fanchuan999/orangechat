@@ -1,4 +1,4 @@
-/* Daddy和应帆的共读书房 v1.1.3 */
+/* Daddy和应帆的共读书房 v1.2.1 */
 var BOOK = "book_";
 var CHUNK = "chunk_";
 var NOTE = "note_";
@@ -245,10 +245,37 @@ function add_reading_note(params) {
     author: author,
     quote: clean(params.quote),
     content: content,
-    created_at: now()
+    status: author === "user" ? "pending" : "answered",
+    ai_reply: "",
+    created_at: now(),
+    updated_at: now()
   };
   save(NOTE + found.book.id + "_" + note.id, note);
   return { success: true, message: "共读批注已保存", note: note };
+}
+
+function update_reading_note_reply(params) {
+  params = params || {};
+  var noteId = clean(params.note_id);
+  var reply = clean(params.reply);
+  var keys;
+  var i;
+  var note;
+  if (!noteId) return { success: false, error: "缺少批注 ID" };
+  if (!reply) return { success: false, error: "Daddy 的回复不能为空" };
+  keys = dataStore.list(NOTE);
+  for (i = 0; i < keys.length; i++) {
+    note = json(keys[i], null);
+    if (note && note.id === noteId) {
+      note.ai_reply = reply;
+      note.status = "answered";
+      note.updated_at = now();
+      note.replied_at = now();
+      save(keys[i], note);
+      return { success: true, message: "Daddy 的共读回复已保存", note: note };
+    }
+  }
+  return { success: false, error: "找不到这条共读批注" };
 }
 
 function list_reading_bookmarks(params) {
@@ -369,6 +396,7 @@ exports.read_book_page = read_book_page;
 exports.get_reading_toc = get_reading_toc;
 exports.update_reading_progress = update_reading_progress;
 exports.add_reading_note = add_reading_note;
+exports.update_reading_note_reply = update_reading_note_reply;
 exports.list_reading_bookmarks = list_reading_bookmarks;
 exports.add_reading_bookmark = add_reading_bookmark;
 exports.delete_reading_bookmark = delete_reading_bookmark;

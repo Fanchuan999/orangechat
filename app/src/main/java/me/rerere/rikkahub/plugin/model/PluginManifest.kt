@@ -101,6 +101,7 @@ data class PluginManifest(
      * 支持的权限:
      * - "ai_chat": 允许插件调用 AI 生成文本（Bridge.callAI）
      * - "disable_native_selection": 禁用 WebView 原生长按选择菜单，由 JS 自行处理选区
+     * - "conversation_chat": 允许插件在用户明确选择的既有聊天窗口中发送一条消息并等待回复
      */
     val permissions: List<String> = emptyList(),
 

@@ -57,6 +57,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
@@ -70,6 +71,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
+import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.plugin.data.PluginDataStore
 import me.rerere.rikkahub.plugin.loader.PluginLoader
 import me.rerere.rikkahub.plugin.loader.LoadedPlugin
@@ -77,10 +79,12 @@ import me.rerere.rikkahub.plugin.manager.PluginManager
 import me.rerere.rikkahub.plugin.model.PluginHookConfig
 import me.rerere.rikkahub.plugin.model.PluginInfo
 import me.rerere.rikkahub.plugin.repository.PluginRepository
+import me.rerere.rikkahub.service.ChatService
 import org.json.JSONArray
 import org.json.JSONObject
 import org.koin.compose.koinInject
 import java.io.File
+import kotlin.uuid.Uuid
 
 private const val TAG = "PluginWebViewPage"
 
@@ -1220,6 +1224,115 @@ private class PluginWebViewClient(
                 }
             }
 
+            "listConversations" -> {
+                val callbackId = params["callbackId"] ?: ""
+                if (!pluginInfo.manifest.permissions.contains("conversation_chat")) {
+                    webView.post {
+                        webView.evaluateJavascript(
+                            "window.__bridgeResult('$callbackId', {success:false,error:'Permission denied: conversation_chat permission not declared in manifest'});",
+                            null
+                        )
+                    }
+                    return
+                }
+
+                CoroutineScope(Dispatchers.IO).launch {
+                    val result = try {
+                        val repository: ConversationRepository = org.koin.java.KoinJavaComponent.get(
+                            ConversationRepository::class.java
+                        )
+                        val conversations = JSONArray()
+                        repository.getAllConversations().take(80).forEach { conversation ->
+                            conversations.put(
+                                JSONObject()
+                                    .put("id", conversation.id.toString())
+                                    .put("title", conversation.title.ifBlank { "新聊天" })
+                                    .put("assistantId", conversation.assistantId.toString())
+                                    .put("updatedAt", conversation.updateAt.toString())
+                            )
+                        }
+                        JSONObject().put("success", true).put("conversations", conversations).toString()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "listConversations failed", e)
+                        JSONObject().put("success", false).put("error", e.message ?: "无法读取聊天窗口").toString()
+                    }
+                    webView.post {
+                        webView.evaluateJavascript("window.__bridgeResult('$callbackId', $result);", null)
+                    }
+                }
+            }
+
+            "sendConversationMessage" -> {
+                val callbackId = params["callbackId"] ?: ""
+                if (!pluginInfo.manifest.permissions.contains("conversation_chat")) {
+                    webView.post {
+                        webView.evaluateJavascript(
+                            "window.__bridgeResult('$callbackId', {success:false,error:'Permission denied: conversation_chat permission not declared in manifest'});",
+                            null
+                        )
+                    }
+                    return
+                }
+
+                val conversationId = runCatching { Uuid.parse(params["conversationId"] ?: "") }.getOrNull()
+                val content = params["content"]?.trim().orEmpty()
+                if (conversationId == null || content.isBlank()) {
+                    val error = if (conversationId == null) "请先选择有效的聊天窗口" else "共读消息不能为空"
+                    webView.post {
+                        webView.evaluateJavascript(
+                            "window.__bridgeResult('$callbackId', ${JSONObject().put("success", false).put("error", error)});",
+                            null
+                        )
+                    }
+                    return
+                }
+
+                CoroutineScope(Dispatchers.IO).launch {
+                    val result = try {
+                        val repository: ConversationRepository = org.koin.java.KoinJavaComponent.get(
+                            ConversationRepository::class.java
+                        )
+                        if (repository.getConversationById(conversationId) == null) {
+                            JSONObject().put("success", false).put("error", "这个聊天窗口已不存在").toString()
+                        } else {
+                            val chatService: ChatService = org.koin.java.KoinJavaComponent.get(ChatService::class.java)
+                            // Keep the same live session as the actual chat page so its history, tools,
+                            // memories and all post-processing behave exactly like a user-sent message.
+                            chatService.addConversationReference(conversationId)
+                            chatService.sendMessage(
+                                conversationId = conversationId,
+                                content = listOf(UIMessagePart.Text(content)),
+                                answer = true,
+                            )
+                            val completed = withTimeoutOrNull(120_000L) {
+                                chatService.generationDoneFlow.first { it == conversationId }
+                            }
+                            if (completed == null) {
+                                JSONObject().put("success", false).put("error", "Daddy 思考超时，请到聊天窗口查看或稍后重试").toString()
+                            } else {
+                                val reply = chatService.getConversationFlow(conversationId).value.currentMessages
+                                    .lastOrNull { it.role == MessageRole.ASSISTANT }
+                                    ?.parts
+                                    ?.filterIsInstance<UIMessagePart.Text>()
+                                    ?.joinToString("\n") { it.text }
+                                    ?.trim()
+                                if (reply.isNullOrBlank()) {
+                                    JSONObject().put("success", false).put("error", "Daddy 没有返回可显示的文字，请到聊天窗口查看").toString()
+                                } else {
+                                    JSONObject().put("success", true).put("reply", reply).toString()
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sendConversationMessage failed", e)
+                        JSONObject().put("success", false).put("error", e.message ?: "共读消息发送失败").toString()
+                    }
+                    webView.post {
+                        webView.evaluateJavascript("window.__bridgeResult('$callbackId', $result);", null)
+                    }
+                }
+            }
+
             "notifyHook" -> {
                 val callbackId = params["callbackId"] ?: ""
                 val hookName = params["hookName"] ?: ""
@@ -1555,6 +1668,12 @@ private const val bridgeJavascript = """
         },
         callAI: function(prompt, context) {
             return bridgeCall('callAI', {prompt: prompt, context: context || '{}'});
+        },
+        listConversations: function() {
+            return bridgeCall('listConversations', {});
+        },
+        sendConversationMessage: function(conversationId, content) {
+            return bridgeCall('sendConversationMessage', {conversationId: conversationId, content: content});
         },
         notifyHook: function(hookName, context) {
             return bridgeCall('notifyHook', {hookName: hookName, context: context || '{}'});

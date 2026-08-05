@@ -18,12 +18,18 @@
       <button id="importButton" class="import-button" aria-label="导入书籍">＋<span>导入</span></button>
     </header>
 
+    <button id="aiBindingButton" class="ai-binding" type="button">
+      <span class="ai-binding-dot"></span>
+      <span><b id="aiBindingTitle">选择共读 Daddy</b><small id="aiBindingCopy">批注会送进这个聊天窗口</small></span>
+      <i>›</i>
+    </button>
+
     <section id="library" class="shelf-grid" aria-label="书架"></section>
     <section id="bookmarkPanel" class="bookmark-panel" hidden></section>
     <div id="empty" class="empty-state" hidden>
       <span>📖</span>
       <b>书架还是空的</b>
-      <p>先导入一本 TXT 或 Markdown，和 Daddy 从第一页开始。</p>
+      <p>先导入一本 TXT 或 Markdown，和 Daddy 从第一段开始。</p>
     </div>
   </main>
 
@@ -35,49 +41,64 @@
 
   <section id="reader" class="reader-layer theme-paper controls-hidden" hidden>
     <div id="dimmer" class="reader-dimmer"></div>
-    <article class="reader-shell">
-      <header class="reader-bar">
-        <button id="back" class="icon-button" aria-label="回到书架">‹</button>
-        <button id="tocButton" class="reader-title" aria-label="打开目录">
+    <header class="reader-chrome reader-top">
+      <div class="reader-heading">
+        <button id="back" class="round-button" aria-label="回到书架">‹</button>
+        <button id="tocButton" class="reader-title" aria-label="打开章节目录">
           <b id="bookTitle"></b>
           <small id="pageInfo"></small>
         </button>
-        <button id="settingsButton" class="icon-button" aria-label="阅读设置">Aa</button>
-      </header>
+        <button id="bookmarkButton" class="round-button" aria-label="添加书签">🔖</button>
+      </div>
+      <label class="progress-wrap" aria-label="全书进度">
+        <input id="readingProgress" type="range" min="1" max="1" value="1">
+      </label>
+    </header>
 
-      <div class="reading-progress"><i id="readingProgress"></i></div>
+    <article id="readerContent" class="reader-content">
       <p id="chapterHint" class="chapter-hint"></p>
       <div id="text" class="book-text"></div>
-      <section id="notes" class="notes-section"></section>
+      <p id="loadingMore" class="loading-more" hidden>正在翻到下一段…</p>
     </article>
 
-    <nav class="reader-nav" aria-label="阅读控制">
-      <button id="prev" class="reader-control">上一页</button>
-      <button id="noteButton" class="reader-control reader-control-icon" aria-label="写批注">✎</button>
-      <button id="bookmarkButton" class="reader-control reader-control-icon" aria-label="添加书签">🔖</button>
-      <button id="ask" class="ask-button">问 Daddy</button>
-      <button id="next" class="reader-control">下一页</button>
+    <nav class="reader-chrome reader-tools" aria-label="阅读设置">
+      <button id="tocTool" class="tool-button"><span>☷</span>目录</button>
+      <button id="fontDown" class="tool-button"><span>A−</span>字号</button>
+      <button id="fontUp" class="tool-button"><span>A＋</span>放大</button>
+      <button id="themeButton" class="tool-button"><span>◐</span>背景</button>
+      <label class="tool-slider"><span>☀</span><input id="brightness" type="range" min="0" max="62" step="1" value="0"></label>
     </nav>
+
+    <button id="selectionAction" class="selection-action" hidden>
+      <span id="selectionPreview"></span><b>写下感想</b>
+    </button>
   </section>
 
-  <section id="tocSheet" class="sheet" hidden>
-    <button class="sheet-scrim" data-close-sheet aria-label="关闭目录"></button>
-    <div class="sheet-card">
-      <div class="sheet-heading"><b>章节目录</b><button data-close-sheet>完成</button></div>
+  <section id="tocSheet" class="modal" hidden>
+    <button class="modal-scrim" data-close-modal aria-label="关闭目录"></button>
+    <div class="sheet-card toc-card">
+      <div class="sheet-heading"><b>章节目录</b><button data-close-modal>完成</button></div>
       <div id="tocList" class="toc-list"></div>
     </div>
   </section>
 
-  <section id="settingsSheet" class="sheet" hidden>
-    <button class="sheet-scrim" data-close-sheet aria-label="关闭阅读设置"></button>
-    <div class="sheet-card settings-card">
-      <div class="sheet-heading"><b>阅读设置</b><button data-close-sheet>完成</button></div>
-      <label class="setting-row"><span>字号</span><output id="fontSizeOutput"></output><input id="fontSize" type="range" min="15" max="30" step="1"></label>
-      <label class="setting-row"><span>行距</span><output id="lineHeightOutput"></output><input id="lineHeight" type="range" min="1.45" max="2.45" step="0.05"></label>
-      <label class="setting-row"><span>阅读页亮度</span><output id="brightnessOutput"></output><input id="brightness" type="range" min="0" max="62" step="1"></label>
-      <div class="setting-group"><span>背景</span><div id="themeChoices" class="choice-row"></div></div>
-      <div class="setting-group"><span>字体</span><div id="fontChoices" class="choice-row font-choice-row"></div></div>
-      <p class="settings-tip">亮度只作用在共读书页，不会改动手机系统亮度。</p>
+  <section id="noteSheet" class="modal" hidden>
+    <button class="modal-scrim" data-close-modal aria-label="关闭共读感想"></button>
+    <div class="sheet-card note-card">
+      <div class="sheet-heading"><b>写下这一刻</b><button data-close-modal>完成</button></div>
+      <blockquote id="noteQuote" class="note-quote"></blockquote>
+      <textarea id="noteInput" rows="4" maxlength="900" placeholder="这一段让你想到什么？写给 Daddy 听。"></textarea>
+      <button id="submitNote" class="primary-button">交给 Daddy</button>
+      <section id="noteReply" class="note-reply" hidden></section>
+    </div>
+  </section>
+
+  <section id="aiSheet" class="modal" hidden>
+    <button class="modal-scrim" data-close-modal aria-label="关闭聊天窗口选择"></button>
+    <div class="sheet-card ai-card">
+      <div class="sheet-heading"><b>选择共读 Daddy</b><button data-close-modal>完成</button></div>
+      <p class="sheet-copy">感想会作为真实消息发到这个窗口；它原有的记忆、人格、世界书和上下文都会继续生效。</p>
+      <div id="conversationList" class="conversation-list"></div>
     </div>
   </section>
 
