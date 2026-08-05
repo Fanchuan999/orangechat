@@ -2,7 +2,7 @@
   "id": "com.daddy.yingfan.coreading",
   "name": "Daddy和应帆的共读书房",
   "description": "与当前聊天中的Daddy共享书籍进度、摘录、批注和阅读设置。",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": "应帆 & 小C",
   "icon": "📖",
   "entry": "main.js",

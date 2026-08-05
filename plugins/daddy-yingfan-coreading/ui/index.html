@@ -48,7 +48,7 @@
           <b id="bookTitle"></b>
           <small id="pageInfo"></small>
         </button>
-        <button id="bookmarkButton" class="round-button" aria-label="添加书签">🔖</button>
+        <button id="bookmarkButton" class="round-button bookmark-off" aria-label="本页未设置书签" title="本页未设置书签">🔖</button>
       </div>
       <label class="progress-wrap" aria-label="全书进度">
         <input id="readingProgress" type="range" min="1" max="1" value="1">
@@ -66,8 +66,13 @@
       <button id="fontDown" class="tool-button"><span>A−</span>字号</button>
       <button id="fontUp" class="tool-button"><span>A＋</span>放大</button>
       <button id="themeButton" class="tool-button"><span>◐</span>背景</button>
-      <label class="tool-slider"><span>☀</span><input id="brightness" type="range" min="0" max="62" step="1" value="0"></label>
+      <button id="brightnessButton" class="tool-button" aria-label="调节阅读亮度"><span>☀</span>亮度</button>
     </nav>
+
+    <section id="brightnessPopover" class="brightness-popover" hidden aria-label="阅读页亮度">
+      <b>亮度</b>
+      <input id="brightness" type="range" min="0" max="62" step="1" value="0" aria-label="阅读页亮度">
+    </section>
 
     <button id="selectionAction" class="selection-action" hidden>
       <span id="selectionPreview"></span><b>写下感想</b>
