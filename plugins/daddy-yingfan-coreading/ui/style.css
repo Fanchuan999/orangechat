@@ -142,6 +142,22 @@ h1 { margin: 0; font-size: 25px; letter-spacing: -.04em; }
 .reader-control-icon { font-size: 16px; }
 .ask-button { color: #fff; background: var(--reader-accent, #d77e79); box-shadow: 0 6px 12px color-mix(in srgb, var(--reader-accent, #d77e79) 27%, transparent); }
 
+/* Immersive reading: the page itself is the switch. Tap the centre of the
+ * text to reveal the controls (including the Aa reading-settings button),
+ * and tap it again to return to a clean page. */
+.reader-bar, .reading-progress, .reader-nav {
+  transition: opacity .18s ease, transform .18s ease;
+}
+.reader-layer.controls-hidden .reader-bar,
+.reader-layer.controls-hidden .reading-progress,
+.reader-layer.controls-hidden .reader-nav {
+  pointer-events: none;
+  opacity: 0;
+}
+.reader-layer.controls-hidden .reader-bar { transform: translateY(-120%); }
+.reader-layer.controls-hidden .reading-progress { transform: translateY(-12px); }
+.reader-layer.controls-hidden .reader-nav { transform: translateY(120%); }
+
 .reader-dimmer { position: fixed; inset: 0; z-index: 2; pointer-events: none; background: #000; opacity: 0; transition: opacity .16s ease; }
 .theme-paper { --reader-bg: #f5f1e8; --reader-ink: #34312c; --reader-muted: #948d83; --reader-line: #dfd7cb; --reader-accent: #d77e79; --reader-note: rgba(107, 93, 79, .08); --reader-control: rgba(109, 99, 89, .12); }
 .theme-night { --reader-bg: #1f2024; --reader-ink: #e9e5df; --reader-muted: #a7a6ac; --reader-line: #3b3c42; --reader-accent: #d87779; --reader-note: rgba(255, 255, 255, .07); --reader-control: rgba(255, 255, 255, .1); }
@@ -153,6 +169,7 @@ h1 { margin: 0; font-size: 25px; letter-spacing: -.04em; }
 .font-mono .book-text { font-family: ui-monospace, "SFMono-Regular", Consolas, "Noto Sans Mono CJK SC", monospace; font-size: .91em; }
 
 .sheet { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-end; }
+.sheet[hidden] { display: none !important; }
 .sheet-scrim { position: absolute; inset: 0; width: 100%; height: 100%; background: rgba(16, 16, 20, .38); }
 .sheet-card { position: relative; z-index: 1; width: 100%; max-height: min(74vh, 620px); overflow: auto; padding: 16px 18px calc(19px + var(--safe-bottom)); border-radius: 22px 22px 0 0; color: #292931; background: #fff; box-shadow: 0 -12px 40px rgba(0, 0, 0, .17); }
 .sheet-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; font-size: 17px; }

@@ -245,6 +245,7 @@
     state.book = book;
     state.page = Math.max(1, Math.min(Number(page || book.progress_page || 1), Number(book.total_pages)));
     el.reader.hidden = false;
+    setReaderControlsVisible(false);
     document.body.style.overflow = "hidden";
     applySettings();
     showPage();
@@ -338,6 +339,7 @@
     }).catch(function (error) { toast(error.message || "书签保存失败"); });
   }
   function openToc() {
+    closeSheets();
     el.tocSheet.hidden = false;
     el.tocList.innerHTML = '<p class="toc-empty">正在整理已读章节……</p>';
     tool("get_reading_toc", { book_ref: state.book.id, include_future: true }).then(function (result) {
@@ -356,6 +358,12 @@
   function closeSheets() {
     el.tocSheet.hidden = true;
     el.settingsSheet.hidden = true;
+  }
+  function setReaderControlsVisible(visible) {
+    el.reader.classList.toggle("controls-hidden", !visible);
+  }
+  function toggleReaderControls() {
+    setReaderControlsVisible(el.reader.classList.contains("controls-hidden"));
   }
   function renderChoices() {
     el.themeChoices.innerHTML = themes.map(function (item) {
@@ -387,6 +395,7 @@
     savePreferences();
   }
   function openSettings() {
+    closeSheets();
     el.settingsSheet.hidden = false;
     applySettings();
   }
@@ -433,6 +442,7 @@
     });
     el.back.onclick = function () {
       el.reader.hidden = true;
+      setReaderControlsVisible(false);
       document.body.style.overflow = "";
       closeSheets();
       load();
@@ -446,6 +456,10 @@
     };
     el.tocButton.onclick = openToc;
     el.settingsButton.onclick = openSettings;
+    el.text.onclick = function () {
+      var selectedText = window.getSelection ? window.getSelection().toString() : "";
+      if (!selectedText) toggleReaderControls();
+    };
     document.addEventListener("click", function (event) {
       if (event.target.matches("[data-close-sheet]")) closeSheets();
       var toc = event.target.closest("button[data-toc-page]");
