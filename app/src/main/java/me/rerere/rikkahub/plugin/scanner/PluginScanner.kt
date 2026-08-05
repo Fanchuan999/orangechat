@@ -36,11 +36,21 @@ class PluginScanner(
     }
 
     /**
-     * 获取插件根目录
-     * 使用内部存储根目录 /storage/emulated/0/Orangechat/plugins/
+     * The app-private directory is always writable, including on Android 11+
+     * devices that block writes to the shared storage root despite a file
+     * picker being able to read the ZIP. Plugin code is not user content; the
+     * actual plugin data lives in [PluginDataStore] and remains separate.
      */
     val pluginsDir: File
-        get() = File(Environment.getExternalStorageDirectory(), PLUGINS_DIR).apply { mkdirs() }
+        get() = File(context.filesDir, "plugins").apply { mkdirs() }
+
+    /**
+     * Legacy OrangeChat plugin location. Kept read-only as a migration source
+     * so installations created before the private-directory migration keep
+     * working and can be copied to the managed directory when possible.
+     */
+    private val legacyPluginsDir: File
+        get() = File(Environment.getExternalStorageDirectory(), PLUGINS_DIR)
 
     /**
      * 确保插件目录存在
@@ -51,14 +61,44 @@ class PluginScanner(
      * 扫描所有插件
      */
     fun scanPlugins(): List<PluginInfo> {
-        val dir = ensurePluginsDir()
-        if (!dir.exists() || !dir.isDirectory) {
-            return emptyList()
-        }
+        migrateLegacyPluginsIfPossible()
 
+        // Prefer the managed copy if both locations contain the same plugin.
+        // This lets a new version safely replace a legacy plugin even if the
+        // old shared-storage folder cannot be deleted by the OS.
+        val plugins = linkedMapOf<String, PluginInfo>()
+        scanPluginDirectory(legacyPluginsDir).forEach { plugin ->
+            plugins.putIfAbsent(plugin.manifest.id, plugin)
+        }
+        scanPluginDirectory(ensurePluginsDir()).forEach { plugin ->
+            plugins[plugin.manifest.id] = plugin
+        }
+        return plugins.values.toList()
+    }
+
+    private fun scanPluginDirectory(dir: File): List<PluginInfo> {
+        if (!dir.exists() || !dir.isDirectory) return emptyList()
         return dir.listFiles { file -> file.isDirectory }
             ?.mapNotNull { pluginDir -> loadPluginInfo(pluginDir) }
             ?: emptyList()
+    }
+
+    private fun migrateLegacyPluginsIfPossible() {
+        val legacy = legacyPluginsDir
+        val managed = ensurePluginsDir()
+        if (!legacy.isDirectory) return
+
+        legacy.listFiles { file -> file.isDirectory }?.forEach { legacyPlugin ->
+            val manifest = File(legacyPlugin, MANIFEST_FILE)
+            val managedPlugin = File(managed, legacyPlugin.name)
+            if (!manifest.isFile || managedPlugin.exists()) return@forEach
+
+            runCatching {
+                if (!legacyPlugin.copyRecursively(managedPlugin, overwrite = false)) {
+                    throw IllegalStateException("无法迁移插件 ${legacyPlugin.name}")
+                }
+            }
+        }
     }
 
     /**
@@ -156,10 +196,7 @@ class PluginScanner(
     suspend fun completeImport(manifest: PluginManifest, tempDir: File): Result<PluginInfo> {
         return try {
             val existingPlugins = scanPlugins()
-            if (existingPlugins.any { it.manifest.id == manifest.id }) {
-                tempDir.deleteRecursively()
-                return Result.failure(IllegalArgumentException("插件 ${manifest.id} 已存在"))
-            }
+            val isUpdate = existingPlugins.any { it.manifest.id == manifest.id }
 
             val manifestFile = findManifest(tempDir)
                 ?: run {
@@ -173,11 +210,7 @@ class PluginScanner(
                 return Result.failure(IllegalArgumentException("找不到入口文件: ${manifest.entry}"))
             }
 
-            val pluginDir = File(pluginsDir, manifest.id)
-            if (pluginDir.exists()) {
-                pluginDir.deleteRecursively()
-            }
-            manifestFile.parentFile?.copyRecursively(pluginDir, overwrite = true)
+            val pluginDir = installPluginDirectory(manifestFile.parentFile, manifest.id)
             tempDir.deleteRecursively()
 
             // 写入完整性校验和
@@ -189,9 +222,10 @@ class PluginScanner(
             loadPluginInfo(pluginDir)?.let {
                 auditRepo?.log(
                     category = "plugin",
-                    action = "installed",
+                    action = if (isUpdate) "updated" else "installed",
                     target = manifest.id,
-                    detail = "插件 ${manifest.name} (${manifest.id}) v${manifest.version} 已安装，作者: ${manifest.author}",
+                    detail = "插件 ${manifest.name} (${manifest.id}) v${manifest.version}" +
+                        if (isUpdate) " 已安全更新，保留插件数据和设置" else " 已安装，作者: ${manifest.author}",
                     status = "success",
                 )
                 Result.success(it)
@@ -227,16 +261,7 @@ class PluginScanner(
             val content = manifestFile.readText()
             val manifest = json.decodeFromString(PluginManifest.serializer(), content)
 
-            // 5. 检查ID是否重复
-            val existingPlugins = scanPlugins()
-            if (existingPlugins.any { it.manifest.id == manifest.id }) {
-                // 清理临时文件
-                tempFile.delete()
-                tempDir.deleteRecursively()
-                return Result.failure(IllegalArgumentException("插件 ${manifest.id} 已存在"))
-            }
-
-            // 6. 验证入口文件
+            // 5. 验证入口文件
             val entryFile = File(manifestFile.parentFile, manifest.entry)
             if (!entryFile.exists()) {
                 tempFile.delete()
@@ -244,18 +269,16 @@ class PluginScanner(
                 return Result.failure(IllegalArgumentException("找不到入口文件: ${manifest.entry}"))
             }
 
-            // 7. 移动到插件目录
-            val pluginDir = File(pluginsDir, manifest.id)
-            if (pluginDir.exists()) {
-                pluginDir.deleteRecursively()
-            }
-            manifestFile.parentFile?.copyRecursively(pluginDir, overwrite = true)
+            // 6. 安全替换插件代码。PluginDataStore is app-private and is
+            // deliberately never touched here, so an update keeps book data,
+            // preferences and all other plugin state.
+            val pluginDir = installPluginDirectory(manifestFile.parentFile, manifest.id)
 
-            // 8. 清理临时文件
+            // 7. 清理临时文件
             tempFile.delete()
             tempDir.deleteRecursively()
 
-            // 9. 返回插件信息
+            // 8. 返回插件信息
             loadPluginInfo(pluginDir)?.let { Result.success(it) }
                 ?: Result.failure(IllegalStateException("无法加载插件信息"))
 
@@ -268,12 +291,16 @@ class PluginScanner(
      * 删除插件
      */
     fun deletePlugin(pluginId: String): Boolean {
-        val pluginDir = File(pluginsDir, pluginId)
-        return if (pluginDir.exists()) {
-            pluginDir.deleteRecursively()
-        } else {
-            false
+        var deleted = false
+        listOf(
+            File(pluginsDir, pluginId),
+            File(legacyPluginsDir, pluginId),
+        ).distinctBy { it.absolutePath }.forEach { pluginDir ->
+            if (pluginDir.exists()) {
+                deleted = pluginDir.deleteRecursively() || deleted
+            }
         }
+        return deleted
     }
 
     /**
@@ -281,6 +308,56 @@ class PluginScanner(
      */
     fun getPluginDir(pluginId: String): File {
         return File(pluginsDir, pluginId)
+    }
+
+    /**
+     * Stage plugin files in the app-private directory, then swap them into
+     * place. If the swap fails, restore the previous code directory. Plugin
+     * data and plugin settings are intentionally outside this directory.
+     */
+    private fun installPluginDirectory(sourceDir: File?, pluginId: String): File {
+        val source = sourceDir ?: throw IllegalArgumentException("插件文件目录无效")
+        val root = ensurePluginsDir()
+        val target = File(root, pluginId)
+        val nonce = System.currentTimeMillis()
+        val staging = File(root, ".${pluginId}.staging.$nonce")
+        val backup = File(root, ".${pluginId}.backup.$nonce")
+
+        staging.deleteRecursively()
+        backup.deleteRecursively()
+        if (!source.copyRecursively(staging, overwrite = true)) {
+            staging.deleteRecursively()
+            throw IllegalStateException("无法准备插件文件")
+        }
+
+        val hadPreviousCode = target.exists()
+        try {
+            if (hadPreviousCode && !target.renameTo(backup)) {
+                if (!target.copyRecursively(backup, overwrite = true) || !target.deleteRecursively()) {
+                    throw IllegalStateException("无法替换旧插件文件")
+                }
+            }
+
+            if (!staging.renameTo(target)) {
+                if (!staging.copyRecursively(target, overwrite = true)) {
+                    throw IllegalStateException("无法安装插件文件")
+                }
+                staging.deleteRecursively()
+            }
+
+            backup.deleteRecursively()
+            return target
+        } catch (error: Exception) {
+            target.deleteRecursively()
+            if (backup.exists()) {
+                if (!backup.renameTo(target)) {
+                    backup.copyRecursively(target, overwrite = true)
+                    backup.deleteRecursively()
+                }
+            }
+            staging.deleteRecursively()
+            throw error
+        }
     }
 
     /**
