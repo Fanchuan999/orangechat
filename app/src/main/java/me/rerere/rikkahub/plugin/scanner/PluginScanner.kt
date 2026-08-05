@@ -365,10 +365,22 @@ class PluginScanner(
      */
     private fun unzip(zipFile: File, destDir: File) {
         destDir.mkdirs()
+        val root = destDir.canonicalFile
         ZipInputStream(zipFile.inputStream().buffered()).use { zis ->
             var entry: java.util.zip.ZipEntry? = zis.nextEntry
             while (entry != null) {
-                val file = File(destDir, entry.name)
+                // ZIPs produced by Windows tools may use backslashes in their
+                // entry names. Android treats a backslash as a normal filename
+                // character, so ui\\index.html would otherwise become one file
+                // named "ui\\index.html" instead of ui/index.html.
+                val normalizedEntryName = entry.name.replace('\\', '/').removePrefix("/")
+                val file = File(root, normalizedEntryName).canonicalFile
+                val isInsideDestination = file.path == root.path ||
+                    file.path.startsWith(root.path + File.separator)
+                if (!isInsideDestination) {
+                    throw IllegalArgumentException("插件压缩包包含不安全路径: ${entry.name}")
+                }
+
                 if (entry.isDirectory) {
                     file.mkdirs()
                 } else {
@@ -377,6 +389,7 @@ class PluginScanner(
                         zis.copyTo(output)
                     }
                 }
+                zis.closeEntry()
                 entry = zis.nextEntry
             }
         }

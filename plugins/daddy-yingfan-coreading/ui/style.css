@@ -161,6 +161,19 @@ h1 { margin: 0; font-size: 25px; letter-spacing: -.04em; }
 .toc-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 12px 5px; border-bottom: 1px solid #f0f0f2; color: #37373f; background: transparent; text-align: left; }
 .toc-item small { color: #9a9aa4; white-space: nowrap; }
 .toc-empty { margin: 9px 0; color: #94949e; font-size: 13px; line-height: 1.7; text-align: center; }
+
+/* Settings needs more controls than a normal bottom sheet. Centering it and
+ * constraining it to the visual viewport keeps every control reachable above
+ * Android's gesture/navigation area, including inside the host WebView. */
+#settingsSheet { align-items: center; justify-content: center; padding: 18px 14px; }
+#settingsSheet .settings-card {
+  width: min(100%, 520px);
+  max-height: min(90vh, 640px);
+  max-height: min(90dvh, 640px);
+  padding: 16px 18px 20px;
+  border-radius: 22px;
+  overscroll-behavior: contain;
+}
 .settings-card { display: grid; gap: 14px; }
 .setting-row { display: grid; grid-template-columns: 70px 44px 1fr; align-items: center; gap: 9px; font-size: 14px; }
 .setting-row output { color: #85858f; font-size: 12px; text-align: right; }
