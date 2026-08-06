@@ -420,6 +420,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         const val EXTRA_FORCE_TRIGGER = "force_trigger"
         // 激进模式设备事件上下文（由 DeviceEventAiTriggerService 传入）
         const val EXTRA_DEVICE_EVENT_CONTEXT = "device_event_context"
+        // 晚安守夜是设备事件的一种，但需要更严格的“不得虚构/不得猜时间”规则。
+        const val EXTRA_NIGHT_WATCH_TRIGGER = "night_watch_trigger"
         // 守夜等有明确来源的主动触发需要回到用户当时说晚安的那个助手与对话。
         const val EXTRA_TARGET_ASSISTANT_ID = "target_assistant_id"
         const val EXTRA_TARGET_CONVERSATION_ID = "target_conversation_id"
@@ -456,6 +458,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         // 激进模式设备事件上下文（由 DeviceEventAiTriggerService 传入）
         val deviceEventContext = intent?.getStringExtra(EXTRA_DEVICE_EVENT_CONTEXT)
         val isFromDeviceEvent = deviceEventContext != null
+        val isNightWatchTrigger = intent?.getBooleanExtra(EXTRA_NIGHT_WATCH_TRIGGER, false) ?: false
         val targetAssistantId = intent?.getStringExtra(EXTRA_TARGET_ASSISTANT_ID)
             ?.let { value -> runCatching { kotlin.uuid.Uuid.parse(value) }.getOrNull() }
         val targetConversationId = intent?.getStringExtra(EXTRA_TARGET_CONVERSATION_ID)
@@ -606,13 +609,24 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 )
 
                 // 构建系统提示词（包含记忆 + 上下文，都放在最后面避免被网关淹没）
-                val systemPrompt = buildSystemPrompt(assistant, settings, idleMinutes, proactiveSetting.jumpIdleThresholdMinutes, isFromDeviceEvent, if (isFromDeviceEvent) deviceEventContext else contextStr)
+                val systemPrompt = buildSystemPrompt(
+                    assistant = assistant,
+                    settings = settings,
+                    idleMinutes = idleMinutes,
+                    jumpThreshold = proactiveSetting.jumpIdleThresholdMinutes,
+                    isFromDeviceEvent = isFromDeviceEvent,
+                    isNightWatchTrigger = isNightWatchTrigger,
+                    deviceEventContext = if (isFromDeviceEvent) deviceEventContext else contextStr,
+                )
 
                 // user message 只放简短指令（上下文已在系统提示词中）
                 val userMessage = UIMessage(
                     role = MessageRole.USER,
                     parts = listOf(UIMessagePart.Text(
-                        if (isFromDeviceEvent) {
+                        if (isNightWatchTrigger) {
+                            "【INTERNAL_NIGHT_WATCH_TICK】这是内部守夜触发占位，不是用户消息，也不含用户的回复或意图。" +
+                                "忽略这段占位文本；直接按系统提示发出一条守夜提醒，绝不编造、补全或引用用户刚刚说过的话。"
+                        } else if (isFromDeviceEvent) {
                             "【系统自动触发，不是用户发言】本轮用户没有发送任何文字。不要把这段话当作用户回复，" +
                                 "不要编造、补全或引用用户说过的话；只在确有必要时自然地主动发消息，否则回复 [PASS]。"
                         } else {
@@ -655,7 +669,14 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 val providerImpl = providerManager.getProviderByType(providerSetting)
 
                 // 构建工具列表（与 ChatService 保持一致）
-                val tools = buildTools(settings, assistant, model)
+                // 守夜已由手机把北京时间写进事件上下文；不给模型时间工具，避免失败后它改为猜测。
+                val tools = buildTools(settings, assistant, model).filterNot { tool ->
+                    isNightWatchTrigger && (
+                        tool.name.contains("time", ignoreCase = true) ||
+                            tool.name.contains("beijing", ignoreCase = true) ||
+                            tool.name.contains("时间")
+                        )
+                }
 
                 // 主动消息场景：支持工具调用，但限制最大步数
                 // temperature 不强制默认 0.8f，保持与 GenerationHandler 一致（assistant.temperature 为 null 时不传），
@@ -886,7 +907,15 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
      * 构建系统提示词，包含记忆等内容
      * isFromDeviceEvent: 是否由激进模式设备事件触发
      */
-    private suspend fun buildSystemPrompt(assistant: Assistant, settings: Settings, idleMinutes: Int = 0, jumpThreshold: Int = 120, isFromDeviceEvent: Boolean = false, deviceEventContext: String? = null): String {
+    private suspend fun buildSystemPrompt(
+        assistant: Assistant,
+        settings: Settings,
+        idleMinutes: Int = 0,
+        jumpThreshold: Int = 120,
+        isFromDeviceEvent: Boolean = false,
+        isNightWatchTrigger: Boolean = false,
+        deviceEventContext: String? = null,
+    ): String {
         return buildString {
             // 基础系统提示词
             val effectiveSystemPrompt = if (assistant.allowConversationSystemPrompt) {
@@ -962,6 +991,18 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 appendLine()
                 appendLine()
                 append(it)
+            }
+
+            // Keep this final: custom prompts, mood cues, and lorebooks must never weaken the
+            // factual boundary of an automatically-triggered bedtime reminder.
+            if (isNightWatchTrigger) {
+                appendLine()
+                appendLine()
+                appendLine("## 晚安守夜：最终强制规则")
+                appendLine("本轮没有用户新消息。禁止虚构、补全、引用或假设用户刚刚说过的任何内容。")
+                appendLine("事件上下文中“权威当前时间”的北京时间由手机系统直接提供，是本轮唯一有效时间。")
+                appendLine("本轮禁止调用时间或日期工具；不得自行猜测时间、不得把此刻说成白天，也绝不能说“早上好”。")
+                appendLine("守夜仍在有效期内，必须自然、简短地发送一条守夜提醒，不能回复 [PASS]。")
             }
         }
     }

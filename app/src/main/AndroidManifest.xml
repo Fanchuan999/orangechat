@@ -258,7 +258,7 @@
         android:value="device event ai trigger for proactive messaging" />
     </service>
 
-    <!-- Night Watch Service: only active after an actual bedtime message, until cancelled or next noon -->
+    <!-- Night Watch Service: only active after an actual bedtime message, until cancelled or 06:00 next day -->
     <service
       android:name=".data.service.NightWatchService"
       android:exported="false"

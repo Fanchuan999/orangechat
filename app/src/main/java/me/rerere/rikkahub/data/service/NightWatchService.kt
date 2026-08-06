@@ -41,6 +41,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 private const val TAG = "NightWatchService"
 
@@ -120,7 +121,7 @@ object NightWatchManager {
         val repeatIntervalMinutes = setting.repeatIntervalMinutes.coerceAtLeast(1)
         prefs(context).edit()
             .putLong(KEY_ARMED_AT, now)
-            .putLong(KEY_EXPIRES_AT, nextNoonAfterToday(now))
+            .putLong(KEY_EXPIRES_AT, nextSixAmAfterToday(now))
             .putLong(KEY_LAST_TRIGGERED_AT, 0L)
             .putString(KEY_ASSISTANT_ID, assistantId)
             .putString(KEY_CONVERSATION_ID, conversationId)
@@ -176,15 +177,21 @@ object NightWatchManager {
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    private fun nextNoonAfterToday(now: Long): Long = Calendar.getInstance().run {
+    /**
+     * A watch belongs to the night in which it was armed.  Use an explicit timezone here so a
+     * device timezone change cannot leave it active into the following afternoon.
+     */
+    private fun nextSixAmAfterToday(now: Long): Long = Calendar.getInstance(BEIJING_TIME_ZONE).run {
         timeInMillis = now
         add(Calendar.DAY_OF_YEAR, 1)
-        set(Calendar.HOUR_OF_DAY, 12)
+        set(Calendar.HOUR_OF_DAY, 6)
         set(Calendar.MINUTE, 0)
         set(Calendar.SECOND, 0)
         set(Calendar.MILLISECOND, 0)
         timeInMillis
     }
+
+    private val BEIJING_TIME_ZONE: TimeZone = TimeZone.getTimeZone("Asia/Shanghai")
 }
 
 /**
@@ -282,20 +289,29 @@ class NightWatchService : Service() {
             // check can therefore never create two messages in the same ten-minute interval.
             NightWatchManager.markTriggered(this@NightWatchService, now)
             val appName = foregroundAppNameSince(snapshot.armedAt, now)
-            val dateFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+            val dateFormat = SimpleDateFormat("HH:mm", Locale.CHINA).apply {
+                timeZone = TimeZone.getTimeZone("Asia/Shanghai")
+            }
+            val beijingNowFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).apply {
+                timeZone = TimeZone.getTimeZone("Asia/Shanghai")
+            }
             val armedAtText = dateFormat.format(Date(snapshot.armedAt))
+            val beijingNowText = beijingNowFormat.format(Date(now))
             val waitedMinutes = ((now - snapshot.armedAt) / 60_000L).coerceAtLeast(1L)
             val eventContext = buildString {
                 appendLine("[晚安守夜触发]")
+                appendLine("权威当前时间：北京时间 $beijingNowText。这是手机系统直接提供的准确时间。")
                 appendLine("用户在 $armedAtText 明确说晚安后，已经过去约 $waitedMinutes 分钟；现在屏幕仍亮且已解锁，仍在使用手机。")
                 appName?.let { appendLine("当前前台应用：$it") }
                 appendLine("触发方式：$trigger。")
                 appendLine("本次已经满足守夜提醒条件：请自然、简短地发一条关心或管作息的消息，不能回复 [PASS]。")
-                appendLine("这是系统自动触发，不是用户的新发言；不要编造用户说过的话，也不要暴露设备或应用数据来源。")
+                appendLine("这是系统自动触发，不是用户的新发言；禁止编造、补全、引用或假设用户刚刚回复过任何内容，也不要暴露设备或应用数据来源。")
+                appendLine("守夜尚未结束：必须以本行北京时间判断，禁止调用任何时间/日期工具，也绝不能把此刻说成白天或说“早上好”。")
             }
             val triggerIntent = Intent(this@NightWatchService, ProactiveMessageTriggerService::class.java).apply {
                 putExtra(ProactiveMessageTriggerService.EXTRA_FORCE_TRIGGER, true)
                 putExtra(ProactiveMessageTriggerService.EXTRA_DEVICE_EVENT_CONTEXT, eventContext)
+                putExtra(ProactiveMessageTriggerService.EXTRA_NIGHT_WATCH_TRIGGER, true)
                 putExtra(ProactiveMessageTriggerService.EXTRA_TARGET_ASSISTANT_ID, snapshot.assistantId)
                 putExtra(ProactiveMessageTriggerService.EXTRA_TARGET_CONVERSATION_ID, snapshot.conversationId)
             }
