@@ -155,7 +155,7 @@ fun ChatInput(
     onUpdateSearchService: (Int) -> Unit,
     onCompressContext: (additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int) -> Job,
     onCancelClick: () -> Unit,
-    onSendClick: () -> Unit,
+    onSendClick: (forceFullTools: Boolean) -> Unit,
     onLongSendClick: () -> Unit,
     onVoiceMessage: ((url: String, duration: Long, transcript: String) -> Unit)? = null,
     autoStartVoice: Boolean = false,
@@ -163,6 +163,7 @@ fun ChatInput(
     val toaster = LocalToaster.current
     val assistant = settings.getCurrentAssistant()
     val hazeTintColor = MaterialTheme.colorScheme.surfaceContainerLow
+    var forceFullToolsForNextSend by remember(conversation.id) { mutableStateOf(false) }
 
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -170,13 +171,23 @@ fun ChatInput(
     fun sendMessage() {
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
-        if (loading) onCancelClick() else onSendClick()
+        if (loading) {
+            onCancelClick()
+        } else {
+            onSendClick(forceFullToolsForNextSend)
+            forceFullToolsForNextSend = false
+        }
     }
 
     fun sendMessageWithoutAnswer() {
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
-        if (loading) onCancelClick() else onLongSendClick()
+        if (loading) {
+            onCancelClick()
+        } else {
+            onLongSendClick()
+            forceFullToolsForNextSend = false
+        }
     }
 
     var expand by remember { mutableStateOf(ExpandState.Collapsed) }
@@ -749,6 +760,8 @@ fun ChatInput(
                             mcpManager = mcpManager,
                             onCompressContext = onCompressContext,
                             onUpdateAssistant = onUpdateAssistant,
+                            forceFullToolsForNextSend = forceFullToolsForNextSend,
+                            onForceFullToolsForNextSendChange = { forceFullToolsForNextSend = it },
                             showInjectionSheet = showInjectionSheet,
                             onShowInjectionSheetChange = { showInjectionSheet = it },
                             showCompressDialog = showCompressDialog,

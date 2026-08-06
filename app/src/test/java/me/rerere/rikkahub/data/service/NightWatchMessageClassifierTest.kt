@@ -1,7 +1,7 @@
 package me.rerere.rikkahub.data.service
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
+import org.junit.Assert.assertEquals
+import org.junit.Test
 
 class NightWatchMessageClassifierTest {
     @Test

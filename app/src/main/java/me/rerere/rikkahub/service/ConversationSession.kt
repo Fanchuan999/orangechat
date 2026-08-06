@@ -37,6 +37,29 @@ class ConversationSession(
     // 处理状态（如 OCR 识别中）
     val processingStatus = MutableStateFlow<String?>(null)
 
+    // Normal manual sends may use a reduced tool surface. Keep this transient state only
+    // until the same send (including an approval-resume) finishes; it is never persisted.
+    @Volatile
+    var smartToolRoutingActive: Boolean = false
+
+    @Volatile
+    var forceFullToolsForCurrentSend: Boolean = false
+
+    @Volatile
+    var smartToolRoutingText: String = ""
+
+    fun startSmartToolRouting(message: String, forceFullTools: Boolean) {
+        smartToolRoutingActive = true
+        forceFullToolsForCurrentSend = forceFullTools
+        smartToolRoutingText = message
+    }
+
+    fun clearSmartToolRouting() {
+        smartToolRoutingActive = false
+        forceFullToolsForCurrentSend = false
+        smartToolRoutingText = ""
+    }
+
     // 生成任务（内聚在 session 中）
     private val _generationJob = MutableStateFlow<Job?>(null)
     val generationJob: StateFlow<Job?> = _generationJob.asStateFlow()

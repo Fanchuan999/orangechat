@@ -319,7 +319,7 @@ private fun ChatPageContent(
                     onToggleSearch = {
                         vm.updateSettings(setting.copy(enableWebSearch = !enableWebSearch))
                     },
-                    onSendClick = {
+                    onSendClick = { forceFullTools ->
                         if (currentChatModel == null) {
                             toaster.show("请先选择模型", type = ToastType.Error)
                             return@ChatInput
@@ -330,7 +330,10 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(inputState.getContents())
+                            vm.handleMessageSend(
+                                content = inputState.getContents(),
+                                forceFullTools = forceFullTools,
+                            )
                             scope.launch {
                                 chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
                             }

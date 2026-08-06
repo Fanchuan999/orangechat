@@ -72,6 +72,7 @@ import me.rerere.rikkahub.data.ai.GenerationChunk
 import me.rerere.rikkahub.data.ai.GenerationHandler
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.tools.LocalTools
+import me.rerere.rikkahub.data.ai.tools.SmartToolRouter
 import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.ai.tools.ToolNaming
 import me.rerere.rikkahub.data.ai.tools.createSearchTools
@@ -399,7 +400,13 @@ class ChatService(
 
     // ---- 发送消息 ----
 
-    fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
+    fun sendMessage(
+        conversationId: Uuid,
+        content: List<UIMessagePart>,
+        answer: Boolean = true,
+        forceFullTools: Boolean = false,
+        useSmartToolRouting: Boolean = false,
+    ) {
         if (content.isEmptyInputMessage()) return
 
         val session = getOrCreateSession(conversationId)
@@ -507,6 +514,11 @@ class ChatService(
                 val userText = processedContent.mapNotNull { part ->
                     (part as? UIMessagePart.Text)?.text
                 }.joinToString("\n")
+                if (useSmartToolRouting) {
+                    session.startSmartToolRouting(userText, forceFullTools)
+                } else {
+                    session.clearSmartToolRouting()
+                }
                 runCatching {
                     NightWatchManager.onActualUserMessage(
                         context = context,
@@ -519,7 +531,9 @@ class ChatService(
 
                 // 开始补全
                 if (answer) {
-                    handleMessageComplete(conversationId)
+                    handleMessageComplete(conversationId, useSmartToolRouting = useSmartToolRouting)
+                } else {
+                    session.clearSmartToolRouting()
                 }
 
                 _generationDoneFlow.emit(conversationId)
@@ -818,7 +832,10 @@ class ChatService(
 
                 // Only continue generation when all pending tools are handled
                 if (!hasPendingTools) {
-                    handleMessageComplete(conversationId)
+                    handleMessageComplete(
+                        conversationId = conversationId,
+                        useSmartToolRouting = session.smartToolRoutingActive,
+                    )
                 }
 
                 _generationDoneFlow.emit(conversationId)
@@ -835,7 +852,8 @@ class ChatService(
 
     private suspend fun handleMessageComplete(
         conversationId: Uuid,
-        messageRange: ClosedRange<Int>? = null
+        messageRange: ClosedRange<Int>? = null,
+        useSmartToolRouting: Boolean = false,
     ) {
         val settings = settingsStore.settingsFlow.first()
         val initialConversation = getConversationFlow(conversationId).value
@@ -871,6 +889,14 @@ class ChatService(
             // check invalid messages
             checkInvalidMessages(conversationId)
             val conversation = getConversationFlow(conversationId).value
+            val routingText = session.smartToolRoutingText.ifBlank {
+                conversation.currentMessages.lastOrNull { it.role == MessageRole.USER }?.toText().orEmpty()
+            }
+            val smartToolSelection = SmartToolRouter.select(
+                message = routingText,
+                throttlingEnabled = useSmartToolRouting && assistant.smartToolThrottlingEnabled,
+                forceFullTools = useSmartToolRouting && session.forceFullToolsForCurrentSend,
+            )
 
             // start generating
             generationHandler.generateText(
@@ -926,23 +952,39 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                             )
                         )
                     }
-                    mcpManager.getAllAvailableTools().forEach { (serverId, tool) ->
-                        add(
-                            Tool(
-                                name = ToolNaming.buildMcpToolName(serverId, tool.name),
-                                description = tool.description ?: "",
-                                parameters = { tool.inputSchema },
-                                needsApproval = tool.needsApproval,
-                                execute = {
-                                    mcpManager.callTool(serverId, tool.name, it.jsonObject)
-                                },
+                    mcpManager.getAllAvailableTools()
+                        .filter { (_, tool) -> smartToolSelection.allowsMcpTool(tool.name) }
+                        .forEach { (serverId, tool) ->
+                            add(
+                                Tool(
+                                    name = ToolNaming.buildMcpToolName(serverId, tool.name),
+                                    description = tool.description ?: "",
+                                    parameters = { tool.inputSchema },
+                                    needsApproval = tool.needsApproval,
+                                    execute = {
+                                        mcpManager.callTool(serverId, tool.name, it.jsonObject)
+                                    },
+                                )
                             )
-                        )
-                    }
+                        }
                     // Plugin tools
-                    addAll(pluginToolProvider.getTools())
+                    addAll(
+                        pluginToolProvider.getTools(
+                            allowedPluginIds = if (smartToolSelection.includeAllTools) {
+                                null
+                            } else {
+                                smartToolSelection.allowedPluginIds
+                            },
+                        )
+                    )
                 },
-                pluginPromptInjections = pluginToolProvider.getPluginPromptInjections(),
+                pluginPromptInjections = pluginToolProvider.getPluginPromptInjections(
+                    allowedPluginIds = if (smartToolSelection.includeAllTools) {
+                        null
+                    } else {
+                        smartToolSelection.allowedPluginIds
+                    },
+                ),
                 conversationId = conversationId.toString(),
             ).onCompletion {
                 // 取消 Live Update 通知
@@ -976,6 +1018,7 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                 }
             }
         }.onFailure {
+            if (useSmartToolRouting) session.clearSmartToolRouting()
             // 取消 Live Update 通知
             cancelLiveUpdateNotification(conversationId)
 
@@ -988,6 +1031,12 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                 val latest = getConversationFlow(conversationId).value
                 saveConversation(conversationId, latest)
                 latest
+            }
+            val waitingForToolApproval = finalConversation.currentMessages.lastOrNull()
+                ?.getTools()
+                ?.any { it.isPending } == true
+            if (useSmartToolRouting && !waitingForToolApproval) {
+                session.clearSmartToolRouting()
             }
 
             // 自动唤起网易云音乐：扫描刚完成的 assistant 文本中的 orpheus:// scheme

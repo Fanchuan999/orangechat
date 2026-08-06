@@ -37,14 +37,16 @@ class PluginToolProvider(
      * 获取所有插件提供的工具
      * 会等待插件初始化完成，确保竞态条件下不会返回空列表
      */
-    suspend fun getTools(): List<Tool> {
+    suspend fun getTools(allowedPluginIds: Set<String>? = null): List<Tool> {
         // 等待插件初始化完成，避免竞态条件导致工具列表为空
         pluginManager.awaitInitialization()
-        return pluginLoader.getAllLoadedPlugins().flatMap { plugin ->
-            plugin.info.manifest.tools.map { toolDef ->
-                createTool(plugin, toolDef)
+        return pluginLoader.getAllLoadedPlugins()
+            .filter { plugin -> allowedPluginIds == null || plugin.id in allowedPluginIds }
+            .flatMap { plugin ->
+                plugin.info.manifest.tools.map { toolDef ->
+                    createTool(plugin, toolDef)
+                }
             }
-        }
     }
 
     /**
@@ -152,11 +154,13 @@ class PluginToolProvider(
      *             让模型不仅"看见"插件工具, 还被明确提醒要主动使用.
      * 后续元素: 各插件 manifest.promptTemplate 中开启了 inject_as_prompt 的模板(保留原机制).
      */
-    suspend fun getPluginPromptInjections(): List<String> {
+    suspend fun getPluginPromptInjections(allowedPluginIds: Set<String>? = null): List<String> {
         // 等待插件初始化完成，避免竞态条件
         pluginManager.awaitInitialization()
 
-        val pluginsWithTools = pluginLoader.getAllLoadedPlugins()
+        val plugins = pluginLoader.getAllLoadedPlugins()
+            .filter { plugin -> allowedPluginIds == null || plugin.id in allowedPluginIds }
+        val pluginsWithTools = plugins
             .filter { it.info.manifest.tools.isNotEmpty() }
 
         // 只保留"主动性引导"这句话 + 插件名字列表,
@@ -172,7 +176,7 @@ class PluginToolProvider(
             null
         }
 
-        val manualTemplates = pluginLoader.getAllLoadedPlugins().mapNotNull { plugin ->
+        val manualTemplates = plugins.mapNotNull { plugin ->
             val manifest = plugin.info.manifest
             val promptTemplate = manifest.promptTemplate ?: return@mapNotNull null
             // 检查 inject_as_prompt 配置是否开启

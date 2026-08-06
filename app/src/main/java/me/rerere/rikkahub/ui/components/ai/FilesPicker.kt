@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -80,6 +81,8 @@ internal fun FilesPicker(
     mcpManager: McpManager,
     onCompressContext: (additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int) -> Job,
     onUpdateAssistant: (Assistant) -> Unit,
+    forceFullToolsForNextSend: Boolean,
+    onForceFullToolsForNextSendChange: (Boolean) -> Unit,
     showInjectionSheet: Boolean,
     onShowInjectionSheetChange: (Boolean) -> Unit,
     showCompressDialog: Boolean,
@@ -131,6 +134,37 @@ internal fun FilesPicker(
                 servers = mcpServers,
                 mcpManager = mcpManager,
                 onUpdateAssistant = onUpdateAssistant,
+            )
+        }
+
+        ListItem(
+            headlineContent = { Text("智能工具节流") },
+            supportingContent = {
+                Text("按本条内容只附加相关 MCP/插件；上下文条数、记忆和世界书不变。")
+            },
+            trailingContent = {
+                Switch(
+                    checked = assistant.smartToolThrottlingEnabled,
+                    onCheckedChange = { enabled ->
+                        onUpdateAssistant(assistant.copy(smartToolThrottlingEnabled = enabled))
+                        if (!enabled) onForceFullToolsForNextSendChange(false)
+                    },
+                )
+            },
+            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
+
+        if (assistant.smartToolThrottlingEnabled) {
+            ListItem(
+                headlineContent = { Text("仅本条全部工具") },
+                supportingContent = { Text("只对下一条发送生效，发出后自动恢复智能节流。") },
+                trailingContent = {
+                    Switch(
+                        checked = forceFullToolsForNextSend,
+                        onCheckedChange = onForceFullToolsForNextSendChange,
+                    )
+                },
+                colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
             )
         }
 

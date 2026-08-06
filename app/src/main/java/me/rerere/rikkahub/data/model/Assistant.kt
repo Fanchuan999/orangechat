@@ -41,6 +41,7 @@ data class Assistant(
     val customHeaders: List<CustomHeader> = emptyList(),
     val customBodies: List<CustomBody> = emptyList(),
     val mcpServers: Set<Uuid> = emptySet(),
+    val smartToolThrottlingEnabled: Boolean = false,
     val localTools: List<LocalToolOption> = listOf(LocalToolOption.TimeInfo),
     val workspaceId: Uuid? = null,
     val background: String? = null,
