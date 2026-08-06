@@ -1,4 +1,4 @@
-/* Daddy和应帆的共读书房 v1.2.1 */
+/* Daddy和应帆的共读书房 v1.2.4 */
 var BOOK = "book_";
 var CHUNK = "chunk_";
 var NOTE = "note_";
@@ -302,6 +302,26 @@ function list_reading_bookmarks(params) {
   return { success: true, bookmarks: result };
 }
 
+function list_reading_notes(params) {
+  params = params || {};
+  var all = books();
+  var result = [];
+  var found;
+  var list;
+  var i;
+  if (params.book_ref) {
+    found = resolve(params.book_ref);
+    if (!found.success) return found;
+    list = notes(found.book.id);
+    return { success: true, books: list.length ? [{ book: pub(found.book), notes: list }] : [], count: list.length };
+  }
+  for (i = 0; i < all.length; i++) {
+    list = notes(all[i].id);
+    if (list.length) result.push({ book: pub(all[i]), notes: list });
+  }
+  return { success: true, books: result, count: result.reduce(function (total, item) { return total + item.notes.length; }, 0) };
+}
+
 function add_reading_bookmark(params) {
   params = params || {};
   var found = resolve(params.book_ref);
@@ -397,6 +417,7 @@ exports.get_reading_toc = get_reading_toc;
 exports.update_reading_progress = update_reading_progress;
 exports.add_reading_note = add_reading_note;
 exports.update_reading_note_reply = update_reading_note_reply;
+exports.list_reading_notes = list_reading_notes;
 exports.list_reading_bookmarks = list_reading_bookmarks;
 exports.add_reading_bookmark = add_reading_bookmark;
 exports.delete_reading_bookmark = delete_reading_bookmark;

@@ -59,3 +59,37 @@ h1 { margin: 0; font-size: 25px; letter-spacing: -.04em; }
 .modal#tocSheet { align-items: center; justify-content: center; padding: 18px; }
 .modal#tocSheet .toc-card { width: min(100%, 560px); max-height: min(82dvh, 700px); padding-bottom: 18px; border-radius: 22px; box-shadow: 0 14px 45px rgba(0, 0, 0, .23); overscroll-behavior: contain; }
 .modal#tocSheet .toc-list { max-height: calc(min(82dvh, 700px) - 78px); overflow: auto; overscroll-behavior: contain; }
+
+/* v1.2.3: the annotation cabinet keeps each book's shared reading replies together. */
+.annotation-panel { padding: 3px 2px; }
+.annotation-heading { margin: 2px 1px 15px; }
+.annotation-heading h2 { margin: 0; font-size: 18px; }
+.annotation-heading p { margin: 4px 0 0; color: var(--library-muted); font-size: 12px; }
+.annotation-book-tabs { display: flex; gap: 8px; margin: 0 -2px 18px; padding: 0 2px 4px; overflow-x: auto; scrollbar-width: none; }
+.annotation-book-tabs::-webkit-scrollbar { display: none; }
+.annotation-book-tab { display: inline-flex; max-width: 170px; flex: 0 0 auto; align-items: center; gap: 6px; overflow: hidden; padding: 9px 11px; border: 1px solid #e7e5e8; border-radius: 99px; color: #656570; background: #fff; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.annotation-book-tab small { display: grid; width: 17px; height: 17px; place-items: center; flex: 0 0 auto; border-radius: 50%; color: #92929b; background: #f0f0f3; font-size: 9px; }
+.annotation-book-tab.is-selected { border-color: #f2a0a6; color: #c95863; background: #fff4f5; }
+.annotation-book-tab.is-selected small { color: #fff; background: #ea7b85; }
+.annotation-list { display: grid; gap: 18px; }
+.annotation-page h3 { margin: 0 2px 8px; color: #7d7d88; font-size: 12px; font-weight: 800; }
+.annotation-note { display: grid; width: 100%; gap: 7px; margin: 7px 0; padding: 13px; border: 1px solid #edebee; border-radius: 14px; color: #35353d; background: #fff; box-shadow: 0 4px 12px rgba(35, 36, 44, .05); text-align: left; }
+.annotation-note.is-open { border-color: #e9a0a6; background: #fffafb; }
+.annotation-note-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.annotation-note-meta b { color: #ce707b; font-size: 11px; }
+.annotation-note-meta i { color: #a0a0aa; font-size: 11px; font-style: normal; }
+.annotation-quote { overflow: hidden; color: #8f7478; font-family: Georgia, "Noto Serif SC", "Songti SC", serif; font-size: 12px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.annotation-summary { display: block; overflow: hidden; color: #5b5b65; font-size: 12px; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
+.annotation-summary b { margin-right: 3px; color: #73737c; font-size: 11px; }
+.annotation-ai b { color: #5b92d3; }
+.annotation-full { display: grid; gap: 10px; margin-top: 3px; padding-top: 11px; border-top: 1px solid #f0e8e9; }
+.annotation-full > span { display: grid; gap: 4px; color: #484851; font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
+.annotation-full b { color: #9c7479; font-size: 11px; }
+.annotation-full > span + span b { color: #5d92cc; }
+
+/* Bookmark deletion is deliberately a two-step swipe then tap action. */
+.bookmark-tip { margin: -10px 1px 12px; color: var(--library-muted); font-size: 11px; }
+.bookmark-row { position: relative; margin: 9px 0; overflow: hidden; border-radius: 13px; }
+.bookmark-row .bookmark-card { position: relative; z-index: 1; margin: 0; transition: transform .18s ease; }
+.bookmark-delete { position: absolute; top: 0; right: 0; bottom: 0; z-index: 0; width: 76px; border-radius: 0 13px 13px 0; color: #fff; background: #e9646e; font-size: 13px; font-weight: 800; }
+.bookmark-row.is-revealed .bookmark-card { transform: translateX(-76px); }

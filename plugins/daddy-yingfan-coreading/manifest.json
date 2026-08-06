@@ -2,7 +2,7 @@
   "id": "com.daddy.yingfan.coreading",
   "name": "Daddy和应帆的共读书房",
   "description": "与当前聊天中的Daddy共享书籍进度、摘录、批注和阅读设置。",
-  "version": "1.2.2",
+  "version": "1.2.4",
   "author": "应帆 & 小C",
   "icon": "📖",
   "entry": "main.js",
@@ -137,6 +137,18 @@
           "type": "string",
           "required": true,
           "description": "Daddy 已经说出的共读回复"
+        }
+      ]
+    },
+    {
+      "name": "list_reading_notes",
+      "description": "按书籍列出共读批注和 Daddy 的回复，用于书房批注页。",
+      "parameters": [
+        {
+          "name": "book_ref",
+          "type": "string",
+          "required": false,
+          "description": "可选，只查看指定书籍的批注"
         }
       ]
     },
