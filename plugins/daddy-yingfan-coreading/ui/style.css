@@ -56,9 +56,10 @@ h1 { margin: 0; font-size: 25px; letter-spacing: -.04em; }
 .brightness-popover b { font-size: 10px; }
 .brightness-popover input { width: 26px; height: 156px; accent-color: var(--reader-accent); direction: rtl; writing-mode: vertical-lr; -webkit-appearance: slider-vertical; }
 .reader-layer.controls-hidden .brightness-popover { display: none !important; }
-.modal#tocSheet { align-items: center; justify-content: center; padding: 18px; }
-.modal#tocSheet .toc-card { width: min(100%, 560px); max-height: min(82dvh, 700px); padding-bottom: 18px; border-radius: 22px; box-shadow: 0 14px 45px rgba(0, 0, 0, .23); overscroll-behavior: contain; }
-.modal#tocSheet .toc-list { max-height: calc(min(82dvh, 700px) - 78px); overflow: auto; overscroll-behavior: contain; }
+.modal#tocSheet { display: block; padding: 0; }
+.modal#tocSheet .toc-card { position: absolute; top: calc(76px + env(safe-area-inset-top)); right: 14px; bottom: calc(24px + var(--safe-bottom)); left: 14px; z-index: 1; display: flex; width: auto; max-height: none; min-height: 230px; flex-direction: column; padding: 16px 18px 18px; border-radius: 22px; box-shadow: 0 14px 45px rgba(0, 0, 0, .23); overflow: hidden; }
+.modal#tocSheet .toc-list { display: block; min-height: 0; flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.toc-fallback { margin: 0 0 9px; color: #94949e; font-size: 12px; line-height: 1.5; text-align: center; }
 
 /* v1.2.3: the annotation cabinet keeps each book's shared reading replies together. */
 .annotation-panel { padding: 3px 2px; }

@@ -1,4 +1,4 @@
-/* Daddy和应帆的共读书房 v1.2.4 */
+/* Daddy和应帆的共读书房 v1.2.5 */
 var BOOK = "book_";
 var CHUNK = "chunk_";
 var NOTE = "note_";
