@@ -1,10 +1,12 @@
 package me.rerere.rikkahub.data.ai.tools
 
+import kotlin.uuid.Uuid
+
 /**
  * Chooses the optional MCP/plugin capability surface for one normal chat send.
  *
  * The router deliberately uses local keyword matching only: it never adds a model call,
- * and a false negative can always be retried with the one-send full-tools override.
+ * and manual selection always wins over keyword matching.
  */
 object SmartToolRouter {
     internal enum class Scene {
@@ -59,11 +61,34 @@ object SmartToolRouter {
 
     fun select(
         message: String,
-        throttlingEnabled: Boolean,
-        forceFullTools: Boolean,
+        smartThrottlingEnabled: Boolean,
+        manualSelectionEnabled: Boolean,
+        normalMcpServerIds: Set<Uuid>,
+        manualMcpServerIds: Set<Uuid>,
+        manualPluginIds: Set<String>,
     ): SmartToolSelection {
-        if (!throttlingEnabled || forceFullTools) {
-            return SmartToolSelection(includeAllTools = true, scenes = emptySet())
+        val allowedMcpServerIds = if (manualSelectionEnabled) {
+            manualMcpServerIds
+        } else {
+            normalMcpServerIds
+        }
+        if (manualSelectionEnabled) {
+            return SmartToolSelection(
+                includeAllTools = false,
+                scenes = emptySet(),
+                allowedMcpServerIds = allowedMcpServerIds,
+                manualPluginIds = manualPluginIds,
+                manualSelectionEnabled = true,
+            )
+        }
+        if (!smartThrottlingEnabled) {
+            return SmartToolSelection(
+                includeAllTools = true,
+                scenes = emptySet(),
+                allowedMcpServerIds = allowedMcpServerIds,
+                manualPluginIds = emptySet(),
+                manualSelectionEnabled = false,
+            )
         }
 
         val normalized = message.lowercase()
@@ -85,19 +110,31 @@ object SmartToolRouter {
                 if (normalized.containsAny(walletKeywords)) add(Scene.WALLET)
                 if (normalized.containsAny(disciplineKeywords)) add(Scene.DISCIPLINE)
             },
+            allowedMcpServerIds = allowedMcpServerIds,
+            manualPluginIds = emptySet(),
+            manualSelectionEnabled = false,
         )
     }
 
     class SmartToolSelection internal constructor(
         val includeAllTools: Boolean,
         private val scenes: Set<Scene>,
+        val allowedMcpServerIds: Set<Uuid>,
+        private val manualPluginIds: Set<String>,
+        private val manualSelectionEnabled: Boolean,
     ) {
-        val allowedPluginIds: Set<String> = scenes.flatMapTo(linkedSetOf()) { scenePluginIds[it].orEmpty() }
+        val allowedPluginIds: Set<String>? = when {
+            includeAllTools -> null
+            manualSelectionEnabled -> manualPluginIds
+            else -> scenes.flatMapTo(linkedSetOf()) { scenePluginIds[it].orEmpty() }
+        }
 
-        fun allowsPlugin(pluginId: String): Boolean = includeAllTools || pluginId in allowedPluginIds
+        fun allowsPlugin(pluginId: String): Boolean = allowedPluginIds?.contains(pluginId) ?: true
 
-        fun allowsMcpTool(rawToolName: String): Boolean {
+        fun allowsMcpTool(serverId: Uuid, rawToolName: String): Boolean {
+            if (serverId !in allowedMcpServerIds) return false
             if (includeAllTools) return true
+            if (manualSelectionEnabled) return true
 
             val name = rawToolName.lowercase()
             if (name in coreMemoryMcpTools) return true

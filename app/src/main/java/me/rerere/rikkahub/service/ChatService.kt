@@ -404,7 +404,6 @@ class ChatService(
         conversationId: Uuid,
         content: List<UIMessagePart>,
         answer: Boolean = true,
-        forceFullTools: Boolean = false,
         useSmartToolRouting: Boolean = false,
     ) {
         if (content.isEmptyInputMessage()) return
@@ -515,7 +514,7 @@ class ChatService(
                     (part as? UIMessagePart.Text)?.text
                 }.joinToString("\n")
                 if (useSmartToolRouting) {
-                    session.startSmartToolRouting(userText, forceFullTools)
+                    session.startSmartToolRouting(userText)
                 } else {
                     session.clearSmartToolRouting()
                 }
@@ -894,8 +893,11 @@ class ChatService(
             }
             val smartToolSelection = SmartToolRouter.select(
                 message = routingText,
-                throttlingEnabled = useSmartToolRouting && assistant.smartToolThrottlingEnabled,
-                forceFullTools = useSmartToolRouting && session.forceFullToolsForCurrentSend,
+                smartThrottlingEnabled = useSmartToolRouting && assistant.smartToolThrottlingEnabled,
+                manualSelectionEnabled = useSmartToolRouting && assistant.manualToolSelectionEnabled,
+                normalMcpServerIds = assistant.mcpServers,
+                manualMcpServerIds = assistant.manualToolMcpServerIds,
+                manualPluginIds = assistant.manualToolPluginIds,
             )
 
             // start generating
@@ -952,8 +954,8 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                             )
                         )
                     }
-                    mcpManager.getAllAvailableTools()
-                        .filter { (_, tool) -> smartToolSelection.allowsMcpTool(tool.name) }
+                    mcpManager.getAllAvailableTools(smartToolSelection.allowedMcpServerIds)
+                        .filter { (serverId, tool) -> smartToolSelection.allowsMcpTool(serverId, tool.name) }
                         .forEach { (serverId, tool) ->
                             add(
                                 Tool(
@@ -970,20 +972,12 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                     // Plugin tools
                     addAll(
                         pluginToolProvider.getTools(
-                            allowedPluginIds = if (smartToolSelection.includeAllTools) {
-                                null
-                            } else {
-                                smartToolSelection.allowedPluginIds
-                            },
+                            allowedPluginIds = smartToolSelection.allowedPluginIds,
                         )
                     )
                 },
                 pluginPromptInjections = pluginToolProvider.getPluginPromptInjections(
-                    allowedPluginIds = if (smartToolSelection.includeAllTools) {
-                        null
-                    } else {
-                        smartToolSelection.allowedPluginIds
-                    },
+                    allowedPluginIds = smartToolSelection.allowedPluginIds,
                 ),
                 conversationId = conversationId.toString(),
             ).onCompletion {

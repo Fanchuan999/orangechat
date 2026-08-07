@@ -146,12 +146,12 @@ class McpManager(
         return clients[config.id]?.second
     }
 
-    fun getAllAvailableTools(): List<Pair<Uuid, McpTool>> {
+    fun getAllAvailableTools(serverIds: Set<Uuid>? = null): List<Pair<Uuid, McpTool>> {
         val settings = settingsStore.settingsFlow.value
-        val assistant = settings.getCurrentAssistant()
+        val allowedServerIds = serverIds ?: settings.getCurrentAssistant().mcpServers
         return settings.mcpServers
             .filter {
-                it.commonOptions.enable && it.id in assistant.mcpServers
+                it.commonOptions.enable && it.id in allowedServerIds
             }
             .flatMap { server ->
                 server.commonOptions.tools

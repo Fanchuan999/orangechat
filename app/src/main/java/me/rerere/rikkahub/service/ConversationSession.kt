@@ -43,20 +43,15 @@ class ConversationSession(
     var smartToolRoutingActive: Boolean = false
 
     @Volatile
-    var forceFullToolsForCurrentSend: Boolean = false
-
-    @Volatile
     var smartToolRoutingText: String = ""
 
-    fun startSmartToolRouting(message: String, forceFullTools: Boolean) {
+    fun startSmartToolRouting(message: String) {
         smartToolRoutingActive = true
-        forceFullToolsForCurrentSend = forceFullTools
         smartToolRoutingText = message
     }
 
     fun clearSmartToolRouting() {
         smartToolRoutingActive = false
-        forceFullToolsForCurrentSend = false
         smartToolRoutingText = ""
     }
 

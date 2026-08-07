@@ -179,7 +179,6 @@ class ChatVM(
     fun handleMessageSend(
         content: List<UIMessagePart>,
         answer: Boolean = true,
-        forceFullTools: Boolean = false,
     ) {
         if (content.isEmptyInputMessage()) return
 
@@ -187,7 +186,6 @@ class ChatVM(
             conversationId = _conversationId,
             content = content,
             answer = answer,
-            forceFullTools = forceFullTools,
             useSmartToolRouting = true,
         )
     }

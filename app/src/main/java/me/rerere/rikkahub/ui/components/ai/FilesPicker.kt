@@ -7,7 +7,9 @@
 package me.rerere.rikkahub.ui.components.ai
 
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,8 +21,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -32,12 +36,18 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -62,6 +72,7 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.plugin.provider.PluginToolProvider
 import me.rerere.rikkahub.ui.components.ui.ExtensionSelector
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
@@ -72,6 +83,7 @@ import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalProviders
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.hooks.ChatInputState
+import org.koin.compose.koinInject
 
 @Composable
 internal fun FilesPicker(
@@ -81,8 +93,6 @@ internal fun FilesPicker(
     mcpManager: McpManager,
     onCompressContext: (additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int) -> Job,
     onUpdateAssistant: (Assistant) -> Unit,
-    forceFullToolsForNextSend: Boolean,
-    onForceFullToolsForNextSendChange: (Boolean) -> Unit,
     showInjectionSheet: Boolean,
     onShowInjectionSheetChange: (Boolean) -> Unit,
     showCompressDialog: Boolean,
@@ -100,12 +110,39 @@ internal fun FilesPicker(
     val providers = LocalProviders.current
     val mcpServers = LocalMcpServers.current
     val provider = currentChatModel?.findProvider(providers = providers)
+    val pluginToolProvider = koinInject<PluginToolProvider>()
+    val manualToolPlugins = pluginToolProvider.getToolStats().pluginDetails
+    val dismissDistance = with(LocalDensity.current) { 72.dp.toPx() }
+    var downwardDragDistance by remember { mutableFloatStateOf(0f) }
+    var showManualToolPicker by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
+            .pointerInput(onDismiss) {
+                detectVerticalDragGestures(
+                    onDragStart = { downwardDragDistance = 0f },
+                    onVerticalDrag = { _, dragAmount ->
+                        if (dragAmount > 0f) downwardDragDistance += dragAmount
+                    },
+                    onDragEnd = {
+                        if (downwardDragDistance >= dismissDistance) onDismiss()
+                        downwardDragDistance = 0f
+                    },
+                    onDragCancel = { downwardDragDistance = 0f },
+                )
+            }
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .width(36.dp)
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)),
+        )
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -128,7 +165,7 @@ internal fun FilesPicker(
             modifier = Modifier.fillMaxWidth()
         )
 
-        if (mcpServers.isNotEmpty()) {
+        if (mcpServers.isNotEmpty() && !assistant.manualToolSelectionEnabled) {
             McpPickerListItem(
                 assistant = assistant,
                 servers = mcpServers,
@@ -146,27 +183,47 @@ internal fun FilesPicker(
                 Switch(
                     checked = assistant.smartToolThrottlingEnabled,
                     onCheckedChange = { enabled ->
-                        onUpdateAssistant(assistant.copy(smartToolThrottlingEnabled = enabled))
-                        if (!enabled) onForceFullToolsForNextSendChange(false)
+                        onUpdateAssistant(
+                            assistant.copy(
+                                smartToolThrottlingEnabled = enabled,
+                                manualToolSelectionEnabled = if (enabled) false else assistant.manualToolSelectionEnabled,
+                            )
+                        )
                     },
                 )
             },
             colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
         )
 
-        if (assistant.smartToolThrottlingEnabled) {
-            ListItem(
-                headlineContent = { Text("仅本条全部工具") },
-                supportingContent = { Text("只对下一条发送生效，发出后自动恢复智能节流。") },
-                trailingContent = {
-                    Switch(
-                        checked = forceFullToolsForNextSend,
-                        onCheckedChange = onForceFullToolsForNextSendChange,
-                    )
-                },
-                colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
-            )
-        }
+        ListItem(
+            headlineContent = { Text("手动选择工具") },
+            supportingContent = {
+                Text(
+                    if (assistant.manualToolSelectionEnabled) {
+                        "只发送你在清单中勾选的 MCP 服务和工具插件。"
+                    } else {
+                        "自己决定每个 MCP 服务和工具插件是否发送给 Daddy。"
+                    }
+                )
+            },
+            trailingContent = {
+                Switch(
+                    checked = assistant.manualToolSelectionEnabled,
+                    onCheckedChange = { enabled ->
+                        onUpdateAssistant(
+                            assistant.copy(
+                                manualToolSelectionEnabled = enabled,
+                                smartToolThrottlingEnabled = if (enabled) false else assistant.smartToolThrottlingEnabled,
+                            )
+                        )
+                    },
+                )
+            },
+            modifier = Modifier
+                .clip(MaterialTheme.shapes.large)
+                .clickable { showManualToolPicker = true },
+            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
 
         // Extensions (Quick Messages + Prompt Injections + Skills)
         val activeCount =
@@ -232,6 +289,16 @@ internal fun FilesPicker(
             settings = settings,
             onUpdateAssistant = onUpdateAssistant,
             onDismiss = { onShowInjectionSheetChange(false) })
+    }
+
+    if (showManualToolPicker) {
+        ManualToolPickerSheet(
+            assistant = assistant,
+            servers = mcpServers,
+            plugins = manualToolPlugins,
+            onUpdateAssistant = onUpdateAssistant,
+            onDismiss = { showManualToolPicker = false },
+        )
     }
 
     // Compress Context Dialog
