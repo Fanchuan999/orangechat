@@ -15,6 +15,7 @@ local.properties
 .kotlin
 node_modules/
 .cache/
+.worktrees/
 dist/
 .next/
 .env
