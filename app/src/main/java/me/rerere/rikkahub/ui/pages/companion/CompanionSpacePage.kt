@@ -14,12 +14,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -41,13 +37,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -275,41 +268,17 @@ fun CompanionSpacePage(
             }
 
             item {
-                CardGroup(title = { Text("照片墙") }) {
-                    item(
-                        headlineContent = { Text("把一个瞬间挂起来") },
-                        supportingContent = {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (space.photos.isEmpty()) {
-                                    Text("还没有照片。选一张你想让 Daddy 也看得见的吧。")
-                                } else {
-                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(
-                                            count = space.photos.size,
-                                            key = { index -> space.photos[index].id.toString() },
-                                        ) { index ->
-                                            val photo = space.photos[index]
-                                            PhotoWallCard(
-                                                photo = photo,
-                                                onEditCaption = { photoCaptionTarget = photo },
-                                                onRemove = {
-                                                    scope.launch {
-                                                        spaceService.removePhoto(photo.id)
-                                                        snackbar.showSnackbar("已从照片墙取下；原图仍留在 Daddy 文件里")
-                                                    }
-                                                },
-                                            )
-                                        }
-                                    }
-                                }
-                                Button(onClick = { photoPicker.launch("image/*") }) {
-                                    Text("从相册挂一张")
-                                }
-                                Text("照片会复制进 Daddy 的本地文件夹，普通备份和联动备份都会带走它。")
-                            }
-                        },
-                    )
-                }
+                PhotoWallSection(
+                    photos = space.photos,
+                    onAddPhoto = { photoPicker.launch("image/*") },
+                    onEditCaption = { photoCaptionTarget = it },
+                    onRemovePhoto = { photo ->
+                        scope.launch {
+                            spaceService.removePhoto(photo.id)
+                            snackbar.showSnackbar("已从照片墙取下；原图仍留在 Daddy 文件里")
+                        }
+                    },
+                )
             }
 
             item {
@@ -529,30 +498,6 @@ fun CompanionSpacePage(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun PhotoWallCard(
-    photo: CompanionPhoto,
-    onEditCaption: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    Column(modifier = Modifier.width(176.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        AsyncImage(
-            model = photo.uri,
-            contentDescription = photo.caption.ifBlank { "小屋照片" },
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(148.dp)
-                .clip(RoundedCornerShape(16.dp)),
-        )
-        Text(photo.caption.ifBlank { "还没有题字" }, maxLines = 2)
-        Row {
-            TextButton(onClick = onEditCaption) { Text("题字") }
-            TextButton(onClick = onRemove) { Text("取下") }
         }
     }
 }
