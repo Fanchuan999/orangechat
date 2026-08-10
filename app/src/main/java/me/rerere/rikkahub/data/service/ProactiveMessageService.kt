@@ -548,8 +548,13 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     return@launch
                 }
 
-                // 找到最近的对话
-                val conversation = targetConversationId?.let { requestedId ->
+                // 守夜的显式窗口优先；普通定时、激进模式与空闲探索共用用户选择的主窗口。
+                // 目标不存在、已被删除或属于另一个助手时，保留旧行为并回退到该助手最近的聊天。
+                val requestedConversationId = requestedProactiveConversationId(
+                    explicitId = targetConversationId,
+                    setting = proactiveSetting,
+                )
+                val conversation = requestedConversationId?.let { requestedId ->
                     conversationRepository.getConversationById(requestedId)
                         ?.takeIf { it.assistantId == assistantUuid }
                 } ?: run {
