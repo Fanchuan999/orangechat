@@ -44,6 +44,7 @@ import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.data.service.ProactiveMessageService
 import me.rerere.rikkahub.data.service.ProactiveMessageWorker
 import me.rerere.rikkahub.data.service.NightWatchManager
+import me.rerere.rikkahub.data.service.IdleExploreScheduler
 import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.datastore.currentSummary
 import me.rerere.rikkahub.data.datastore.expressionLabel
@@ -484,6 +485,72 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                             onClick = if (!hasUsagePermission) {
                                 { runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) } }
                             } else null,
+                        )
+                    }
+                }
+            }
+            item {
+                val proactiveSetting = settings.proactiveMessageSetting
+                CardGroup(title = { Text("空闲时自己找点事") }) {
+                    item(
+                        headlineContent = { Text("允许 Daddy 偶尔自己上网看看") },
+                        supportingContent = {
+                            Text(
+                                "默认关闭。开启后，Daddy 每天获得少量独立探索机会：只读公开网页，" +
+                                    "不会登录、发帖、评论或自动写入 Ombre。没有值得分享的新发现时会安静跳过。"
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = proactiveSetting.idleExploreEnabled,
+                                onCheckedChange = { enabled ->
+                                    val updated = proactiveSetting.copy(idleExploreEnabled = enabled)
+                                    vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
+                                    IdleExploreScheduler.sync(context, updated)
+                                },
+                            )
+                        },
+                    )
+                    if (proactiveSetting.idleExploreEnabled) {
+                        item(
+                            headlineContent = { Text("每天最多几次") },
+                            supportingContent = {
+                                OutlinedTextField(
+                                    value = proactiveSetting.idleExploreRunsPerDay.toString(),
+                                    onValueChange = { value ->
+                                        value.toIntOrNull()?.takeIf { it in 1..3 }?.let { runs ->
+                                            val updated = proactiveSetting.copy(idleExploreRunsPerDay = runs)
+                                            vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
+                                            IdleExploreScheduler.sync(context, updated)
+                                        }
+                                    },
+                                    placeholder = { Text("1") },
+                                    singleLine = true,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                                Text("可选 1—3 次。这里限制的是探索机会；本地判断想休息时不会调用模型。")
+                            },
+                        )
+                        item(
+                            headlineContent = { Text("每次网页原始内容上限 (tokens)") },
+                            supportingContent = {
+                                OutlinedTextField(
+                                    value = proactiveSetting.idleExploreRawTokenLimit.toString(),
+                                    onValueChange = { value ->
+                                        value.toIntOrNull()?.takeIf { it in 2_000..20_000 }?.let { tokens ->
+                                            val updated = proactiveSetting.copy(idleExploreRawTokenLimit = tokens)
+                                            vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
+                                        }
+                                    },
+                                    placeholder = { Text("20000") },
+                                    singleLine = true,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                                Text(
+                                    "可设 2,000—20,000。只计算搜索和网页返回的原始材料；" +
+                                        "发送给 DeepSeek 前会硬截断，最终只分享精简结果。"
+                                )
+                            },
                         )
                     }
                 }

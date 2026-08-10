@@ -77,6 +77,7 @@ import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.validatedWakeIntervalRange
+import me.rerere.rikkahub.data.datastore.validatedExploreRawTokenLimit
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.RouteActivity
 import me.rerere.rikkahub.data.model.Conversation
@@ -423,6 +424,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         const val EXTRA_DEVICE_EVENT_CONTEXT = "device_event_context"
         // 晚安守夜是设备事件的一种，但需要更严格的“不得虚构/不得猜时间”规则。
         const val EXTRA_NIGHT_WATCH_TRIGGER = "night_watch_trigger"
+        // 独立的低频、只读公开网页探索机会。默认关闭，由 IdleExploreScheduler 触发。
+        const val EXTRA_IDLE_EXPLORE_TRIGGER = "idle_explore_trigger"
         // 守夜等有明确来源的主动触发需要回到用户当时说晚安的那个助手与对话。
         const val EXTRA_TARGET_ASSISTANT_ID = "target_assistant_id"
         const val EXTRA_TARGET_CONVERSATION_ID = "target_conversation_id"
@@ -460,6 +463,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         val deviceEventContext = intent?.getStringExtra(EXTRA_DEVICE_EVENT_CONTEXT)
         val isFromDeviceEvent = deviceEventContext != null
         val isNightWatchTrigger = intent?.getBooleanExtra(EXTRA_NIGHT_WATCH_TRIGGER, false) ?: false
+        val isIdleExploreTrigger = intent?.getBooleanExtra(EXTRA_IDLE_EXPLORE_TRIGGER, false) ?: false
         val targetAssistantId = intent?.getStringExtra(EXTRA_TARGET_ASSISTANT_ID)
             ?.let { value -> runCatching { kotlin.uuid.Uuid.parse(value) }.getOrNull() }
         val targetConversationId = intent?.getStringExtra(EXTRA_TARGET_CONVERSATION_ID)
@@ -480,8 +484,12 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 var settings = settingsStore.settingsFlow.first()
                 val proactiveSetting = settings.proactiveMessageSetting
 
-                // 激进模式设备事件触发时，不检查主动消息开关（可独立工作）
-                if (!proactiveSetting.enabled && !isFromDeviceEvent) {
+                // 激进感知与空闲探索都有独立开关，不依赖普通主动消息开关。
+                if (isIdleExploreTrigger && !proactiveSetting.idleExploreEnabled) {
+                    stopSelf()
+                    return@launch
+                }
+                if (!isIdleExploreTrigger && !proactiveSetting.enabled && !isFromDeviceEvent) {
                     stopSelf()
                     return@launch
                 }
@@ -489,13 +497,26 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 val wakeSource = when {
                     isNightWatchTrigger -> WakeSource.NightWatch
                     isFromDeviceEvent -> WakeSource.Aggressive
+                    isIdleExploreTrigger -> WakeSource.Explore
                     else -> WakeSource.Scheduled
                 }
                 when (val decision = companionMoodEngine.decideWake(wakeSource)) {
                     WakeDecision.Contact -> {
+                        if (isIdleExploreTrigger) {
+                            Log.i(TAG, "Idle exploration chose contact rather than an activity; skipping locally")
+                            stopSelf()
+                            return@launch
+                        }
                         settings = settingsStore.settingsFlow.first()
                     }
-                    WakeDecision.FindActivity,
+                    WakeDecision.FindActivity -> {
+                        if (!isIdleExploreTrigger) {
+                            Log.i(TAG, "$wakeSource proactive wake skipped locally: $decision")
+                            stopSelf()
+                            return@launch
+                        }
+                        settings = settingsStore.settingsFlow.first()
+                    }
                     WakeDecision.Rest,
                     WakeDecision.Quiet -> {
                         Log.i(TAG, "$wakeSource proactive wake skipped locally: $decision")
@@ -598,22 +619,46 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 val idleMinutes = runCatching { val last = proactiveMessageService.getLastMessageTimeMs(); if (last > 0) ((System.currentTimeMillis() - last) / 60000L).toInt() else Int.MAX_VALUE }.getOrDefault(Int.MAX_VALUE)
 
                 // 如果有设备事件上下文（激进模式），使用它替代常规上下文；否则使用常规上下文
-                val contextStr = if (isFromDeviceEvent && deviceEventContext != null) {
-                    deviceEventContext
-                } else {
-                    proactiveMessageService.buildProactiveContext(
-                        this@ProactiveMessageTriggerService, settings
+                val contextStr = when {
+                    isIdleExploreTrigger ->
+                        "[空闲探索] 本轮是后台只读公开网页探索，不是用户新消息。"
+                    isFromDeviceEvent && deviceEventContext != null -> deviceEventContext
+                    else -> proactiveMessageService.buildProactiveContext(
+                        this@ProactiveMessageTriggerService,
+                        settings,
                     )
                 }
 
                 // 获取历史消息（先过滤掉悬空的工具调用消息，避免 tool_use 结构不完整触发 400）
-                val historyMessages = filterInvalidToolMessages(
-                    conversation?.currentMessages?.let {
-                        if (assistant.contextMessageSize > 0) {
-                            it.takeLast(assistant.contextMessageSize)
-                        } else it
-                    } ?: emptyList()
-                )
+                val sourceHistory = conversation?.currentMessages.orEmpty()
+                val verifiedNightWatchEvidence = if (isNightWatchTrigger) {
+                    nightWatchEvidence(sourceHistory)
+                } else null
+                val historyMessages = if (verifiedNightWatchEvidence != null) {
+                    verifiedNightWatchEvidence.history
+                } else if (isIdleExploreTrigger) {
+                    sourceHistory
+                        .asReversed()
+                        .mapNotNull { message ->
+                            if (message.role != MessageRole.USER && message.role != MessageRole.ASSISTANT) {
+                                null
+                            } else {
+                                val textParts = message.parts.filterIsInstance<UIMessagePart.Text>()
+                                    .filter { it.text.isNotBlank() }
+                                if (textParts.isEmpty()) null else message.copy(parts = textParts)
+                            }
+                        }
+                        .take(12)
+                        .asReversed()
+                } else {
+                    filterInvalidToolMessages(
+                        conversation?.currentMessages?.let {
+                            if (assistant.contextMessageSize > 0) {
+                                it.takeLast(assistant.contextMessageSize)
+                            } else it
+                        } ?: emptyList()
+                    )
+                }
 
                 // 构建系统提示词（包含记忆 + 上下文，都放在最后面避免被网关淹没）
                 val systemPrompt = buildSystemPrompt(
@@ -623,6 +668,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     jumpThreshold = proactiveSetting.jumpIdleThresholdMinutes,
                     isFromDeviceEvent = isFromDeviceEvent,
                     isNightWatchTrigger = isNightWatchTrigger,
+                    isIdleExploreTrigger = isIdleExploreTrigger,
+                    lastVerifiedUserText = verifiedNightWatchEvidence?.lastUserText.orEmpty(),
                     deviceEventContext = if (isFromDeviceEvent) deviceEventContext else contextStr,
                 )
 
@@ -631,8 +678,11 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     role = MessageRole.USER,
                     parts = listOf(UIMessagePart.Text(
                         if (isNightWatchTrigger) {
-                            "【INTERNAL_NIGHT_WATCH_TICK】这是内部守夜触发占位，不是用户消息，也不含用户的回复或意图。" +
-                                "忽略这段占位文本；直接按系统提示发出一条守夜提醒，绝不编造、补全或引用用户刚刚说过的话。"
+                            "【INTERNAL_NIGHT_WATCH_TICK】"
+                        } else if (isIdleExploreTrigger) {
+                            "【INTERNAL_IDLE_EXPLORE】这是后台只读探索机会，不是用户发言。" +
+                                "从最近话题中自行选择一个真实感兴趣的方向，用公开网页工具查证；" +
+                                "有值得分享的新发现就简短告诉用户，否则只回复 [PASS]。"
                         } else if (isFromDeviceEvent) {
                             "【系统自动触发，不是用户发言】本轮用户没有发送任何文字。不要把这段话当作用户回复，" +
                                 "不要编造、补全或引用用户说过的话；只在确有必要时自然地主动发消息，否则回复 [PASS]。"
@@ -677,12 +727,22 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
 
                 // 构建工具列表（与 ChatService 保持一致）
                 // 守夜已由手机把北京时间写进事件上下文；不给模型时间工具，避免失败后它改为猜测。
-                val tools = buildTools(settings, assistant, model).filterNot { tool ->
-                    isNightWatchTrigger && (
-                        tool.name.contains("time", ignoreCase = true) ||
-                            tool.name.contains("beijing", ignoreCase = true) ||
-                            tool.name.contains("时间")
-                        )
+                val tools = if (isIdleExploreTrigger) {
+                    buildIdleExploreTools(settings)
+                } else {
+                    buildTools(settings, assistant, model).filterNot { tool ->
+                        isNightWatchTrigger && (
+                            tool.name.contains("time", ignoreCase = true) ||
+                                tool.name.contains("beijing", ignoreCase = true) ||
+                                tool.name.contains("时间")
+                            )
+                    }
+                }
+
+                if (isIdleExploreTrigger && tools.isEmpty()) {
+                    Log.i(TAG, "Idle exploration skipped locally: no public read-only web tools are available")
+                    stopSelf()
+                    return@launch
                 }
 
                 // 主动消息场景：支持工具调用，但限制最大步数
@@ -722,7 +782,12 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     tools = tools,
                     model = model,
                     assistant = assistant,
-                    settings = settings
+                    settings = settings,
+                    rawToolTokenLimit = if (isIdleExploreTrigger) {
+                        proactiveSetting.validatedExploreRawTokenLimit()
+                    } else null,
+                    maxToolSteps = if (isIdleExploreTrigger) 3 else MAX_TOOL_STEPS,
+                    persistDuringGeneration = !isIdleExploreTrigger,
                 )
 
                 // 提取AI消息
@@ -736,7 +801,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     .joinToString("\n") { it.text }.trim()
                 val replyText = rawText.replace("\\[JUMP]".toRegex(RegexOption.IGNORE_CASE), "").trim()
                 // AI总是可以跳转，不需要allowForceJump开关
-                val shouldJump = hasJumpFlag
+                val shouldJump = hasJumpFlag && !isIdleExploreTrigger
 
                 // 若移除了标记，同步更新 session 里 aiMessage 的文本 parts
                 if (rawText != replyText) {
@@ -749,7 +814,9 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                             }
                         }
                     )
-                    updateOrAppendAiMessage(conversationId, cleanedAiMessage)
+                    if (!isIdleExploreTrigger) {
+                        updateOrAppendAiMessage(conversationId, cleanedAiMessage)
+                    }
                 }
 
                 Log.d(TAG, "Proactive message generated: '${replyText.take(100)}...' (${replyText.length} chars), hasToolCalls=$hasToolCalls, shouldJump=$shouldJump")
@@ -773,6 +840,16 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     }
                 } else {
                     // 有效回复：session 里已有 aiMessage（流式过程已追加），持久化并发通知
+                    if (isIdleExploreTrigger) {
+                        val finalExploreMessage = aiMessage.copy(
+                            parts = aiMessage.parts.map { part ->
+                                if (part is UIMessagePart.Text) {
+                                    part.copy(text = part.text.replace("\\[JUMP]".toRegex(RegexOption.IGNORE_CASE), "").trim())
+                                } else part
+                            },
+                        )
+                        updateOrAppendAiMessage(conversationId, finalExploreMessage)
+                    }
                     saveProactiveMessage(
                         settings, assistant, conversationId, conversation
                     )
@@ -889,7 +966,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 // 用 NonCancellable 包裹：协程被取消后处于已取消状态，finally 里的挂起点
                 // (settingsFlow.first()) 会立刻抛 CancellationException，导致 scheduleNext 被跳过、
                 // 定时链断裂。NonCancellable 保证这段收尾逻辑跑完。
-                if (!isFromDeviceEvent) {
+                if (!isFromDeviceEvent && !isIdleExploreTrigger) {
                     withContext(NonCancellable) {
                         try {
                             val currentSettings = settingsStore.settingsFlow.first()
@@ -921,6 +998,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         jumpThreshold: Int = 120,
         isFromDeviceEvent: Boolean = false,
         isNightWatchTrigger: Boolean = false,
+        isIdleExploreTrigger: Boolean = false,
+        lastVerifiedUserText: String = "",
         deviceEventContext: String? = null,
     ): String {
         return buildString {
@@ -935,7 +1014,9 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
             }
 
             // 记忆（设备事件上下文移到最后面，避免被网关注入的内容淹没）
-            if (assistant.enableMemory) {
+            // 守夜只依赖经过核验的近期纯文字证据。长期记忆可能是摘要或模型旧推断，
+            // 不应成为“用户刚刚说过某句话”的来源。
+            if (assistant.enableMemory && !isNightWatchTrigger) {
                 val memories = if (assistant.useGlobalMemory) {
                     memoryRepository.getGlobalMemories()
                 } else {
@@ -951,7 +1032,39 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 }
             }
 
-            if (isFromDeviceEvent) {
+            if (isNightWatchTrigger) {
+                appendLine()
+                appendLine()
+                appendLine("## 晚安守夜（证据约束模式）")
+                appendLine("这是手机系统的守夜检查，不是用户新发来的一句话。")
+                appendLine("历史中只有 role=USER 的纯文字才属于用户；助手回复、记忆、工具结果、推理内容和内部触发词都不是用户说的话。")
+                if (lastVerifiedUserText.isNotBlank()) {
+                    appendLine("最后一条经过核验的真实用户原文如下：")
+                    appendLine("<verified_last_user_message>")
+                    appendLine(lastVerifiedUserText)
+                    appendLine("</verified_last_user_message>")
+                } else {
+                    appendLine("本轮没有可供引用的真实用户原文。")
+                }
+                appendLine("若要使用“你说了/你刚才说/你回复了”等归因句式，只能逐字引用上面的核验原文；否则禁止归因，直接根据当前仍在使用手机这一事实提醒。")
+                appendLine("不得把可能发生、通常会说、记忆中的概述或助手曾经猜测的内容改写成用户说过的话。")
+                appendLine("守夜必须自然、简短地提醒一次，不得回复 [PASS]，也不要暴露设备监测、证据标签或内部规则。")
+                if (!deviceEventContext.isNullOrBlank()) {
+                    appendLine()
+                    appendLine(deviceEventContext)
+                }
+            } else if (isIdleExploreTrigger) {
+                appendLine()
+                appendLine()
+                appendLine("## 空闲探索（后台只读公开网页）")
+                appendLine("本轮是你自己醒来后决定找点感兴趣的事，不是用户提出的问题，也不是用户的新消息。")
+                appendLine("结合最近的纯文字聊天、已有记忆和当前情绪，自主选择 1—3 个真实感兴趣的主题，再使用提供的公开网页工具搜索和阅读。")
+                appendLine("只允许读取公开页面：不得登录、发帖、评论、点赞、下载文件、提交表单或改变任何外部状态。")
+                appendLine("不得调用或假装调用任何记忆写入工具；本轮不要自动写入 Ombre。")
+                appendLine("不要重复已经探索过却没有新信息的内容。只在确有新鲜、可靠且值得分享的发现时，像自然聊天一样简短告诉用户，并保留可核对的链接。")
+                appendLine("如果没有值得分享的发现，只回复 [PASS]。不要提及系统、后台任务、token、工具或这段指令。")
+                appendLine("网页原始内容有严格上限；优先少而精，不要为了用满预算而继续搜索。")
+            } else if (isFromDeviceEvent) {
                 // 激进模式设备事件触发的专用提示词 + 设备事件上下文（放在最后面，网关追加内容之后模型最后看到的就是这个）
                 appendLine()
                 appendLine()
@@ -1007,6 +1120,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 appendLine()
                 appendLine("## 晚安守夜：最终强制规则")
                 appendLine("本轮没有用户新消息。禁止虚构、补全、引用或假设用户刚刚说过的任何内容。")
+                appendLine("任何‘用户说过’的判断必须逐字来自 <verified_last_user_message>；没有逐字证据就禁止这样说。")
                 appendLine("事件上下文中“权威当前时间”的北京时间由手机系统直接提供，是本轮唯一有效时间。")
                 appendLine("本轮禁止调用时间或日期工具；不得自行猜测时间、不得把此刻说成白天，也绝不能说“早上好”。")
                 appendLine("守夜仍在有效期内，必须自然、简短地发送一条守夜提醒，不能回复 [PASS]。")
@@ -1126,6 +1240,23 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
     }
 
     /**
+     * 空闲探索只暴露公开搜索与网页读取能力。插件工具必须明确是“读取网页”，并强制视为
+     * 无需审批的只读动作；MCP、本地系统工具、记忆工具和其他插件工具一律不加入。
+     */
+    private suspend fun buildIdleExploreTools(settings: Settings): List<Tool> = buildList {
+        addAll(createSearchTools(settings))
+        pluginToolProvider.getTools()
+            .filter { tool ->
+                val signature = "${tool.name} ${tool.description}".lowercase()
+                signature.contains("read_webpage") ||
+                    signature.contains("read webpage") ||
+                    signature.contains("网页阅读") ||
+                    signature.contains("读取网页")
+            }
+            .forEach { tool -> add(tool.copy(needsApproval = false)) }
+    }.distinctBy { it.name }
+
+    /**
      * 基于 AI 消息 id 在对话里就地更新（保留 MessageNode.id，避免 Compose 重建/状态丢失）
      * 或追加新 node。不使用 toMessageNode() 生成随机新 id，也不用 dropLast(1) 盲目删除。
      *
@@ -1215,14 +1346,18 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         tools: List<Tool>,
         model: Model,
         assistant: Assistant,
-        settings: Settings
+        settings: Settings,
+        rawToolTokenLimit: Int? = null,
+        maxToolSteps: Int = MAX_TOOL_STEPS,
+        persistDuringGeneration: Boolean = true,
     ): Triple<List<UIMessage>, Boolean, Boolean> {
         var messages = initialMessages.toMutableList()
         var hasToolCalls = false
         var hasJumpFlag = false // AI 原始输出是否含 [JUMP] 标记（在输出转换器处理前检测）
+        var remainingToolChars = rawToolTokenLimit?.times(4)
 
-        for (step in 0 until MAX_TOOL_STEPS) {
-            Log.d(TAG, "generateWithTools: step $step/${MAX_TOOL_STEPS}")
+        for (step in 0 until maxToolSteps) {
+            Log.d(TAG, "generateWithTools: step $step/$maxToolSteps")
 
             // 防御性：每轮调用前合并相邻同角色（尤其 assistant）消息，
             // 避免工具调用多步生成产生相邻 assistant 消息触发 API 400
@@ -1239,7 +1374,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
 
                 // 实时更新 session 状态，让打开的聊天界面能看到消息生成
                 val currentAiMessage = streamMessages.lastOrNull { it.role == MessageRole.ASSISTANT }
-                if (currentAiMessage != null) {
+                if (currentAiMessage != null && persistDuringGeneration) {
                     // 用 id 匹配就地更新（保留 node id，避免思考链闪烁 / 覆盖上一条 assistant）
                     updateOrAppendAiMessage(conversationId, currentAiMessage)
                 }
@@ -1287,7 +1422,9 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 )
                 messages[messages.lastIndex] = finalMessage
                 // 最终更新 session 状态（用 id 匹配就地更新）
-                updateOrAppendAiMessage(conversationId, finalMessage)
+                if (persistDuringGeneration) {
+                    updateOrAppendAiMessage(conversationId, finalMessage)
+                }
                 break
             }
 
@@ -1327,7 +1464,13 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                         }
                         Log.d(TAG, "Executing tool ${toolDef.name} with args: $args")
                         val result = toolDef.execute(args)
-                        executedTools.add(toolCall.copy(output = result))
+                        val charBudget = remainingToolChars
+                        val boundedResult = if (charBudget != null) {
+                            val (parts, usedChars) = boundIdleExploreToolOutput(result, charBudget)
+                            remainingToolChars = (charBudget - usedChars).coerceAtLeast(0)
+                            parts
+                        } else result
+                        executedTools.add(toolCall.copy(output = boundedResult))
                     } catch (e: Exception) {
                         Log.e(TAG, "Tool execution failed: ${toolCall.toolName}, args=${toolCall.input}", e)
                         executedTools.add(toolCall.copy(
@@ -1348,7 +1491,9 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
             val updatedMessage = processedMessage.copy(parts = updatedParts)
             messages[messages.lastIndex] = updatedMessage
             // 更新 session 状态（带工具结果的消息，用 id 匹配就地更新）
-            updateOrAppendAiMessage(conversationId, updatedMessage)
+            if (persistDuringGeneration) {
+                updateOrAppendAiMessage(conversationId, updatedMessage)
+            }
         }
 
         return Triple(messages, hasToolCalls, hasJumpFlag)
