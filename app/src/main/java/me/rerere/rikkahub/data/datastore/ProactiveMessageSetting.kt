@@ -18,6 +18,14 @@ data class ProactiveMessageSetting(
     // 留空表示沿用原有逻辑，选择对应助手最近使用的聊天。
     val primaryConversationId: String = "",
     val primaryConversationTitle: String = "",
+    // 默认每 90 分钟给一次本地决策机会，并加入 ±30% 随机浮动。
+    val wakeRhythmEnabled: Boolean = true,
+    val wakeIntervalMinutes: Int = 90,
+    val wakeRandomPercent: Int = 30,
+    // 空闲探索默认关闭；打开后每日仅提供少量只读公开网页探索机会。
+    val idleExploreEnabled: Boolean = false,
+    val idleExploreRunsPerDay: Int = 1,
+    val idleExploreRawTokenLimit: Int = 20_000,
     // 是否允许 AI 根据上下文判断后强制跳转屏幕到聊天界面
     val allowForceJump: Boolean = false,
     val jumpIdleThresholdMinutes: Int = 120, // 用户多久没回复(分钟)才允许跳转屏幕，默认2小时
@@ -41,3 +49,19 @@ data class NightWatchSetting(
     val firstCheckMinutes: Int = 10,
     val repeatIntervalMinutes: Int = 10,
 )
+
+fun ProactiveMessageSetting.validatedWakeIntervalRange(): IntRange {
+    if (!wakeRhythmEnabled) {
+        val minimum = minIntervalMinutes.coerceIn(1, 24 * 60)
+        return minimum..maxIntervalMinutes.coerceIn(minimum, 24 * 60)
+    }
+    val centre = wakeIntervalMinutes.coerceIn(15, 12 * 60)
+    val randomPercent = wakeRandomPercent.coerceIn(0, 80)
+    val variation = centre * randomPercent / 100
+    return (centre - variation).coerceAtLeast(1)..(centre + variation).coerceAtMost(24 * 60)
+}
+
+fun ProactiveMessageSetting.validatedExploreRunsPerDay(): Int = idleExploreRunsPerDay.coerceIn(1, 3)
+
+fun ProactiveMessageSetting.validatedExploreRawTokenLimit(): Int =
+    idleExploreRawTokenLimit.coerceIn(2_000, 20_000)

@@ -19,6 +19,7 @@ import androidx.work.WorkerParameters
 import androidx.work.ExistingWorkPolicy
 import kotlinx.coroutines.flow.first
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.datastore.validatedWakeIntervalRange
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
@@ -41,8 +42,9 @@ class ProactiveMessageWorker(
                 return
             }
 
-            val minMinutes = setting.minIntervalMinutes.coerceAtLeast(1)
-            val maxMinutes = setting.maxIntervalMinutes.coerceAtLeast(minMinutes)
+            val intervalRange = setting.validatedWakeIntervalRange()
+            val minMinutes = intervalRange.first
+            val maxMinutes = intervalRange.last
             val delayMinutes = Random.nextInt(minMinutes, maxMinutes + 1)
 
             val workRequest = OneTimeWorkRequestBuilder<ProactiveMessageWorker>()

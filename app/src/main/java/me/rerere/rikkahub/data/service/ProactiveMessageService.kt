@@ -76,6 +76,7 @@ import me.rerere.rikkahub.data.datastore.promptContext
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.findModelById
+import me.rerere.rikkahub.data.datastore.validatedWakeIntervalRange
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.RouteActivity
 import me.rerere.rikkahub.data.model.Conversation
@@ -108,8 +109,9 @@ class ProactiveMessageService : KoinComponent {
                 return
             }
 
-            val minMinutes = setting.minIntervalMinutes.coerceAtLeast(1)
-            val maxMinutes = setting.maxIntervalMinutes.coerceAtLeast(minMinutes)
+            val intervalRange = setting.validatedWakeIntervalRange()
+            val minMinutes = intervalRange.first
+            val maxMinutes = intervalRange.last
             val delayMinutes = Random.nextInt(minMinutes, maxMinutes + 1)
             val triggerTime = java.lang.System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(delayMinutes.toLong())
 
@@ -511,7 +513,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 if (!isForceTrigger) {
                     val skipDueToInterval = synchronized(prefsLock) {
                         val lastTriggeredTime = prefs.getLong("last_triggered_time", 0L)
-                        val minIntervalMs = proactiveSetting.minIntervalMinutes.coerceAtLeast(1) * 60 * 1000L
+                        val minIntervalMs =
+                            proactiveSetting.validatedWakeIntervalRange().first * 60 * 1000L
                         if (System.currentTimeMillis() - lastTriggeredTime < minIntervalMs) {
                             true
                         } else {

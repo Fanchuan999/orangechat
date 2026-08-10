@@ -65,9 +65,8 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
             message = stringResource(R.string.risk_proactive_message_message),
             onConfirm = {
                 showProactiveRiskDialog = false
-                val newSetting = settings.proactiveMessageSetting.copy(enabled = true, aggressiveModeEnabled = false)
+                val newSetting = settings.proactiveMessageSetting.copy(enabled = true)
                 vm.updateSettings(settings.copy(proactiveMessageSetting = newSetting))
-                me.rerere.rikkahub.data.service.DeviceEventAiTriggerService.stop(context)
                 ProactiveMessageService.triggerNow(context, newSetting)
             },
             onDismiss = { showProactiveRiskDialog = false }
@@ -80,9 +79,8 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
             message = stringResource(R.string.risk_proactive_message_message),
             onConfirm = {
                 showAggressiveRiskDialog = false
-                val newSetting = settings.proactiveMessageSetting.copy(aggressiveModeEnabled = true, enabled = false)
+                val newSetting = settings.proactiveMessageSetting.copy(aggressiveModeEnabled = true)
                 vm.updateSettings(settings.copy(proactiveMessageSetting = newSetting))
-                ProactiveMessageService.cancel(context)
                 try {
                     val intent = android.content.Intent(context, me.rerere.rikkahub.data.service.DeviceEventAiTriggerService::class.java)
                     context.startForegroundService(intent)
@@ -151,7 +149,7 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
             }
             item {
                 val moodSetting = settings.companionMoodSetting
-                CardGroup {
+                CardGroup(title = { Text("情绪与九维欲望") }) {
                     item(
                         headlineContent = { Text("持续情绪引擎") },
                         supportingContent = {
@@ -171,6 +169,26 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                         }
                     )
                     if (moodSetting.enabled) {
+                        item(
+                            headlineContent = { Text("九维欲望") },
+                            supportingContent = {
+                                Text("想你、亲密、好奇、想说、记挂、想逛、想动手、烦和累都只在本机缓慢变化。它们提供行动来由，不会变成固定台词，也不会额外调用模型。")
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = moodSetting.desireEnabled,
+                                    onCheckedChange = { enabled ->
+                                        vm.updateSettings(
+                                            settings.copy(
+                                                companionMoodSetting = moodSetting.copy(
+                                                    desireEnabled = enabled
+                                                )
+                                            )
+                                        )
+                                    }
+                                )
+                            }
+                        )
                         item(
                             headlineContent = { Text("用情绪节奏决定要不要主动找你") },
                             supportingContent = {
@@ -223,7 +241,7 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                 }
             }
             item {
-                CardGroup {
+                CardGroup(title = { Text("普通主动消息") }) {
                     item(
                         headlineContent = { Text("启用主动消息") },
                         supportingContent = { Text("开启后AI立即主动发一条消息，之后按设定间隔循环") },
@@ -319,22 +337,78 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                 }
             }
             item {
-                CardGroup {
+                val proactiveSetting = settings.proactiveMessageSetting
+                CardGroup(title = { Text("统一唤醒节奏") }) {
                     item(
+                        headlineContent = { Text("使用 90 分钟浮动节奏") },
+                        supportingContent = {
+                            Text("开启后按中心间隔 ± 随机比例给 Daddy 一个本地“醒来想想”的机会；没有真实信号时直接跳过，零 token。关闭后使用旧版最小/最大间隔。")
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = proactiveSetting.wakeRhythmEnabled,
+                                onCheckedChange = { enabled ->
+                                    val updated = proactiveSetting.copy(wakeRhythmEnabled = enabled)
+                                    vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
+                                    if (updated.enabled) ProactiveMessageService.resetTimer(context, updated)
+                                }
+                            )
+                        },
+                    )
+                    if (proactiveSetting.wakeRhythmEnabled) {
+                        item(
+                            headlineContent = { Text("中心间隔 (分钟)") },
+                            supportingContent = {
+                                OutlinedTextField(
+                                    value = proactiveSetting.wakeIntervalMinutes.toString(),
+                                    onValueChange = { value ->
+                                        value.toIntOrNull()?.takeIf { it in 15..720 }?.let { minutes ->
+                                            val updated = proactiveSetting.copy(wakeIntervalMinutes = minutes)
+                                            vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
+                                            if (updated.enabled) ProactiveMessageService.resetTimer(context, updated)
+                                        }
+                                    },
+                                    placeholder = { Text("90") },
+                                    singleLine = true,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                            },
+                        )
+                        item(
+                            headlineContent = { Text("随机浮动 (百分比)") },
+                            supportingContent = {
+                                OutlinedTextField(
+                                    value = proactiveSetting.wakeRandomPercent.toString(),
+                                    onValueChange = { value ->
+                                        value.toIntOrNull()?.takeIf { it in 0..80 }?.let { percent ->
+                                            val updated = proactiveSetting.copy(wakeRandomPercent = percent)
+                                            vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
+                                            if (updated.enabled) ProactiveMessageService.resetTimer(context, updated)
+                                        }
+                                    },
+                                    placeholder = { Text("30") },
+                                    singleLine = true,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                                Text("默认 90±30%，实际机会窗口约为 63–117 分钟。")
+                            },
+                        )
+                    } else {
+                        item(
                         headlineContent = { Text("最小间隔 (分钟)") },
                         supportingContent = {
                             OutlinedTextField(
-                                value = settings.proactiveMessageSetting.minIntervalMinutes.toString(),
+                                value = proactiveSetting.minIntervalMinutes.toString(),
                                 onValueChange = { value ->
                                     val minutes = value.toIntOrNull()
                                     if (minutes != null && minutes > 0) {
+                                        val updated = proactiveSetting.copy(minIntervalMinutes = minutes)
                                         vm.updateSettings(
                                             settings.copy(
-                                                proactiveMessageSetting = settings.proactiveMessageSetting.copy(
-                                                    minIntervalMinutes = minutes
-                                                )
+                                                proactiveMessageSetting = updated
                                             )
                                         )
+                                        if (updated.enabled) ProactiveMessageService.resetTimer(context, updated)
                                     }
                                 },
                                 placeholder = { Text("30") },
@@ -343,21 +417,21 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                             )
                         },
                     )
-                    item(
+                        item(
                         headlineContent = { Text("最大间隔 (分钟)") },
                         supportingContent = {
                             OutlinedTextField(
-                                value = settings.proactiveMessageSetting.maxIntervalMinutes.toString(),
+                                value = proactiveSetting.maxIntervalMinutes.toString(),
                                 onValueChange = { value ->
                                     val minutes = value.toIntOrNull()
-                                    if (minutes != null && minutes >= settings.proactiveMessageSetting.minIntervalMinutes) {
+                                    if (minutes != null && minutes >= proactiveSetting.minIntervalMinutes) {
+                                        val updated = proactiveSetting.copy(maxIntervalMinutes = minutes)
                                         vm.updateSettings(
                                             settings.copy(
-                                                proactiveMessageSetting = settings.proactiveMessageSetting.copy(
-                                                    maxIntervalMinutes = minutes
-                                                )
+                                                proactiveMessageSetting = updated
                                             )
                                         )
+                                        if (updated.enabled) ProactiveMessageService.resetTimer(context, updated)
                                     }
                                 },
                                 placeholder = { Text("90") },
@@ -366,18 +440,19 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                             )
                         },
                     )
+                    }
                 }
             }
             item {
                 val nightWatchSetting = settings.proactiveMessageSetting.nightWatchSetting
-                CardGroup {
+                CardGroup(title = { Text("晚安守夜") }) {
                     item(
                         headlineContent = { Text("晚安守夜") },
                         supportingContent = {
                             Text(
                                 "只在你本人发送“晚安、去睡、睡了”等消息后启动，不依赖激进模式。\n\n" +
-                                    "10 分钟后若屏幕仍亮且已经解锁，Daddy 会来逮你；之后仍在使用时，每 10 分钟最多再提醒一次。" +
-                                    "你说“我不睡了、我起床了、别管我了”会立刻解除，次日早上 6 点也会自动失效。"
+                                    "10 分钟后若屏幕仍亮且已经解锁，Daddy 会来逮你；只要仍在使用，就可以继续提醒，不设次数上限，但两次至少间隔 10 分钟。\n\n" +
+                                    "你说“早上好、起床啦、我起床啦、睡醒、我不睡了、我起床了、别管我了”会立刻解除；无论有没有说，守夜都会在最近一次北京时间早上 6 点自动失效。"
                             )
                         },
                         trailingContent = {
@@ -413,9 +488,9 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                     }
                 }
             }
-            // 激进模式开关（与主动消息互斥）
+            // 激进感知与普通主动消息可独立开启，也可以一起交给统一唤醒系统仲裁。
             item {
-                CardGroup {
+                CardGroup(title = { Text("激进感知") }) {
                     item(
                         headlineContent = { Text("激进模式") },
                         supportingContent = {
