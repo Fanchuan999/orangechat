@@ -38,35 +38,11 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.datastore.NightWatchSetting
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
 private const val TAG = "NightWatchService"
-
-/**
- * Classifies only the text the user actually sent in a chat. It deliberately never examines
- * model output or automatic trigger instructions, so a generated "晚安" cannot arm the watch.
- */
-internal object NightWatchMessageClassifier {
-    enum class Action { Arm, Disarm, None }
-
-    private val disarmPhrases = listOf(
-        "我不睡了", "不睡了", "我起床了", "起床了", "别管我了", "别管我", "不要管我", "不用管我",
-        "别催我", "别逮我"
-    )
-    private val negativeSleepPhrases = listOf("不睡", "没睡", "睡不着", "不想睡")
-    private val bedtimePhrases = listOf("晚安", "去睡", "先睡", "睡觉", "睡了", "睡啦", "睡咯", "我要睡", "准备睡", "该睡")
-
-    fun classify(text: String): Action {
-        val normalized = text.lowercase().replace(Regex("\\s+"), "")
-        if (normalized.isBlank()) return Action.None
-        if (disarmPhrases.any(normalized::contains)) return Action.Disarm
-        if (negativeSleepPhrases.any(normalized::contains)) return Action.None
-        return if (bedtimePhrases.any(normalized::contains)) Action.Arm else Action.None
-    }
-}
 
 /**
  * Persistent runtime state is intentionally private to this phone rather than included in a
@@ -121,7 +97,7 @@ object NightWatchManager {
         val repeatIntervalMinutes = setting.repeatIntervalMinutes.coerceAtLeast(1)
         prefs(context).edit()
             .putLong(KEY_ARMED_AT, now)
-            .putLong(KEY_EXPIRES_AT, nextSixAmAfterToday(now))
+            .putLong(KEY_EXPIRES_AT, nightWatchExpiryAt(now))
             .putLong(KEY_LAST_TRIGGERED_AT, 0L)
             .putString(KEY_ASSISTANT_ID, assistantId)
             .putString(KEY_CONVERSATION_ID, conversationId)
@@ -177,21 +153,6 @@ object NightWatchManager {
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /**
-     * A watch belongs to the night in which it was armed.  Use an explicit timezone here so a
-     * device timezone change cannot leave it active into the following afternoon.
-     */
-    private fun nextSixAmAfterToday(now: Long): Long = Calendar.getInstance(BEIJING_TIME_ZONE).run {
-        timeInMillis = now
-        add(Calendar.DAY_OF_YEAR, 1)
-        set(Calendar.HOUR_OF_DAY, 6)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-        timeInMillis
-    }
-
-    private val BEIJING_TIME_ZONE: TimeZone = TimeZone.getTimeZone("Asia/Shanghai")
 }
 
 /**

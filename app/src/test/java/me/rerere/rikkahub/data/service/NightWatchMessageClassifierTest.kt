@@ -17,6 +17,25 @@ class NightWatchMessageClassifierTest {
     }
 
     @Test
+    fun `confirmed morning phrases disarm the watch`() {
+        listOf(
+            "早上好",
+            "起床啦",
+            "我起床啦",
+            "睡醒",
+            "我不睡了",
+            "我起床了",
+            "别管我了",
+        ).forEach { phrase ->
+            assertEquals(
+                "Expected '$phrase' to disarm night watch",
+                NightWatchMessageClassifier.Action.Disarm,
+                NightWatchMessageClassifier.classify(phrase),
+            )
+        }
+    }
+
+    @Test
     fun `negative sleep statements do not accidentally arm`() {
         assertEquals(NightWatchMessageClassifier.Action.None, NightWatchMessageClassifier.classify("我还不想睡"))
         assertEquals(NightWatchMessageClassifier.Action.None, NightWatchMessageClassifier.classify("今晚睡不着"))
