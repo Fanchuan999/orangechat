@@ -57,6 +57,8 @@ import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
+import me.rerere.hugeicons.stroke.Pin
+import me.rerere.hugeicons.stroke.Pin02
 import me.rerere.hugeicons.stroke.Voice
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
@@ -70,6 +72,7 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.VoiceCallService
 import me.rerere.rikkahub.ui.components.ai.ChatInput
+import me.rerere.rikkahub.ui.components.ui.Tooltip
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.context.Navigator
@@ -287,6 +290,10 @@ private fun ChatPageContent(
                     onUpdateTitle = {
                         vm.updateTitle(it)
                     },
+                    onSetPrimaryConversation = {
+                        vm.setPrimaryProactiveConversation(conversation)
+                        toaster.show("已将当前聊天设为主动消息主窗口")
+                    },
                     onVoiceCall = {
                         val activeId = VoiceCallService.activeConversationId.value
                         when {
@@ -490,6 +497,7 @@ private fun TopBar(
     onClickMenu: () -> Unit,
     onNewChat: () -> Unit,
     onUpdateTitle: (String) -> Unit,
+    onSetPrimaryConversation: () -> Unit,
     onVoiceCall: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -548,6 +556,39 @@ private fun TopBar(
             }
         },
         actions = {
+            val isPrimaryConversation =
+                settings.proactiveMessageSetting.primaryConversationId == conversation.id.toString()
+            Tooltip(
+                tooltip = {
+                    Text(
+                        if (isPrimaryConversation) {
+                            "已是主动消息主窗口"
+                        } else {
+                            "设为主动消息主窗口"
+                        }
+                    )
+                }
+            ) {
+                IconButton(
+                    onClick = onSetPrimaryConversation,
+                    enabled = !isPrimaryConversation,
+                ) {
+                    Icon(
+                        imageVector = if (isPrimaryConversation) HugeIcons.Pin else HugeIcons.Pin02,
+                        contentDescription = if (isPrimaryConversation) {
+                            "已是主动消息主窗口"
+                        } else {
+                            "设为主动消息主窗口"
+                        },
+                        tint = if (isPrimaryConversation) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            LocalContentColor.current
+                        },
+                    )
+                }
+            }
+
             IconButton(
                 onClick = {
                     onVoiceCall()

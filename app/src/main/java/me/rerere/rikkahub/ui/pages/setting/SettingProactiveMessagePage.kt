@@ -22,6 +22,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -111,6 +112,43 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            item {
+                val proactiveSetting = settings.proactiveMessageSetting
+                CardGroup(title = { Text("主窗口") }) {
+                    item(
+                        headlineContent = { Text("主动消息主窗口") },
+                        supportingContent = {
+                            Text(
+                                if (proactiveSetting.primaryConversationId.isBlank()) {
+                                    "尚未选择。请进入想作为主窗口的聊天，点击顶部图钉；未选择时会沿用原有的最近聊天逻辑。"
+                                } else {
+                                    "已绑定：${proactiveSetting.primaryConversationTitle.ifBlank { "新聊天" }}\n普通主动消息、激进模式和空闲探索会共用它；晚安守夜仍回到你说晚安的窗口。"
+                                }
+                            )
+                        },
+                        trailingContent = if (proactiveSetting.primaryConversationId.isNotBlank()) {
+                            {
+                                TextButton(
+                                    onClick = {
+                                        vm.updateSettings(
+                                            settings.copy(
+                                                proactiveMessageSetting = proactiveSetting.copy(
+                                                    primaryConversationId = "",
+                                                    primaryConversationTitle = "",
+                                                )
+                                            )
+                                        )
+                                    }
+                                ) {
+                                    Text("清除")
+                                }
+                            }
+                        } else {
+                            null
+                        },
+                    )
+                }
+            }
             item {
                 val moodSetting = settings.companionMoodSetting
                 CardGroup {

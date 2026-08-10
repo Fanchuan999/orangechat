@@ -138,6 +138,20 @@ class ChatVM(
         }
     }
 
+    fun setPrimaryProactiveConversation(conversation: Conversation) {
+        viewModelScope.launch {
+            settingsStore.update { currentSettings ->
+                currentSettings.copy(
+                    proactiveMessageSetting = currentSettings.proactiveMessageSetting.copy(
+                        assistantId = conversation.assistantId.toString(),
+                        primaryConversationId = conversation.id.toString(),
+                        primaryConversationTitle = conversation.title.ifBlank { "新聊天" },
+                    ),
+                )
+            }
+        }
+    }
+
     // 检查用户头像删除
     private fun checkUserAvatarDelete(oldSettings: Settings, newSettings: Settings) {
         val oldAvatar = oldSettings.displaySetting.userAvatar

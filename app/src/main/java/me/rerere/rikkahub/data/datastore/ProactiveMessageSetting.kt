@@ -14,6 +14,10 @@ data class ProactiveMessageSetting(
     val minIntervalMinutes: Int = 30,
     val maxIntervalMinutes: Int = 90,
     val assistantId: String = "",
+    // 普通主动消息、激进模式与空闲探索共用的主聊天窗口。
+    // 留空表示沿用原有逻辑，选择对应助手最近使用的聊天。
+    val primaryConversationId: String = "",
+    val primaryConversationTitle: String = "",
     // 是否允许 AI 根据上下文判断后强制跳转屏幕到聊天界面
     val allowForceJump: Boolean = false,
     val jumpIdleThresholdMinutes: Int = 120, // 用户多久没回复(分钟)才允许跳转屏幕，默认2小时
