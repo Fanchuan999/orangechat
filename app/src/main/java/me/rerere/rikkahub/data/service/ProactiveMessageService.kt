@@ -69,7 +69,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.data.datastore.ProactiveMessageSetting
-import me.rerere.rikkahub.data.datastore.CompanionProactiveDecision
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.continuityProfileFor
@@ -485,21 +484,21 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     return@launch
                 }
 
-                // Ordinary timer wakes first pass through the local "jiwen"-style
-                // rhythm gate. It never calls the model when the answer is wait.
-                // Aggressive device-event wakes keep their existing behaviour so a
-                // sleep/late-night follow-up is not silently suppressed.
-                if (!isFromDeviceEvent) {
-                    when (val decision = companionMoodEngine.decideScheduledProactiveMessage()) {
-                        CompanionProactiveDecision.Contact -> {
-                            settings = settingsStore.settingsFlow.first()
-                        }
-                        CompanionProactiveDecision.Observe,
-                        CompanionProactiveDecision.FindActivity -> {
-                            Log.i(TAG, "Scheduled proactive message skipped by local rhythm: $decision")
-                            stopSelf()
-                            return@launch
-                        }
+                val wakeSource = when {
+                    isNightWatchTrigger -> WakeSource.NightWatch
+                    isFromDeviceEvent -> WakeSource.Aggressive
+                    else -> WakeSource.Scheduled
+                }
+                when (val decision = companionMoodEngine.decideWake(wakeSource)) {
+                    WakeDecision.Contact -> {
+                        settings = settingsStore.settingsFlow.first()
+                    }
+                    WakeDecision.FindActivity,
+                    WakeDecision.Rest,
+                    WakeDecision.Quiet -> {
+                        Log.i(TAG, "$wakeSource proactive wake skipped locally: $decision")
+                        stopSelf()
+                        return@launch
                     }
                 }
 

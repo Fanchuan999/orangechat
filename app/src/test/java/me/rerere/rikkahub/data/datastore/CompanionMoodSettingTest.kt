@@ -62,4 +62,44 @@ class CompanionMoodSettingTest {
         assertFalse(enabled.contains("connection"))
         assertTrue(disabled.isEmpty())
     }
+
+    @Test
+    fun silenceIncreasesLongingAndCuriosityWithoutInventingIrritation() {
+        val initial = CompanionDesireState(
+            longing = 0.2f,
+            curiosity = 0.12f,
+            irritation = 0f,
+            updatedAtMillis = 0L,
+        )
+
+        val evolved = evolveCompanionDesire(initial, nowMillis = 6 * 60 * 60 * 1_000L)
+
+        assertTrue(evolved.longing > initial.longing)
+        assertTrue(evolved.curiosity > initial.curiosity)
+        assertEquals(0f, evolved.irritation, 0.001f)
+    }
+
+    @Test
+    fun realConversationEventsSettleDifferentDesires() {
+        val initial = CompanionDesireState(
+            longing = 0.8f,
+            closeness = 0.2f,
+            expression = 0.7f,
+            agency = 0.6f,
+            irritation = 0.4f,
+            updatedAtMillis = 1_000L,
+        )
+
+        val afterUser = initial.afterUserMessage(nowMillis = 1_000L)
+        val afterAssistant = initial.afterAssistantMessage(nowMillis = 1_000L)
+        val afterProactive = initial.afterProactiveMessage(nowMillis = 1_000L)
+
+        assertTrue(afterUser.longing < initial.longing)
+        assertTrue(afterUser.closeness > initial.closeness)
+        assertTrue(afterUser.irritation < initial.irritation)
+        assertTrue(afterAssistant.expression < initial.expression)
+        assertTrue(afterAssistant.agency < initial.agency)
+        assertTrue(afterProactive.longing < initial.longing)
+        assertEquals(initial.closeness, afterProactive.closeness, 0.001f)
+    }
 }
