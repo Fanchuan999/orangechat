@@ -33,6 +33,7 @@ private const val DAILY_CONVERSATION_SCAN_LIMIT = 100
 private const val MAX_FULL_DAY_SOURCE_CHARACTERS = 26_000
 private const val MAX_EXCERPTED_DAY_SOURCE_CHARACTERS = 30_000
 private const val MAX_CHARACTERS_PER_TURN_EXCERPT = 360
+private const val OMBRE_DIARY_IMPORTANCE = 5
 
 private data class DiarySource(
     val transcript: String,
@@ -210,22 +211,13 @@ class CompanionDiaryService(
                 server.commonOptions.tools.any { it.enable && it.name == "hold" }
         } ?: error("没有找到已连接、且带有 hold 工具的 Ombre-Brain MCP")
 
-        val result = mcpManager.callTool(
+        val result = mcpManager.callToolDetailed(
             serverId = ombre.id,
             toolName = "hold",
-            args = JsonObject(
-                mapOf(
-                    "content" to JsonPrimitive(candidate.content),
-                    "title" to JsonPrimitive(candidate.title),
-                    // Ombre's hold schema accepts one comma-separated string, not a JSON list.
-                    "tags" to JsonPrimitive("diary,user-confirmed"),
-                )
-            ),
+            args = buildConfirmedDiaryHoldArgs(candidate),
         )
-        val rawResult = result.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
-        require(!rawResult.contains("error", ignoreCase = true)) {
-            "Ombre 没有保存成功：${rawResult.take(180)}"
-        }
+        val rawResult = result.parts.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
+        describeOmbreHoldFailure(rawResult = rawResult, isError = result.isError)?.let { error(it) }
         val saved = candidate.copy(ombreSavedAtMillis = System.currentTimeMillis())
         settingsStore.update { current ->
             current.copy(companionSpaceSetting = current.companionSpaceSetting.withCandidate(saved))
@@ -239,4 +231,49 @@ private fun MessageRole.diaryLabel(): String = when (this) {
     MessageRole.USER -> "应帆"
     MessageRole.ASSISTANT -> "Daddy"
     else -> name
+}
+
+internal fun buildConfirmedDiaryHoldArgs(candidate: DiaryCandidate): JsonObject = JsonObject(
+    mapOf(
+        "content" to JsonPrimitive(candidate.content),
+        "title" to JsonPrimitive(candidate.title),
+        // Ombre's hold schema accepts one comma-separated string, not a JSON list.
+        "tags" to JsonPrimitive("diary,user-confirmed"),
+        "importance" to JsonPrimitive(OMBRE_DIARY_IMPORTANCE),
+        "pinned" to JsonPrimitive(false),
+        "feel" to JsonPrimitive(false),
+        "valence" to JsonPrimitive(-1.0),
+        "arousal" to JsonPrimitive(-1.0),
+        "why_remembered" to JsonPrimitive("用户确认保存的日记候选"),
+        "meaning" to JsonPrimitive("这是一段由用户确认后写入的当天共同生活记录。"),
+    )
+)
+
+internal fun describeOmbreHoldFailure(rawResult: String, isError: Boolean): String? {
+    val text = rawResult.trim()
+    if (text.isBlank()) return "Ombre 没有返回保存结果"
+    val excerpt = text.take(240)
+    if (isError) return "Ombre 没有保存成功：$excerpt"
+
+    val lower = text.lowercase()
+    val looksFailed = listOf(
+        "failed to execute tool",
+        "error executing tool",
+        "validation error",
+        "validation errors",
+        "\"success\":false",
+        "\"success\": false",
+        "\"error\"",
+        "traceback",
+        "exception",
+        "tool not found",
+        "no such mcp client",
+        "连接失败",
+        "无法连接",
+        "保存失败",
+        "参数校验",
+        "校验失败",
+    ).any { marker -> lower.contains(marker) }
+
+    return if (looksFailed) "Ombre 没有保存成功：$excerpt" else null
 }

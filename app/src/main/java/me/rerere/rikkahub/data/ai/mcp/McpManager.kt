@@ -72,6 +72,11 @@ private const val MAX_RECONNECT_DELAY_MS = 30000L
 private const val TOKEN_REFRESH_LEEWAY_MS = 60_000L // 令牌到期前 60s 视为需要刷新
 private val OAUTH_CALLBACK_TIMEOUT = 5.minutes
 
+internal data class McpToolCallResult(
+    val parts: List<UIMessagePart>,
+    val isError: Boolean,
+)
+
 class McpManager(
     private val settingsStore: SettingsStore,
     private val appScope: AppScope,
@@ -161,9 +166,16 @@ class McpManager(
     }
 
     suspend fun callTool(serverId: Uuid, toolName: String, args: JsonObject): List<UIMessagePart> {
+        return callToolDetailed(serverId = serverId, toolName = toolName, args = args).parts
+    }
+
+    internal suspend fun callToolDetailed(serverId: Uuid, toolName: String, args: JsonObject): McpToolCallResult {
         val pair = clients[serverId]
         val client = pair?.second
-            ?: return listOf(UIMessagePart.Text("Failed to execute tool, because no such mcp client for the tool"))
+            ?: return McpToolCallResult(
+                parts = listOf(UIMessagePart.Text("Failed to execute tool, because no such mcp client for the tool")),
+                isError = true,
+            )
         val config = pair.first
         Log.i(TAG, "callTool: $toolName / $args (server: ${config.commonOptions.name})")
 
@@ -177,13 +189,16 @@ class McpManager(
             ),
             options = RequestOptions(timeout = 120.seconds),
         )
-        return result.content.map {
-            when(it) {
-                is TextContent -> UIMessagePart.Text(it.text)
-                is ImageContent -> convertImageContentToFilePart(it)
-                else -> UIMessagePart.Text(JsonInstant.encodeToString(it))
-            }
-        }
+        return McpToolCallResult(
+            parts = result.content.map {
+                when (it) {
+                    is TextContent -> UIMessagePart.Text(it.text)
+                    is ImageContent -> convertImageContentToFilePart(it)
+                    else -> UIMessagePart.Text(JsonInstant.encodeToString(it))
+                }
+            },
+            isError = result.isError == true,
+        )
     }
 
     private suspend fun convertImageContentToFilePart(image: ImageContent): UIMessagePart.Image {
