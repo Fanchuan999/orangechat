@@ -57,9 +57,8 @@ class ToolSurfaceBuilder(
             }
             addAll(buildMemoryTools(
                 json = json,
-                onCreation = { content -> memoryRepository.addMemory(memoryAssistantId, content) },
-                onUpdate = { id, content -> memoryRepository.updateContent(id, content) },
-                onDelete = { id -> memoryRepository.deleteMemory(id) },
+                memoryRepository = memoryRepository,
+                memoryAssistantId = memoryAssistantId,
             ))
         }
         if (settings.enableWebSearch) {

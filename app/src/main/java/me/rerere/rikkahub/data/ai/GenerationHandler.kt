@@ -135,15 +135,8 @@ class GenerationHandler(
                     }
                     buildMemoryTools(
                         json = json,
-                        onCreation = { content ->
-                            memoryRepo.addMemory(memoryAssistantId, content)
-                        },
-                        onUpdate = { id, content ->
-                            memoryRepo.updateContent(id, content)
-                        },
-                        onDelete = { id ->
-                            memoryRepo.deleteMemory(id)
-                        }
+                        memoryRepository = memoryRepo,
+                        memoryAssistantId = memoryAssistantId,
                     ).let(this::addAll)
                 }
                 // 文件写入工具 - AI可直接将文件内容写入设备或打包ZIP

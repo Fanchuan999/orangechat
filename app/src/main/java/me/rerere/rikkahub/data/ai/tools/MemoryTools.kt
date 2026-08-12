@@ -20,14 +20,14 @@ import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.model.AssistantMemory
+import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.utils.toLocalString
 import java.time.LocalDate
 
 fun buildMemoryTools(
     json: Json,
-    onCreation: suspend (String) -> AssistantMemory,
-    onUpdate: suspend (Int, String) -> AssistantMemory,
-    onDelete: suspend (Int) -> Unit
+    memoryRepository: MemoryRepository,
+    memoryAssistantId: String,
 ): List<Tool> = listOf(
     Tool(
         name = "memory_tool",
@@ -82,18 +82,21 @@ fun buildMemoryTools(
             val payload = when (action) {
                 "create" -> {
                     val content = params["content"]?.jsonPrimitive?.contentOrNull ?: error("content is required")
-                    json.encodeToJsonElement(AssistantMemory.serializer(), onCreation(content))
+                    json.encodeToJsonElement(
+                        AssistantMemory.serializer(),
+                        memoryRepository.addMemory(memoryAssistantId, content)
+                    )
                 }
 
                 "edit" -> {
                     val id = params["id"]?.jsonPrimitive?.intOrNull ?: error("id is required")
                     val content = params["content"]?.jsonPrimitive?.contentOrNull ?: error("content is required")
-                    json.encodeToJsonElement(AssistantMemory.serializer(), onUpdate(id, content))
+                    json.encodeToJsonElement(AssistantMemory.serializer(), memoryRepository.updateContent(id, content))
                 }
 
                 "delete" -> {
                     val id = params["id"]?.jsonPrimitive?.intOrNull ?: error("id is required")
-                    onDelete(id)
+                    memoryRepository.deleteMemory(id)
                     buildJsonObject {
                         put("success", true)
                         put("id", id)
