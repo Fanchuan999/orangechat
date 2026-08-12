@@ -32,6 +32,16 @@ class WakeSettingValidationTest {
     }
 
     @Test
+    fun `exploration control selections persist within the supported ranges`() {
+        val updated = ProactiveMessageSetting()
+            .withIdleExploreRunsPerDay(3)
+            .withIdleExploreRawTokenLimit(2_000)
+
+        assertEquals(3, updated.idleExploreRunsPerDay)
+        assertEquals(2_000, updated.idleExploreRawTokenLimit)
+    }
+
+    @Test
     fun `ninety minute rhythm with thirty percent randomisation gives a safe window`() {
         val setting = ProactiveMessageSetting(
             wakeRhythmEnabled = true,

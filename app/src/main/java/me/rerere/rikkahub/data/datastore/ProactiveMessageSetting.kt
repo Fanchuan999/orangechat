@@ -65,3 +65,9 @@ fun ProactiveMessageSetting.validatedExploreRunsPerDay(): Int = idleExploreRunsP
 
 fun ProactiveMessageSetting.validatedExploreRawTokenLimit(): Int =
     idleExploreRawTokenLimit.coerceIn(2_000, 20_000)
+
+fun ProactiveMessageSetting.withIdleExploreRunsPerDay(runs: Int): ProactiveMessageSetting =
+    copy(idleExploreRunsPerDay = runs.coerceIn(1, 3))
+
+fun ProactiveMessageSetting.withIdleExploreRawTokenLimit(tokens: Int): ProactiveMessageSetting =
+    copy(idleExploreRawTokenLimit = tokens.coerceIn(2_000, 20_000))

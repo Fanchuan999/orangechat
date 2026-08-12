@@ -16,12 +16,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -38,6 +41,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Camera01
@@ -68,11 +72,13 @@ import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.service.KeepAliveService
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.SystemToolsSetting
+import me.rerere.rikkahub.data.sync.companion.AmapMcpService
 import me.rerere.rikkahub.data.gadgetbridge.GadgetbridgeReader
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.components.ui.RiskConfirmDialog
 import me.rerere.rikkahub.ui.context.LocalNavController
+import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionAccessBackgroundLocation
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionAccessCoarseLocation
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionAccessFineLocation
@@ -87,12 +93,19 @@ import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.plus
 import me.rerere.rikkahub.Screen
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingSystemToolsPage(vm: SettingVM = koinViewModel()) {
     val context = LocalContext.current
     val navController = LocalNavController.current
+    val toaster = LocalToaster.current
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val amapMcpService: AmapMcpService = koinInject()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var showAmapSetup by remember { mutableStateOf(false) }
+    var installingAmap by remember { mutableStateOf(false) }
     var systemToolsSetting by remember(settings) {
         mutableStateOf(settings.systemToolsSetting)
     }
@@ -133,6 +146,26 @@ fun SettingSystemToolsPage(vm: SettingVM = koinViewModel()) {
     val smsPermissionState = rememberPermissionState(permissions = setOf(PermissionReadSms))
 
     val phoneStatePermissionState = rememberPermissionState(permissions = setOf(PermissionReadPhoneState))
+
+    if (showAmapSetup) {
+        AmapRouteSetupDialog(
+            initialApiKey = settings.companionSpaceSetting.amapRouteSetting.apiKey,
+            installing = installingAmap,
+            onDismiss = { if (!installingAmap) showAmapSetup = false },
+            onSave = { apiKey ->
+                installingAmap = true
+                scope.launch {
+                    amapMcpService.saveAndInstall(apiKey)
+                        .onSuccess {
+                            toaster.show("高德路线已经连上 Daddy 了，可以直接问路线。")
+                            showAmapSetup = false
+                        }
+                        .onFailure { error -> toaster.show(error.message ?: "高德路线服务没有安装成功。") }
+                    installingAmap = false
+                }
+            },
+        )
+    }
 
     // 搜索栏状态
 
@@ -284,6 +317,25 @@ fun SettingSystemToolsPage(vm: SettingVM = koinViewModel()) {
                         }
                     )
                 }
+                item(
+                    headlineContent = {
+                        Text(
+                            if (settings.companionSpaceSetting.amapRouteSetting.apiKey.isBlank()) {
+                                "高德路线（未连接）"
+                            } else {
+                                "高德路线（已保存）"
+                            }
+                        )
+                    },
+                    supportingContent = {
+                        Text("步行、骑行、驾车、公交与距离规划；服务只在本机 Termux 的 127.0.0.1:8001 运行。")
+                    },
+                    trailingContent = {
+                        FilledTonalButton(enabled = !installingAmap, onClick = { showAmapSetup = true }) {
+                            Text(if (installingAmap) "启动中…" else if (settings.companionSpaceSetting.amapRouteSetting.apiKey.isBlank()) "连接" else "重装")
+                        }
+                    },
+                )
             }
             }
 
@@ -1236,4 +1288,38 @@ fun SettingSystemToolsPage(vm: SettingVM = koinViewModel()) {
         PermissionManager(permissionState = smsPermissionState)
         PermissionManager(permissionState = phoneStatePermissionState)
     }
+}
+
+@Composable
+private fun AmapRouteSetupDialog(
+    initialApiKey: String,
+    installing: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+) {
+    var apiKey by remember(initialApiKey) { mutableStateOf(initialApiKey) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("连接 Daddy 的高德路线") },
+        text = {
+            androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("请粘贴高德开放平台创建的“Web 服务”类型 Key。Daddy 会保留现有 Termux 安装方式与本机 MCP。")
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it.trim().take(128) },
+                    label = { Text("高德 Web 服务 Key") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Text("Key 会留在 Daddy 本机设置与联动备份里；不会上传到别的服务。")
+            }
+        },
+        confirmButton = {
+            Button(enabled = apiKey.length >= 16 && !installing, onClick = { onSave(apiKey) }) {
+                Text(if (installing) "正在安装…" else "保存并启动")
+            }
+        },
+        dismissButton = { TextButton(enabled = !installing, onClick = onDismiss) { Text("取消") } },
+    )
 }

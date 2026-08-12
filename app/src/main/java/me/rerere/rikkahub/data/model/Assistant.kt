@@ -12,6 +12,8 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.CustomBody
 import me.rerere.ai.provider.CustomHeader
 import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.ui.isCacheFriendlyContextAvailable
+import me.rerere.ai.ui.limitContext
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.rikkahub.data.ai.tools.LocalToolOption
 import kotlin.uuid.Uuid
@@ -28,6 +30,7 @@ data class Assistant(
     val temperature: Float? = null,
     val topP: Float? = null,
     val contextMessageSize: Int = 0,
+    val cacheFriendlyContextTruncation: Boolean = false,
     val streamOutput: Boolean = true,
     val enableMemory: Boolean = false,
     val useGlobalMemory: Boolean = false, // 使用全局共享记忆而非助手隔离记忆
@@ -92,7 +95,29 @@ data class AssistantRegex(
     val affectingScope: Set<AssistantAffectScope> = setOf(),
     val visualOnly: Boolean = false, // 是否仅在视觉上影响
 )
- 
+
+data class ContextMessageSelection(
+    val messages: List<UIMessage>,
+    val didCacheFriendlyTruncate: Boolean,
+)
+
+fun Assistant.selectContextMessagesWithMetadata(messages: List<UIMessage>): ContextMessageSelection {
+    val selectedMessages = messages.limitContext(
+        limit = contextMessageSize,
+        cacheFriendly = cacheFriendlyContextTruncation,
+    )
+
+    return ContextMessageSelection(
+        messages = selectedMessages,
+        didCacheFriendlyTruncate = cacheFriendlyContextTruncation &&
+            isCacheFriendlyContextAvailable(contextMessageSize) &&
+            selectedMessages.size < messages.size,
+    )
+}
+
+fun Assistant.selectContextMessages(messages: List<UIMessage>): List<UIMessage> =
+    selectContextMessagesWithMetadata(messages).messages
+
 fun String.replaceRegexes(
     assistant: Assistant?,
     scope: AssistantAffectScope,

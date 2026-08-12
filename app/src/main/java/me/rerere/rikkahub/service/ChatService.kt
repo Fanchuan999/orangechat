@@ -105,6 +105,7 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
+import me.rerere.rikkahub.data.model.selectContextMessages
 import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
@@ -504,15 +505,15 @@ class ChatService(
                     Log.w(TAG, "Failed to save user message to external memory", e)
                 }
 
-                // Local-only continuity state. This does not trigger a model call or notification.
-                runCatching { companionMoodEngine.recordUserMessage() }
-                    .onFailure { Log.w(TAG, "Failed to update companion mood after user message", it) }
-
                 // 晚安守夜只识别用户本人刚刚发出的纯文本，不读模型消息、插件事件或历史记录。
                 // 这里写入本地状态/启动前台守夜服务，不会立即调用模型或增加本轮 token。
                 val userText = processedContent.mapNotNull { part ->
                     (part as? UIMessagePart.Text)?.text
                 }.joinToString("\n")
+
+                // Local-only continuity state. This does not trigger a model call or notification.
+                runCatching { companionMoodEngine.recordUserMessage(userText) }
+                    .onFailure { Log.w(TAG, "Failed to update companion mood after user message", it) }
                 if (useSmartToolRouting) {
                     session.startSmartToolRouting(userText)
                 } else {
@@ -634,9 +635,7 @@ class ChatService(
                 }
                 val providerHandler = providerManager.getProviderByType(provider)
 
-                val historyMessages = currentConversation.currentMessages.let {
-                    if (assistant.contextMessageSize > 0) it.takeLast(assistant.contextMessageSize) else it
-                }
+                val historyMessages = assistant.selectContextMessages(currentConversation.currentMessages)
 
                 // 记录生成开始前的消息节点数量，作为"生成期间是否有新消息插入"的判断基准
                 val nodeCountBeforeGeneration = currentConversation.messageNodes.size

@@ -17,6 +17,7 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.provider.Model
 import me.rerere.ai.util.json
+import kotlin.math.roundToInt
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -276,10 +277,26 @@ fun List<UIMessagePart>.isEmptyUIMessage(): Boolean {
     }
 }
 
-fun List<UIMessage>.limitContext(size: Int): List<UIMessage> {
-    if (size <= 0 || this.size <= size) return this
+private const val CACHE_FRIENDLY_CONTEXT_MIN_LIMIT = 200
+private const val CACHE_FRIENDLY_CONTEXT_TRIM_RATIO = 0.25f
 
-    val startIndex = this.size - size
+fun isCacheFriendlyContextAvailable(limit: Int): Boolean = limit >= CACHE_FRIENDLY_CONTEXT_MIN_LIMIT
+
+fun List<UIMessage>.limitContext(limit: Int, cacheFriendly: Boolean = false): List<UIMessage> {
+    if (limit <= 0 || this.size <= limit) return this
+
+    val startIndex = if (cacheFriendly && isCacheFriendlyContextAvailable(limit)) {
+        val stride = (limit * CACHE_FRIENDLY_CONTEXT_TRIM_RATIO).roundToInt().coerceAtLeast(1)
+        val overflow = this.size - limit
+        (((overflow + stride - 1) / stride) * stride).coerceAtMost(this.lastIndex)
+    } else {
+        this.size - limit
+    }
+
+    return this.subList(alignContextStart(startIndex), this.size)
+}
+
+private fun List<UIMessage>.alignContextStart(startIndex: Int): Int {
     var adjustedStartIndex = startIndex
 
     // 循环往前查找，直到满足所有依赖条件
@@ -318,7 +335,7 @@ fun List<UIMessage>.limitContext(size: Int): List<UIMessage> {
         }
     }
 
-    return this.subList(adjustedStartIndex, this.size)
+    return adjustedStartIndex
 }
 
 @Serializable

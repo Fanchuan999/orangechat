@@ -47,6 +47,7 @@ import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.service.CompanionMoodEngine
 import me.rerere.rikkahub.data.service.CompanionDiaryService
 import me.rerere.rikkahub.data.service.CompanionSpaceService
+import me.rerere.rikkahub.data.service.ChatMediaStorageService
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.rikkahub.data.sync.companion.AmapMcpService
 import me.rerere.rikkahub.data.sync.companion.CompanionBackupService
@@ -289,6 +290,8 @@ val dataSourceModule = module {
     }
 
     single { CompanionSpaceService(settingsStore = get()) }
+
+    single { ChatMediaStorageService(filesManager = get(), conversationRepository = get(), settingsStore = get()) }
 
     single {
         AmapMcpService(

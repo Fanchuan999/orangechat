@@ -29,7 +29,59 @@ data class CompanionMoodSetting(
     val expressionStrength: Float = 0.5f,
     val state: CompanionMoodState = CompanionMoodState(),
     val desireState: CompanionDesireState = CompanionDesireState(),
+    /** Short-lived, local-only weather markers inferred from explicit user wording. */
+    val affectEvents: List<CompanionAffectEvent> = emptyList(),
 )
+
+@Serializable
+enum class CompanionAffectKind { FATIGUE, LOW_MOOD, IRRITATION, JOY, DISCOMFORT, INTIMACY }
+
+@Serializable
+data class CompanionAffectEvent(
+    val kind: CompanionAffectKind,
+    val intensity: Float,
+    val recordedAtMillis: Long,
+    val expiresAtMillis: Long,
+    val source: String = "明确关键词",
+)
+
+fun CompanionMoodSetting.activeAffectEvents(nowMillis: Long = System.currentTimeMillis()): List<CompanionAffectEvent> =
+    affectEvents.filter { it.expiresAtMillis > nowMillis }
+
+fun List<CompanionAffectEvent>.withDetectedAffectEvents(
+    detected: List<CompanionAffectEvent>,
+    nowMillis: Long = System.currentTimeMillis(),
+): List<CompanionAffectEvent> {
+    val current = filter { it.expiresAtMillis > nowMillis }.toMutableList()
+    detected.forEach { event ->
+        val existingIndex = current.indexOfFirst { it.kind == event.kind }
+        if (existingIndex >= 0) {
+            val old = current[existingIndex]
+            current[existingIndex] = event.copy(intensity = maxOf(old.intensity, event.intensity))
+        } else current += event
+    }
+    return current.sortedByDescending { it.recordedAtMillis }.take(3)
+}
+
+fun detectCompanionAffectEvents(text: String, nowMillis: Long = System.currentTimeMillis()): List<CompanionAffectEvent> {
+    val normalized = text.replace(Regex("\\s+"), "")
+    if (normalized.isBlank() || normalized.contains("吗") || normalized.contains("怎么读") || normalized.contains("是什么意思")) return emptyList()
+    fun has(words: List<String>): Boolean = words.any { word ->
+        normalized.contains(word) && !normalized.contains("不$word") && !normalized.contains("没$word") && !normalized.contains("别$word")
+    }
+    fun event(kind: CompanionAffectKind, hours: Int) = CompanionAffectEvent(
+        kind = kind, intensity = 0.65f, recordedAtMillis = nowMillis,
+        expiresAtMillis = nowMillis + hours * 60L * 60 * 1000,
+    )
+    return buildList {
+        if (has(listOf("好累", "累死", "困死", "好困"))) add(event(CompanionAffectKind.FATIGUE, 4))
+        if (has(listOf("难过", "委屈", "想哭"))) add(event(CompanionAffectKind.LOW_MOOD, 6))
+        if (has(listOf("好烦", "生气", "气死"))) add(event(CompanionAffectKind.IRRITATION, 4))
+        if (has(listOf("好开心", "好高兴", "兴奋"))) add(event(CompanionAffectKind.JOY, 2))
+        if (has(listOf("不舒服", "难受", "头疼", "疼"))) add(event(CompanionAffectKind.DISCOMFORT, 4))
+        if (has(listOf("想你", "想抱抱", "好喜欢你"))) add(event(CompanionAffectKind.INTIMACY, 2))
+    }
+}
 
 @Serializable
 data class CompanionMoodState(
@@ -63,6 +115,28 @@ data class CompanionDesireState(
     val fatigue: Float = 0.08f,
     val updatedAtMillis: Long = System.currentTimeMillis(),
 )
+
+/** A presentation-only view of a local desire; it never reaches the model. */
+data class CompanionDesireDisplayItem(
+    val label: String,
+    val value: Float,
+    val description: String? = null,
+)
+
+/** The stable order used by the read-only nine-axis state panel. */
+fun CompanionDesireState.displayItems(): List<CompanionDesireDisplayItem> = listOf(
+    CompanionDesireDisplayItem("想你", longing, "久未互动时会缓慢上升；真正聊天后会落下。"),
+    CompanionDesireDisplayItem("亲密", closeness),
+    CompanionDesireDisplayItem("好奇", curiosity),
+    CompanionDesireDisplayItem("想说", expression),
+    CompanionDesireDisplayItem("记挂", care),
+    CompanionDesireDisplayItem("想逛", wander),
+    CompanionDesireDisplayItem("想动手", agency),
+    CompanionDesireDisplayItem("烦", irritation),
+    CompanionDesireDisplayItem("累（闸门）", fatigue, "高时会压低主动打扰和表达强度。"),
+)
+
+fun desireDisplayPercent(value: Float): Int = (value.coerceIn(0f, 1f) * 100).toInt()
 
 /** Silence changes only motives that have a real local cause; it never invents irritation. */
 fun evolveCompanionDesire(
@@ -255,7 +329,11 @@ fun CompanionMoodSetting.expressionLabel(): String = when {
 
 fun CompanionMoodSetting.currentSummary(nowMillis: Long = System.currentTimeMillis()): String {
     val current = evolveCompanionMood(state, nowMillis)
+    val affects = activeAffectEvents(nowMillis).map { it.kind }.toSet()
     val mood = when {
+        CompanionAffectKind.IRRITATION in affects -> "有点烦躁"
+        CompanionAffectKind.LOW_MOOD in affects || CompanionAffectKind.DISCOMFORT in affects -> "有点安静"
+        CompanionAffectKind.JOY in affects -> "心情轻快"
         current.valence > 0.32f -> "心情轻快"
         current.valence < -0.32f -> "有点安静"
         else -> "心绪平稳"
@@ -276,7 +354,11 @@ fun CompanionMoodSetting.promptContext(
     if (!enabled) return ""
 
     val current = evolveCompanionMood(state, nowMillis)
+    val affects = activeAffectEvents(nowMillis).map { it.kind }.toSet()
     val mood = when {
+        CompanionAffectKind.IRRITATION in affects -> "有点烦躁"
+        CompanionAffectKind.LOW_MOOD in affects || CompanionAffectKind.DISCOMFORT in affects -> "安静"
+        CompanionAffectKind.JOY in affects -> "轻快"
         current.valence > 0.32f -> "轻快"
         current.valence < -0.32f -> "安静"
         else -> "平静"
@@ -306,7 +388,12 @@ fun CompanionMoodSetting.promptContext(
     } else {
         ""
     }
-    return "[持续情绪，仅作语气参考且不要提及] 此刻：$mood，$connection，$energy；表达：$expression。$desireHint 保持原有人格、边界与对话目标。$proactiveHint"
+    val careHint = when {
+        CompanionAffectKind.LOW_MOOD in affects || CompanionAffectKind.DISCOMFORT in affects || CompanionAffectKind.FATIGUE in affects -> "先温柔陪着，回复相对简短，少讲道理；只有用户明确要建议时才分析。"
+        CompanionAffectKind.IRRITATION in affects -> "保持平和，不激化冲突，不说教。"
+        else -> ""
+    }
+    return "[持续情绪，仅作语气参考且不要提及] 此刻：$mood，$connection，$energy；表达：$expression。$desireHint $careHint 保持原有人格、边界与对话目标。$proactiveHint"
 }
 
 private fun CompanionDesireState.naturalVoiceCue(): String {

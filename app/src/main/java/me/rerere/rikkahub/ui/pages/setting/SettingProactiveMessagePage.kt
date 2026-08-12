@@ -13,10 +13,17 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -29,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -47,14 +55,27 @@ import me.rerere.rikkahub.data.service.NightWatchManager
 import me.rerere.rikkahub.data.service.IdleExploreScheduler
 import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.datastore.currentSummary
+import me.rerere.rikkahub.data.datastore.activeAffectEvents
+import me.rerere.rikkahub.data.datastore.desireDisplayPercent
+import me.rerere.rikkahub.data.datastore.displayItems
+import me.rerere.rikkahub.data.datastore.evolveCompanionDesire
 import me.rerere.rikkahub.data.datastore.expressionLabel
+import me.rerere.rikkahub.data.datastore.validatedExploreRawTokenLimit
+import me.rerere.rikkahub.data.datastore.validatedExploreRunsPerDay
+import me.rerere.rikkahub.data.datastore.withIdleExploreRawTokenLimit
+import me.rerere.rikkahub.data.datastore.withIdleExploreRunsPerDay
+import me.rerere.rikkahub.data.service.CompanionMoodEngine
 import org.koin.compose.koinInject
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
     val context = LocalContext.current
     val navController = LocalNavController.current
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val moodEngine: CompanionMoodEngine = koinInject()
+    val scope = rememberCoroutineScope()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     var showProactiveRiskDialog by remember { mutableStateOf(false) }
@@ -189,6 +210,36 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                                     }
                                 )
                             }
+                        )
+                        if (moodSetting.desireEnabled) {
+                            item(
+                                headlineContent = { Text("当前九维状态") },
+                                supportingContent = {
+                                    NineAxisDesireStatePanel(
+                                        moodSetting = moodSetting,
+                                    )
+                                },
+                            )
+                        }
+                        item(
+                            headlineContent = { Text("当前情绪天气：${moodSetting.currentSummary()}") },
+                            supportingContent = {
+                                val events = moodSetting.activeAffectEvents()
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (events.isEmpty()) {
+                                        Text("没有短期事件；仅按真实互动和时间在本机缓慢变化。")
+                                    } else {
+                                        events.forEach { event ->
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Text("${event.kind.displayName()} · 还剩 ${event.remainingHoursText()}")
+                                                TextButton(onClick = { scope.launch { moodEngine.clearAffectEvent(event.kind) } }) { Text("清除") }
+                                            }
+                                        }
+                                        TextButton(onClick = { scope.launch { moodEngine.clearAffectEvents() } }) { Text("清除全部短期事件") }
+                                    }
+                                    Text("仅识别你本轮明确表达；不保存原句、不调用模型。")
+                                }
+                            },
                         )
                         item(
                             headlineContent = { Text("用情绪节奏决定要不要主动找你") },
@@ -515,17 +566,17 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                         item(
                             headlineContent = { Text("每天最多几次") },
                             supportingContent = {
-                                OutlinedTextField(
-                                    value = proactiveSetting.idleExploreRunsPerDay.toString(),
+                                val currentRuns = proactiveSetting.validatedExploreRunsPerDay()
+                                Text("$currentRuns 次")
+                                Slider(
+                                    value = currentRuns.toFloat(),
                                     onValueChange = { value ->
-                                        value.toIntOrNull()?.takeIf { it in 1..3 }?.let { runs ->
-                                            val updated = proactiveSetting.copy(idleExploreRunsPerDay = runs)
-                                            vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
-                                            IdleExploreScheduler.sync(context, updated)
-                                        }
+                                        val updated = proactiveSetting.withIdleExploreRunsPerDay(value.roundToInt())
+                                        vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
+                                        IdleExploreScheduler.sync(context, updated)
                                     },
-                                    placeholder = { Text("1") },
-                                    singleLine = true,
+                                    valueRange = 1f..3f,
+                                    steps = 1,
                                     modifier = Modifier.padding(top = 8.dp),
                                 )
                                 Text("可选 1—3 次。这里限制的是探索机会；本地判断想休息时不会调用模型。")
@@ -534,20 +585,20 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                         item(
                             headlineContent = { Text("每次网页原始内容上限 (tokens)") },
                             supportingContent = {
-                                OutlinedTextField(
-                                    value = proactiveSetting.idleExploreRawTokenLimit.toString(),
+                                val currentTokens = proactiveSetting.validatedExploreRawTokenLimit()
+                                Text("${currentTokens / 1_000}k tokens")
+                                Slider(
+                                    value = currentTokens.toFloat(),
                                     onValueChange = { value ->
-                                        value.toIntOrNull()?.takeIf { it in 2_000..20_000 }?.let { tokens ->
-                                            val updated = proactiveSetting.copy(idleExploreRawTokenLimit = tokens)
-                                            vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
-                                        }
+                                        val updated = proactiveSetting.withIdleExploreRawTokenLimit(value.roundToInt())
+                                        vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
                                     },
-                                    placeholder = { Text("20000") },
-                                    singleLine = true,
+                                    valueRange = 2_000f..20_000f,
+                                    steps = 17,
                                     modifier = Modifier.padding(top = 8.dp),
                                 )
                                 Text(
-                                    "可设 2,000—20,000。只计算搜索和网页返回的原始材料；" +
+                                    "可设 2,000—20,000（每档 1,000）。只计算搜索和网页返回的原始材料；" +
                                         "发送给 DeepSeek 前会硬截断，最终只分享精简结果。"
                                 )
                             },
@@ -721,5 +772,46 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                 }
             }
         }
+    }
+}
+
+private fun me.rerere.rikkahub.data.datastore.CompanionAffectKind.displayName(): String = when (this) {
+    me.rerere.rikkahub.data.datastore.CompanionAffectKind.FATIGUE -> "疲惫"
+    me.rerere.rikkahub.data.datastore.CompanionAffectKind.LOW_MOOD -> "低落"
+    me.rerere.rikkahub.data.datastore.CompanionAffectKind.IRRITATION -> "烦躁"
+    me.rerere.rikkahub.data.datastore.CompanionAffectKind.JOY -> "愉快"
+    me.rerere.rikkahub.data.datastore.CompanionAffectKind.DISCOMFORT -> "不舒服"
+    me.rerere.rikkahub.data.datastore.CompanionAffectKind.INTIMACY -> "亲密"
+}
+
+private fun me.rerere.rikkahub.data.datastore.CompanionAffectEvent.remainingHoursText(): String {
+    val remaining = (expiresAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+    val minutes = (remaining / 60_000L).coerceAtLeast(1L)
+    return if (minutes >= 60) "${(minutes + 59) / 60} 小时" else "$minutes 分钟"
+}
+
+@Composable
+private fun NineAxisDesireStatePanel(moodSetting: me.rerere.rikkahub.data.datastore.CompanionMoodSetting) {
+    val currentState = evolveCompanionDesire(moodSetting.desireState)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Text("本地计算 · 不耗 token")
+        currentState.displayItems().forEach { item ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(item.label)
+                    Text("${desireDisplayPercent(item.value)}")
+                }
+                LinearProgressIndicator(
+                    progress = { item.value.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                item.description?.let { Text(it) }
+            }
+        }
+        Spacer(modifier = Modifier.height(2.dp))
+        Text("只读展示；数值会随真实互动和时间在本机缓慢变化。")
     }
 }

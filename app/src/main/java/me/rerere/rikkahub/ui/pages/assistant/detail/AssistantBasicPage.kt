@@ -41,6 +41,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.ai.provider.ModelType
+import me.rerere.ai.ui.isCacheFriendlyContextAvailable
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.model.Assistant
@@ -427,9 +428,12 @@ internal fun AssistantBasicContent(
                 Slider(
                     value = assistant.contextMessageSize.toFloat(),
                     onValueChange = {
+                        val contextMessageSize = it.roundToInt()
                         onUpdate(
                             assistant.copy(
-                                contextMessageSize = it.roundToInt()
+                                contextMessageSize = contextMessageSize,
+                                cacheFriendlyContextTruncation = assistant.cacheFriendlyContextTruncation &&
+                                    isCacheFriendlyContextAvailable(contextMessageSize),
                             )
                         )
                     },
@@ -447,6 +451,29 @@ internal fun AssistantBasicContent(
                     color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.75f),
                 )
             }
+            HorizontalDivider()
+            FormItem(
+                modifier = Modifier.padding(8.dp),
+                label = {
+                    Text("缓存友好截断")
+                },
+                description = {
+                    Text(
+                        text = "按 25% 阶梯裁剪旧消息，让连续聊天更容易复用缓存；仅在上下文上限达到 200 条时可开启。",
+                    )
+                },
+                tail = {
+                    Switch(
+                        checked = assistant.cacheFriendlyContextTruncation,
+                        enabled = isCacheFriendlyContextAvailable(assistant.contextMessageSize),
+                        onCheckedChange = { enabled ->
+                            onUpdate(
+                                assistant.copy(cacheFriendlyContextTruncation = enabled)
+                            )
+                        },
+                    )
+                },
+            )
             HorizontalDivider()
             FormItem(
                 modifier = Modifier.padding(8.dp),
@@ -576,4 +603,3 @@ internal fun AssistantBasicContent(
         }
     }
 }
- 

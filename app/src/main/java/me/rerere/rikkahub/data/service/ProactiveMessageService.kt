@@ -40,11 +40,9 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.canResumeToolExecution
 import me.rerere.ai.ui.handleMessageChunk
-import me.rerere.ai.ui.limitContext
 import me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.OutputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
-import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
 import me.rerere.rikkahub.data.ai.transformers.PromptInjectionTransformer
 import me.rerere.rikkahub.data.ai.transformers.PlaceholderTransformer
 import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
@@ -79,6 +77,7 @@ import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.validatedWakeIntervalRange
 import me.rerere.rikkahub.data.datastore.validatedExploreRawTokenLimit
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.selectContextMessages
 import me.rerere.rikkahub.RouteActivity
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.toMessageNode
@@ -91,6 +90,11 @@ import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
+
+private fun formatBeijingTime(nowMillis: Long): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.CHINA).apply {
+        timeZone = BEIJING_TIME_ZONE
+    }.format(java.util.Date(nowMillis))
 
 class ProactiveMessageService : KoinComponent {
     private val settingsStore: SettingsStore by inject()
@@ -241,8 +245,7 @@ class ProactiveMessageService : KoinComponent {
 
         // Current time
         val currentTime = java.lang.System.currentTimeMillis()
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-        sb.appendLine("当前时间: ${sdf.format(java.util.Date(currentTime))}")
+        sb.appendLine("权威当前时间（北京时间）: ${formatBeijingTime(currentTime)}")
 
         // Location context
         try {
@@ -438,7 +441,6 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
     // 输入转换器（与 ChatService 保持一致）
     private val inputTransformers by lazy {
         listOf(
-            TimeReminderTransformer,
             PromptInjectionTransformer,
             PlaceholderTransformer,
             DocumentAsPromptTransformer,
@@ -490,6 +492,22 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     return@launch
                 }
                 if (!isIdleExploreTrigger && !proactiveSetting.enabled && !isFromDeviceEvent) {
+                    stopSelf()
+                    return@launch
+                }
+
+                val triggerKind = when {
+                    isNightWatchTrigger -> ProactiveTriggerKind.NightWatch
+                    isFromDeviceEvent -> ProactiveTriggerKind.Aggressive
+                    isIdleExploreTrigger -> ProactiveTriggerKind.Explore
+                    else -> ProactiveTriggerKind.Scheduled
+                }
+                if (shouldSuppressForNightWatch(
+                        kind = triggerKind,
+                        nightWatchArmed = NightWatchManager.isArmed(this@ProactiveMessageTriggerService),
+                    )
+                ) {
+                    Log.i(TAG, "Skip $triggerKind proactive trigger: night watch owns this window")
                     stopSelf()
                     return@launch
                 }
@@ -652,11 +670,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                         .asReversed()
                 } else {
                     filterInvalidToolMessages(
-                        conversation?.currentMessages?.let {
-                            if (assistant.contextMessageSize > 0) {
-                                it.takeLast(assistant.contextMessageSize)
-                            } else it
-                        } ?: emptyList()
+                        assistant.selectContextMessages(conversation?.currentMessages.orEmpty())
                     )
                 }
 
@@ -727,17 +741,11 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
 
                 // 构建工具列表（与 ChatService 保持一致）
                 // 守夜已由手机把北京时间写进事件上下文；不给模型时间工具，避免失败后它改为猜测。
-                val tools = if (isIdleExploreTrigger) {
+                val tools = (if (isIdleExploreTrigger) {
                     buildIdleExploreTools(settings)
                 } else {
-                    buildTools(settings, assistant, model).filterNot { tool ->
-                        isNightWatchTrigger && (
-                            tool.name.contains("time", ignoreCase = true) ||
-                                tool.name.contains("beijing", ignoreCase = true) ||
-                                tool.name.contains("时间")
-                            )
-                    }
-                }
+                    buildTools(settings, assistant, model)
+                }).filterNot(::isAutomaticTimeOrDateTool)
 
                 if (isIdleExploreTrigger && tools.isEmpty()) {
                     Log.i(TAG, "Idle exploration skipped locally: no public read-only web tools are available")
@@ -821,9 +829,21 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
 
                 Log.d(TAG, "Proactive message generated: '${replyText.take(100)}...' (${replyText.length} chars), hasToolCalls=$hasToolCalls, shouldJump=$shouldJump")
 
-                if (replyText.isBlank() || rawText.contains("[PASS]")) {
+                val isPassResponse = replyText.isBlank() || rawText.contains("[PASS]")
+                val isDuplicateResponse = !isPassResponse && !claimProactiveReplyDelivery(
+                    conversationId = conversationId,
+                    replyText = replyText,
+                )
+                if (isPassResponse || isDuplicateResponse) {
                     // AI 选择跳过，移除本次生成的 aiMessage node（基于 id 匹配，不误删历史）
-                    Log.d(ProactiveMessageService.TAG, "AI chose to skip proactive message")
+                    Log.d(
+                        ProactiveMessageService.TAG,
+                        if (isDuplicateResponse) {
+                            "Suppressed duplicate proactive reply"
+                        } else {
+                            "AI chose to skip proactive message"
+                        },
+                    )
                     val aiId = aiMessage.id
                     val session = chatService.getOrCreateSession(conversationId)
                     session.saveMutex.withLock {
@@ -1114,16 +1134,61 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
             }
 
             // Keep this final: custom prompts, mood cues, and lorebooks must never weaken the
-            // factual boundary of an automatically-triggered bedtime reminder.
+            // factual boundary of an automatically-triggered turn.
+            appendLine()
+            appendLine()
+            appendLine("## 自动触发：最终事实规则")
+            appendLine("本轮由手机系统自动触发，不是用户新发来的一句话。")
+            appendLine("禁止虚构、补全、引用或猜测用户刚刚说过、回复过、答应过任何内容。")
+            appendLine("若确需归因，只能逐字引用历史中 role=USER 的真实文字；否则完全不要使用‘你说了/你回复了/你刚才’等句式。")
+            appendLine("权威当前时间是手机系统提供的北京时间：${formatBeijingTime(System.currentTimeMillis())}。")
+            appendLine("本轮禁止调用时间或日期工具，也不得在工具失败后自行猜测时间。")
             if (isNightWatchTrigger) {
-                appendLine()
-                appendLine()
-                appendLine("## 晚安守夜：最终强制规则")
-                appendLine("本轮没有用户新消息。禁止虚构、补全、引用或假设用户刚刚说过的任何内容。")
-                appendLine("任何‘用户说过’的判断必须逐字来自 <verified_last_user_message>；没有逐字证据就禁止这样说。")
-                appendLine("事件上下文中“权威当前时间”的北京时间由手机系统直接提供，是本轮唯一有效时间。")
-                appendLine("本轮禁止调用时间或日期工具；不得自行猜测时间、不得把此刻说成白天，也绝不能说“早上好”。")
-                appendLine("守夜仍在有效期内，必须自然、简短地发送一条守夜提醒，不能回复 [PASS]。")
+                appendLine("守夜仍在有效期内；不得把此刻说成白天，也绝不能说‘早上好’。")
+                appendLine("守夜必须自然、简短地发送一条提醒，不能回复 [PASS]。")
+            }
+        }
+    }
+
+    private fun isAutomaticTimeOrDateTool(tool: Tool): Boolean {
+        val name = tool.name.lowercase()
+        return name.contains("time") ||
+            name.contains("date") ||
+            name.contains("beijing") ||
+            tool.name.contains("时间") ||
+            tool.name.contains("日期")
+    }
+
+    /**
+     * Claims delivery before persisting or notifying. The fingerprint is scoped to a conversation,
+     * so independent assistants can still naturally use the same short phrase.
+     */
+    private fun claimProactiveReplyDelivery(
+        conversationId: Uuid,
+        replyText: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
+        val prefs = getSharedPreferences(ProactiveMessageService.PREFS_NAME, Context.MODE_PRIVATE)
+        val suffix = conversationId.toString()
+        val fingerprintKey = "last_proactive_reply_fingerprint_$suffix"
+        val timeKey = "last_proactive_reply_time_$suffix"
+        return synchronized(prefsLock) {
+            val previousFingerprint = prefs.getString(fingerprintKey, null)
+            val previousAtMillis = prefs.getLong(timeKey, 0L)
+            if (shouldSuppressDuplicateProactiveReply(
+                    previousFingerprint = previousFingerprint,
+                    previousAtMillis = previousAtMillis,
+                    candidate = replyText,
+                    nowMillis = nowMillis,
+                )
+            ) {
+                false
+            } else {
+                prefs.edit()
+                    .putString(fingerprintKey, proactiveReplyFingerprint(replyText))
+                    .putLong(timeKey, nowMillis)
+                    .apply()
+                true
             }
         }
     }

@@ -15,14 +15,28 @@ import java.net.URI
 import java.net.URL
 
 /** Minimal client for Ombre-Brain's password-protected local export and migration APIs. */
+internal enum class OmbreDashboardAuthAction {
+    Setup,
+    Login,
+}
+
+/** Older Ombre versions did not return this field, so they keep the existing login flow. */
+internal fun ombreDashboardAuthAction(statusBody: String): OmbreDashboardAuthAction =
+    if (SETUP_NEEDED_PATTERN.containsMatchIn(statusBody)) {
+        OmbreDashboardAuthAction.Setup
+    } else {
+        OmbreDashboardAuthAction.Login
+    }
+
+private val SETUP_NEEDED_PATTERN = Regex("\\\"setup_needed\\\"\\s*:\\s*true")
+
 internal class OmbreBackupClient(
     baseUrl: String,
 ) {
     private val baseUrl = normalizeBaseUrl(baseUrl)
 
     suspend fun export(password: CharArray, destination: File) = withContext(Dispatchers.IO) {
-        require(password.isNotEmpty()) { "请输入 Ombre Dashboard 密码。" }
-        val sessionCookie = login(password)
+        val sessionCookie = establishSession(password)
         val connection = open("/api/export", "GET", sessionCookie)
         connection.useConnection { request ->
             requireSuccessful(request)
@@ -32,10 +46,9 @@ internal class OmbreBackupClient(
     }
 
     suspend fun restore(password: CharArray, backupFile: File) = withContext(Dispatchers.IO) {
-        require(password.isNotEmpty()) { "请输入 Ombre Dashboard 密码。" }
         require(backupFile.exists() && backupFile.length() > 0L) { "Ombre 备份文件不存在或为空。" }
 
-        val sessionCookie = login(password)
+        val sessionCookie = establishSession(password)
         val upload = open("/api/migrate/upload", "POST", sessionCookie).apply {
             setRequestProperty("Content-Type", "application/zip")
             doOutput = true
@@ -61,8 +74,32 @@ internal class OmbreBackupClient(
         }
     }
 
-    private fun login(password: CharArray): String {
-        val connection = open("/auth/login", "POST", null).apply {
+    private fun establishSession(password: CharArray): String {
+        require(password.isNotEmpty()) { "请输入 Ombre Dashboard 密码。首次使用可在这里设置一个至少 6 位的密码。" }
+        return when (dashboardAuthAction()) {
+            OmbreDashboardAuthAction.Setup -> {
+                require(password.size >= MINIMUM_PASSWORD_LENGTH) {
+                    "Ombre 首次设置密码至少需要 $MINIMUM_PASSWORD_LENGTH 位。"
+                }
+                authenticate("/auth/setup", password)
+            }
+            OmbreDashboardAuthAction.Login -> authenticate("/auth/login", password)
+        }
+    }
+
+    private fun dashboardAuthAction(): OmbreDashboardAuthAction {
+        val connection = open("/auth/status", "GET", null)
+        return connection.useConnection { request ->
+            when (val code = request.responseCode) {
+                in 200..299 -> ombreDashboardAuthAction(request.inputStream.bufferedReader().use { it.readText() })
+                404, 405 -> OmbreDashboardAuthAction.Login
+                else -> throw requestFailure(code, request)
+            }
+        }
+    }
+
+    private fun authenticate(path: String, password: CharArray): String {
+        val connection = open(path, "POST", null).apply {
             setRequestProperty("Content-Type", "application/json")
             doOutput = true
         }
@@ -95,9 +132,13 @@ internal class OmbreBackupClient(
     private fun requireSuccessful(connection: HttpURLConnection) {
         val code = connection.responseCode
         if (code !in 200..299) {
-            val body = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            throw IllegalStateException("Ombre 请求失败（HTTP $code）：${body.take(ERROR_BODY_LIMIT)}")
+            throw requestFailure(code, connection)
         }
+    }
+
+    private fun requestFailure(code: Int, connection: HttpURLConnection): IllegalStateException {
+        val body = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        return IllegalStateException("Ombre 请求失败（HTTP $code）：${body.take(ERROR_BODY_LIMIT)}")
     }
 
     private inline fun <T> HttpURLConnection.useConnection(block: (HttpURLConnection) -> T): T {
@@ -123,5 +164,6 @@ internal class OmbreBackupClient(
         const val CONNECT_TIMEOUT_MS = 15_000
         const val READ_TIMEOUT_MS = 120_000
         const val ERROR_BODY_LIMIT = 300
+        const val MINIMUM_PASSWORD_LENGTH = 6
     }
 }

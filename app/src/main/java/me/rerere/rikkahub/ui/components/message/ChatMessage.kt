@@ -1,4 +1,4 @@
-﻿/*
+/*
  * 橘瓣 OrangeChat
  * 衍生自 RikkaHub (https://github.com/rikkahub/rikkahub)，原作者 RE
  * 本项目基于 GNU AGPL v3 开源，详见根目录 LICENSE 文件
@@ -102,6 +102,7 @@ import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import me.rerere.rikkahub.ui.components.richtext.ZoomableAsyncImage
+import me.rerere.rikkahub.data.service.DELETED_CHAT_IMAGE_URL
 import me.rerere.rikkahub.ui.components.richtext.buildMarkdownPreviewHtml
 import me.rerere.rikkahub.ui.components.ui.ChainOfThought
 import me.rerere.rikkahub.ui.components.ui.Favicon
@@ -560,9 +561,21 @@ private fun MessagePartsBlock(
                     }
  
                     is UIMessagePart.Image -> {
+                        val isImageDeleted = part.url == DELETED_CHAT_IMAGE_URL
                         val isImageLoading =
                             part.url.isBlank() || part.url.matches(Regex("^data:image/[^;]*;base64,\\s*$"))
-                        if (isImageLoading) {
+                        if (isImageDeleted) {
+                            Surface(
+                                shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                            ) {
+                                Text(
+                                    "图片已清理",
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            }
+                        } else if (isImageLoading) {
                             Box(
                                 modifier = Modifier
                                     .size(72.dp)
@@ -1036,4 +1049,4 @@ internal fun VoiceMessageBubble(
         }
     }
 }
- 
+

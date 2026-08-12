@@ -102,4 +102,22 @@ class CompanionMoodSettingTest {
         assertTrue(afterProactive.longing < initial.longing)
         assertEquals(initial.closeness, afterProactive.closeness, 0.001f)
     }
+
+    @Test
+    fun desireDisplayItemsExposeAllNineAxesInAStableOrder() {
+        val items = CompanionDesireState(
+            longing = 0f,
+            closeness = 1f,
+            curiosity = 0.5f,
+        ).displayItems()
+
+        assertEquals(9, items.size)
+        assertEquals("想你", items[0].label)
+        assertEquals("亲密", items[1].label)
+        assertEquals("好奇", items[2].label)
+        assertEquals(0f, items[0].value, 0.001f)
+        assertEquals(1f, items[1].value, 0.001f)
+        assertEquals(0.5f, items[2].value, 0.001f)
+        assertEquals("累（闸门）", items.last().label)
+    }
 }

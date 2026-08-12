@@ -47,6 +47,73 @@ class MessageTest {
     }
 
     @Test
+    fun `cache friendly context is unavailable below 200 messages`() {
+        val messages = createTestMessages(101)
+
+        assertFalse(isCacheFriendlyContextAvailable(199))
+        assertEquals(100, messages.limitContext(100, cacheFriendly = true).size)
+    }
+
+    @Test
+    fun `cache friendly 200 limit keeps 151 through 200 messages per step`() {
+        val messages = createTestMessages(251)
+
+        assertEquals(151, messages.take(201).limitContext(200, cacheFriendly = true).size)
+        assertEquals(200, messages.take(250).limitContext(200, cacheFriendly = true).size)
+        assertEquals(151, messages.limitContext(200, cacheFriendly = true).size)
+    }
+
+    @Test
+    fun `cache friendly 400 limit keeps 301 through 400 messages per step`() {
+        val messages = createTestMessages(501)
+
+        assertEquals(301, messages.take(401).limitContext(400, cacheFriendly = true).size)
+        assertEquals(400, messages.take(500).limitContext(400, cacheFriendly = true).size)
+        assertEquals(301, messages.limitContext(400, cacheFriendly = true).size)
+    }
+
+    @Test
+    fun `cache friendly 500 limit keeps 376 through 500 messages per step`() {
+        val messages = createTestMessages(626)
+
+        assertEquals(376, messages.take(501).limitContext(500, cacheFriendly = true).size)
+        assertEquals(500, messages.take(625).limitContext(500, cacheFriendly = true).size)
+        assertEquals(376, messages.limitContext(500, cacheFriendly = true).size)
+    }
+
+    @Test
+    fun `cache friendly context keeps a complete tool chain at the trim boundary`() {
+        val user = UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("User query")))
+        val toolCall = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Tool(
+                    toolCallId = "call1",
+                    toolName = "test_tool",
+                    input = "{}",
+                    output = emptyList(),
+                )
+            ),
+        )
+        val toolResult = toolCall.copy(
+            parts = listOf(
+                UIMessagePart.Tool(
+                    toolCallId = "call1",
+                    toolName = "test_tool",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("result")),
+                )
+            ),
+        )
+        val messages = createTestMessages(48) + user + toolCall + toolResult + createTestMessages(150)
+
+        val result = messages.limitContext(200, cacheFriendly = true)
+
+        assertEquals(user, result.first())
+        assertEquals(153, result.size)
+    }
+
+    @Test
     fun `limitContext with executed tool at start should include corresponding tool call`() {
         val messages = listOf(
             UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("User message"))),

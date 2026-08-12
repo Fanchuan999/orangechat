@@ -130,7 +130,7 @@ fun CompanionBackupTab(
         }
 
         item {
-            Text("密码仅在本次导出或恢复时用于登录 Ombre，不会保存到橘瓣。")
+            Text("首次使用：在这里设一个至少 6 位的 Ombre 密码；之后输入同一密码。它只用于本次登录，不会保存到 Daddy。")
         }
 
         item {
@@ -148,7 +148,7 @@ fun CompanionBackupTab(
                 value = ombrePassword,
                 onValueChange = { ombrePassword = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Ombre Dashboard 密码") },
+                label = { Text("Ombre Dashboard 密码（首次可设置）") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
             )

@@ -237,6 +237,16 @@ class FilesManager(
         Pair(count, size)
     }
 
+    suspend fun listChatMediaItems(): List<ChatMediaItem> = list(FileFolders.UPLOAD).map { entity ->
+        ChatMediaItem(entity.relativePath, entity.mimeType, entity.createdAt, entity.sizeBytes)
+    }
+
+    fun relativePathForFileUri(url: String): String? {
+        if (!url.startsWith("file:")) return null
+        val file = runCatching { Uri.parse(url).toFile() }.getOrNull() ?: return null
+        return getRelativePathInFilesDir(file)
+    }
+
     fun createChatTextFile(text: String): UIMessagePart.Document {
         val dir = context.filesDir.resolve(FileFolders.UPLOAD)
         if (!dir.exists()) {
