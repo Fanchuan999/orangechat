@@ -278,7 +278,7 @@ val dataSourceModule = module {
         )
     }
 
-    single { CompanionMoodEngine(settingsStore = get()) }
+    single { CompanionMoodEngine(settingsStore = get(), context = get()) }
 
     single {
         CompanionDiaryService(

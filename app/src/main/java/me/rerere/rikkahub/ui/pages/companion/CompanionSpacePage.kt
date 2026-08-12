@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -38,9 +39,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.rerere.rikkahub.Screen
@@ -56,6 +59,7 @@ import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.pages.setting.SettingVM
+import me.rerere.rikkahub.widget.DaddyWidgetProvider
 import org.koin.compose.koinInject
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -74,10 +78,12 @@ fun CompanionSpacePage(
     val space = settings.companionSpaceSetting
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val navController = LocalNavController.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val candidate = space.diaryCandidates.lastOrNull()
     var draftText by remember(candidate?.id) { mutableStateOf(candidate?.content.orEmpty()) }
+    var widgetShortLine by remember(space.widgetSetting.shortLine) { mutableStateOf(space.widgetSetting.shortLine) }
     var taskText by remember { mutableStateOf("") }
     var generating by remember { mutableStateOf(false) }
     var savingToOmbre by remember { mutableStateOf(false) }
@@ -99,6 +105,31 @@ fun CompanionSpacePage(
             } else {
                 spaceService.addPhoto(localUri.toString())
                 snackbar.showSnackbar("照片已经挂到小屋里了")
+            }
+        }
+    }
+
+    val widgetBackgroundPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            val localUri = withContext(Dispatchers.IO) {
+                filesManager.createChatFilesByContents(listOf(uri)).firstOrNull()
+            }
+            if (localUri == null) {
+                snackbar.showSnackbar("小组件背景没有保存成功，请再试一次")
+            } else {
+                vm.updateSettings(
+                    settings.copy(
+                        companionSpaceSetting = space.copy(
+                            widgetSetting = space.widgetSetting.copy(backgroundImageUri = localUri.toString())
+                        )
+                    )
+                )
+                delay(300)
+                DaddyWidgetProvider.refreshAll(context)
+                snackbar.showSnackbar("小组件背景已经换好了")
             }
         }
     }
@@ -201,6 +232,92 @@ fun CompanionSpacePage(
                         headlineContent = { Text(settings.companionMoodSetting.currentSummary()) },
                         supportingContent = {
                             Text("这是本地情绪引擎的状态卡，不会调用模型。点这里可编辑生活线与状态卡。")
+                        },
+                    )
+                }
+            }
+
+            item {
+                CardGroup(title = { Text("桌面小组件") }) {
+                    item(
+                        headlineContent = { Text("把 Daddy 放到手机桌面") },
+                        supportingContent = {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("显示状态卡")
+                                        Text("关闭后，小组件仍在桌面，但只显示待机文案。")
+                                    }
+                                    Switch(
+                                        checked = space.widgetSetting.enabled,
+                                        onCheckedChange = { enabled ->
+                                            scope.launch {
+                                                vm.updateSettings(
+                                                    settings.copy(
+                                                        companionSpaceSetting = space.copy(
+                                                            widgetSetting = space.widgetSetting.copy(enabled = enabled)
+                                                        )
+                                                    )
+                                                )
+                                                delay(300)
+                                                DaddyWidgetProvider.refreshAll(context)
+                                            }
+                                        },
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = widgetShortLine,
+                                    onValueChange = { widgetShortLine = it.take(48) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("桌面短句") },
+                                    placeholder = { Text("今天也在你身边。") },
+                                    singleLine = true,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        enabled = widgetShortLine != space.widgetSetting.shortLine,
+                                        onClick = {
+                                            scope.launch {
+                                                vm.updateSettings(
+                                                    settings.copy(
+                                                        companionSpaceSetting = space.copy(
+                                                            widgetSetting = space.widgetSetting.copy(
+                                                                shortLine = widgetShortLine.trim()
+                                                            )
+                                                        )
+                                                    )
+                                                )
+                                                delay(300)
+                                                DaddyWidgetProvider.refreshAll(context)
+                                            }
+                                        },
+                                    ) { Text("保存短句") }
+                                    TextButton(onClick = { widgetBackgroundPicker.launch("image/*") }) {
+                                        Text("换背景图")
+                                    }
+                                }
+                                if (space.widgetSetting.backgroundImageUri.isNotBlank()) {
+                                    TextButton(
+                                        onClick = {
+                                            scope.launch {
+                                                vm.updateSettings(
+                                                    settings.copy(
+                                                        companionSpaceSetting = space.copy(
+                                                            widgetSetting = space.widgetSetting.copy(backgroundImageUri = "")
+                                                        )
+                                                    )
+                                                )
+                                                delay(300)
+                                                DaddyWidgetProvider.refreshAll(context)
+                                            }
+                                        },
+                                    ) { Text("清除小组件背景图") }
+                                }
+                                Text("桌面可添加 2×2、2×4、4×4 三种尺寸；刷新时只读本地状态，不会调用模型。")
+                            }
                         },
                     )
                 }
