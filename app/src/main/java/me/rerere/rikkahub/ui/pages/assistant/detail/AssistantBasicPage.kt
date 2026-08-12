@@ -451,6 +451,57 @@ internal fun AssistantBasicContent(
             FormItem(
                 modifier = Modifier.padding(8.dp),
                 label = {
+                    Text("缓存友好截断")
+                },
+                description = {
+                    Text(
+                        if (assistant.contextMessageSize > assistant.cacheFriendlyMinSize) {
+                            "超过上下文条数后按批次裁剪，减少每轮都变动历史窗口，帮助提高前缀缓存命中率。"
+                        } else {
+                            "上下文消息数量需要大于 ${assistant.cacheFriendlyMinSize} 条才可开启。"
+                        }
+                    )
+                },
+                tail = {
+                    Switch(
+                        checked = assistant.cacheFriendlyContextEnabled && assistant.contextMessageSize > assistant.cacheFriendlyMinSize,
+                        enabled = assistant.contextMessageSize > assistant.cacheFriendlyMinSize,
+                        onCheckedChange = { enabled ->
+                            onUpdate(
+                                assistant.copy(
+                                    cacheFriendlyContextEnabled = enabled
+                                )
+                            )
+                        }
+                    )
+                }
+            ) {
+                if (assistant.cacheFriendlyContextEnabled && assistant.contextMessageSize > assistant.cacheFriendlyMinSize) {
+                    val trimPercent = (assistant.cacheFriendlyTrimRatio.coerceIn(0.25f, 0.5f) * 100).roundToInt()
+                    Slider(
+                        value = trimPercent.toFloat(),
+                        onValueChange = { value ->
+                            onUpdate(
+                                assistant.copy(
+                                    cacheFriendlyTrimRatio = (value.roundToInt() / 100f).coerceIn(0.25f, 0.5f)
+                                )
+                            )
+                        },
+                        valueRange = 25f..50f,
+                        steps = 24,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "每次裁剪约 $trimPercent%，下一次累计新增约 $trimPercent% 后再更新截断窗口。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.75f),
+                    )
+                }
+            }
+            HorizontalDivider()
+            FormItem(
+                modifier = Modifier.padding(8.dp),
+                label = {
                     Text(stringResource(R.string.assistant_page_stream_output))
                 },
                 description = {

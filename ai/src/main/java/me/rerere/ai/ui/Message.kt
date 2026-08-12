@@ -17,6 +17,7 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.provider.Model
 import me.rerere.ai.util.json
+import kotlin.math.roundToInt
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -274,6 +275,94 @@ fun List<UIMessagePart>.isEmptyUIMessage(): Boolean {
             else -> true
         }
     }
+}
+
+private const val DEFAULT_CONTEXT_FRIENDLY_MIN = 200
+
+@Serializable
+data class ContextLimitResult(
+    val messages: List<UIMessage>,
+    val isCacheFriendlyTrimmed: Boolean,
+    val isHardLimited: Boolean,
+    val state: ContextLimitState? = null,
+)
+
+@Serializable
+data class ContextLimitState(
+    val originalSizeAtLastTrim: Int = 0,
+    val keptSizeAtLastTrim: Int = 0,
+)
+
+fun List<UIMessage>.limitContextWithCacheFriendly(
+    maxSize: Int,
+    cacheFriendlyEnabled: Boolean,
+    trimRatio: Float,
+    minCacheFriendlySize: Int = DEFAULT_CONTEXT_FRIENDLY_MIN,
+    previousState: ContextLimitState? = null,
+): ContextLimitResult {
+    if (maxSize <= 0) {
+        return ContextLimitResult(
+            messages = this,
+            isCacheFriendlyTrimmed = false,
+            isHardLimited = false,
+            state = null,
+        )
+    }
+
+    if (size <= maxSize) {
+        return ContextLimitResult(
+            messages = this,
+            isCacheFriendlyTrimmed = false,
+            isHardLimited = false,
+            state = null,
+        )
+    }
+
+    if (!cacheFriendlyEnabled || maxSize <= minCacheFriendlySize) {
+        val truncated = limitContext(maxSize)
+        return ContextLimitResult(
+            messages = truncated,
+            isCacheFriendlyTrimmed = false,
+            isHardLimited = size != truncated.size,
+            state = null,
+        )
+    }
+
+    val ratio = trimRatio.coerceIn(0.1f, 1f)
+    val trimStep = (maxSize * ratio).roundToInt().coerceAtLeast(1)
+    val trimmedTarget = (maxSize - trimStep).coerceAtLeast(minCacheFriendlySize)
+
+    val stableKeptSize = previousState
+        ?.takeIf { state ->
+            state.originalSizeAtLastTrim > 0 &&
+                state.keptSizeAtLastTrim > 0 &&
+                size >= state.originalSizeAtLastTrim &&
+                (size - state.originalSizeAtLastTrim) < trimStep
+        }
+        ?.let { state ->
+            state.keptSizeAtLastTrim + (size - state.originalSizeAtLastTrim)
+        }
+
+    if (stableKeptSize != null) {
+        val truncated = limitContext(stableKeptSize)
+        return ContextLimitResult(
+            messages = truncated,
+            isCacheFriendlyTrimmed = false,
+            isHardLimited = truncated.size != size,
+            state = previousState,
+        )
+    }
+
+    val truncated = limitContext(trimmedTarget)
+    return ContextLimitResult(
+        messages = truncated,
+        isCacheFriendlyTrimmed = truncated.size != size,
+        isHardLimited = false,
+        state = ContextLimitState(
+            originalSizeAtLastTrim = size,
+            keptSizeAtLastTrim = truncated.size,
+        ),
+    )
 }
 
 fun List<UIMessage>.limitContext(size: Int): List<UIMessage> {

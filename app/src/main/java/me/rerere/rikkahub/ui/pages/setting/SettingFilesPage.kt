@@ -9,24 +9,25 @@ package me.rerere.rikkahub.ui.pages.setting
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Image02
 import me.rerere.hugeicons.stroke.Delete01
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,7 +63,11 @@ import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.CustomColors
 import org.koin.compose.koinInject
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingFilesPage(
     filesManager: FilesManager = koinInject(),
@@ -78,7 +84,19 @@ fun SettingFilesPage(
 
     var selectedFolder by remember { mutableStateOf(FileFolders.UPLOAD) }
     var pendingDelete by remember { mutableStateOf<ManagedFileEntity?>(null) }
+    var pendingBulkDelete by remember { mutableStateOf(false) }
+    var selectedAgeFilter by remember { mutableStateOf(FileAgeFilter.ALL) }
+    var selectedFileIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     val files by filesManager.observe(selectedFolder).collectAsState(initial = emptyList())
+    val filteredFiles = remember(files, selectedAgeFilter) {
+        files.filter { selectedAgeFilter.matches(it.createdAt) }
+    }
+    val filteredFileIds = remember(filteredFiles) { filteredFiles.map { it.id }.toSet() }
+    val allFilteredSelected = filteredFiles.isNotEmpty() && filteredFileIds.all { it in selectedFileIds }
+
+    LaunchedEffect(selectedFolder, selectedAgeFilter, filteredFileIds) {
+        selectedFileIds = selectedFileIds intersect filteredFileIds
+    }
 
     if (pendingDelete != null) {
         val target = pendingDelete!!
@@ -111,6 +129,39 @@ fun SettingFilesPage(
         )
     }
 
+    if (pendingBulkDelete) {
+        val targets = filteredFiles.filter { it.id in selectedFileIds }
+        AlertDialog(
+            onDismissRequest = { pendingBulkDelete = false },
+            title = { Text("删除选中文件") },
+            text = { Text("将删除 ${targets.size} 个文件，包含本地文件本体。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            var deleted = 0
+                            targets.forEach { file ->
+                                if (filesManager.delete(file.id, deleteFromDisk = true)) {
+                                    deleted += 1
+                                }
+                            }
+                            selectedFileIds = emptySet()
+                            pendingBulkDelete = false
+                            toaster.show("已删除 $deleted 个文件")
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.setting_files_page_delete_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingBulkDelete = false }) {
+                    Text(stringResource(R.string.setting_files_page_cancel_action))
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             LargeFlexibleTopAppBar(
@@ -134,7 +185,27 @@ fun SettingFilesPage(
                 onFolderSelected = { selectedFolder = it }
             )
 
-            if (files.isEmpty()) {
+            FileFilterRow(
+                selectedFilter = selectedAgeFilter,
+                selectedCount = selectedFileIds.size,
+                totalCount = filteredFiles.size,
+                allSelected = allFilteredSelected,
+                onFilterSelected = { selectedAgeFilter = it },
+                onToggleSelectAll = {
+                    selectedFileIds = if (allFilteredSelected) {
+                        selectedFileIds - filteredFileIds
+                    } else {
+                        selectedFileIds + filteredFileIds
+                    }
+                },
+                onDeleteSelected = {
+                    if (selectedFileIds.isNotEmpty()) {
+                        pendingBulkDelete = true
+                    }
+                },
+            )
+
+            if (filteredFiles.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize(),
@@ -151,11 +222,19 @@ fun SettingFilesPage(
                     state = gridState,
                     columns = StaggeredGridCells.Fixed(2)
                 ) {
-                    items(files, key = { it.id }) { file ->
+                    items(filteredFiles, key = { it.id }) { file ->
                         FileItem(
                             file = file,
                             fileOnDisk = filesManager.getFile(file),
-                            onDelete = { pendingDelete = file }
+                            selected = file.id in selectedFileIds,
+                            onSelectedChange = { selected ->
+                                selectedFileIds = if (selected) {
+                                    selectedFileIds + file.id
+                                } else {
+                                    selectedFileIds - file.id
+                                }
+                            },
+                            onDelete = { pendingDelete = file },
                         )
                     }
                 }
@@ -164,18 +243,19 @@ fun SettingFilesPage(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FolderRow(
     folders: List<String>,
     selectedFolder: String,
     onFolderSelected: (String) -> Unit,
 ) {
-    Row(
+    FlowRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         folders.forEach { folder ->
             FilterChip(
@@ -183,6 +263,62 @@ private fun FolderRow(
                 onClick = { onFolderSelected(folder) },
                 label = { Text(folderDisplayName(folder)) }
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FileFilterRow(
+    selectedFilter: FileAgeFilter,
+    selectedCount: Int,
+    totalCount: Int,
+    allSelected: Boolean,
+    onFilterSelected: (FileAgeFilter) -> Unit,
+    onToggleSelectAll: () -> Unit,
+    onDeleteSelected: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FileAgeFilter.entries.forEach { filter ->
+                FilterChip(
+                    selected = selectedFilter == filter,
+                    onClick = { onFilterSelected(filter) },
+                    label = { Text(filter.label) },
+                )
+            }
+        }
+
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "当前 $totalCount 个文件，已选 $selectedCount 个",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(
+                enabled = totalCount > 0,
+                onClick = onToggleSelectAll,
+            ) {
+                Text(if (allSelected) "取消全选" else "全选文件")
+            }
+            TextButton(
+                enabled = selectedCount > 0,
+                onClick = onDeleteSelected,
+            ) {
+                Text("删除选中")
+            }
         }
     }
 }
@@ -197,10 +333,14 @@ private fun folderDisplayName(folder: String): String = when (folder) {
 private fun FileItem(
     file: ManagedFileEntity,
     fileOnDisk: File,
+    selected: Boolean,
+    onSelectedChange: (Boolean) -> Unit,
     onDelete: () -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelectedChange(!selected) },
         colors = CardDefaults.cardColors(containerColor = CustomColors.listItemColors.containerColor)
     ) {
         Column {
@@ -230,6 +370,12 @@ private fun FileItem(
                         )
                     }
                 }
+
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = onSelectedChange,
+                    modifier = Modifier.align(Alignment.TopStart),
+                )
 
                 IconButton(
                     onClick = onDelete,
@@ -263,9 +409,41 @@ private fun FileItem(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Text(
+                    text = formatFileTime(file.createdAt),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
+}
+
+private enum class FileAgeFilter(val label: String) {
+    ALL("全部"),
+    LAST_7_DAYS("近7天"),
+    LAST_30_DAYS("近30天"),
+    MONTH_1_TO_3("1-3个月"),
+    MONTH_3_TO_12("3个月-1年"),
+    OLDER_THAN_1_YEAR("1年以上");
+
+    fun matches(createdAt: Long): Boolean {
+        if (this == ALL) return true
+        val ageMs = (System.currentTimeMillis() - createdAt).coerceAtLeast(0L)
+        val dayMs = 24L * 60L * 60L * 1000L
+        return when (this) {
+            ALL -> true
+            LAST_7_DAYS -> ageMs <= 7L * dayMs
+            LAST_30_DAYS -> ageMs <= 30L * dayMs
+            MONTH_1_TO_3 -> ageMs > 30L * dayMs && ageMs <= 90L * dayMs
+            MONTH_3_TO_12 -> ageMs > 90L * dayMs && ageMs <= 365L * dayMs
+            OLDER_THAN_1_YEAR -> ageMs > 365L * dayMs
+        }
+    }
+}
+
+private fun formatFileTime(timestamp: Long): String {
+    return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
 }
 
 private fun formatBytes(bytes: Long): String {

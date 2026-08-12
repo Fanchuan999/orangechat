@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.datetime.TimeZone
@@ -39,11 +40,12 @@ import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.registry.ModelRegistry
+import me.rerere.ai.ui.ContextLimitState
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.ToolApprovalState
+import me.rerere.ai.ui.limitContextWithCacheFriendly
 import me.rerere.ai.ui.handleMessageChunk
-import me.rerere.ai.ui.limitContext
 import me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.MessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.OutputMessageTransformer
@@ -64,10 +66,12 @@ import me.rerere.rikkahub.data.model.AssistantMemory
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.utils.applyPlaceholders
+import java.util.concurrent.ConcurrentHashMap
 import java.util.Locale
 import kotlin.time.Clock
  
 private const val TAG = "GenerationHandler"
+private const val CACHE_TRIM_STATUS = "缓存截断生效中"
  
 // 流式生成时往 UI 推送消息更新的最小间隔。
 // AI 的 SSE 增量可能每秒到达几十次，如果每次都原样同步到 UI 的 StateFlow，
@@ -92,6 +96,8 @@ class GenerationHandler(
     private val aiLoggingManager: AILoggingManager,
     private val memoryBankService: MemoryBankService,
 ) {
+    private val contextLimitStates = ConcurrentHashMap<String, ContextLimitState>()
+
     fun generateText(
         settings: Settings,
         model: Model,
@@ -186,6 +192,7 @@ class GenerationHandler(
                     processingStatus = processingStatus,
                     conversationSystemPrompt = conversationSystemPrompt,
                     workspaceCwd = workspaceCwd,
+                    conversationId = conversationId,
                 )
                 messages = messages.visualTransforms(
                     transformers = outputTransformers,
@@ -382,6 +389,7 @@ class GenerationHandler(
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
         conversationSystemPrompt: String? = null,
         workspaceCwd: String? = null,
+        conversationId: String? = null,
     ) {
         val internalMessages = buildList {
             val system = buildString {
@@ -582,7 +590,21 @@ class GenerationHandler(
  
             }
             if (system.isNotBlank()) add(UIMessage.system(prompt = system))
-            addAll(messages.limitContext(assistant.contextMessageSize))
+            val contextLimitKey = buildContextLimitKey(assistant, conversationId)
+            val limitResult = messages.limitContextWithCacheFriendly(
+                maxSize = assistant.contextMessageSize,
+                cacheFriendlyEnabled = assistant.cacheFriendlyContextEnabled,
+                trimRatio = assistant.cacheFriendlyTrimRatio,
+                minCacheFriendlySize = assistant.cacheFriendlyMinSize,
+                previousState = contextLimitStates[contextLimitKey],
+            )
+            limitResult.state?.let { state ->
+                contextLimitStates[contextLimitKey] = state
+            } ?: contextLimitStates.remove(contextLimitKey)
+            if (limitResult.isCacheFriendlyTrimmed) {
+                showTemporaryCacheTrimStatus(processingStatus)
+            }
+            addAll(limitResult.messages)
         }.transforms(
             transformers = transformers,
             context = context,
@@ -663,6 +685,27 @@ class GenerationHandler(
                 }
             }
             onUpdateMessages(messages)
+        }
+    }
+
+    private fun buildContextLimitKey(assistant: Assistant, conversationId: String?): String {
+        return listOf(
+            conversationId ?: "temporary",
+            assistant.id.toString(),
+            assistant.contextMessageSize.toString(),
+            assistant.cacheFriendlyContextEnabled.toString(),
+            assistant.cacheFriendlyTrimRatio.toString(),
+            assistant.cacheFriendlyMinSize.toString(),
+        ).joinToString("|")
+    }
+
+    private fun showTemporaryCacheTrimStatus(processingStatus: MutableStateFlow<String?>) {
+        processingStatus.value = CACHE_TRIM_STATUS
+        kotlinx.coroutines.CoroutineScope(Dispatchers.Main.immediate).launch {
+            delay(2_000)
+            if (processingStatus.value == CACHE_TRIM_STATUS) {
+                processingStatus.value = null
+            }
         }
     }
  

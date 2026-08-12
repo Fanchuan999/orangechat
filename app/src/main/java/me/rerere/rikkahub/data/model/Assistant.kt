@@ -28,6 +28,9 @@ data class Assistant(
     val temperature: Float? = null,
     val topP: Float? = null,
     val contextMessageSize: Int = 0,
+    val cacheFriendlyContextEnabled: Boolean = false,
+    val cacheFriendlyTrimRatio: Float = 0.5f,
+    val cacheFriendlyMinSize: Int = 200,
     val streamOutput: Boolean = true,
     val enableMemory: Boolean = false,
     val useGlobalMemory: Boolean = false, // 使用全局共享记忆而非助手隔离记忆

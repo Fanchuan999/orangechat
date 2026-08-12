@@ -127,6 +127,48 @@ class MessageTest {
         assertEquals(messages, result)
     }
 
+    @Test
+    fun `cache friendly context trims by ratio when first exceeding threshold`() {
+        val messages = createTestMessages(401)
+
+        val result = messages.limitContextWithCacheFriendly(
+            maxSize = 400,
+            cacheFriendlyEnabled = true,
+            trimRatio = 0.5f,
+            minCacheFriendlySize = 200,
+        )
+
+        assertTrue(result.isCacheFriendlyTrimmed)
+        assertEquals(200, result.messages.size)
+        assertEquals(messages.takeLast(200), result.messages)
+        assertEquals(ContextLimitState(originalSizeAtLastTrim = 401, keptSizeAtLastTrim = 200), result.state)
+    }
+
+    @Test
+    fun `cache friendly context keeps previous window stable until enough new messages arrive`() {
+        val first = createTestMessages(401).limitContextWithCacheFriendly(
+            maxSize = 400,
+            cacheFriendlyEnabled = true,
+            trimRatio = 0.5f,
+            minCacheFriendlySize = 200,
+        )
+
+        val nextMessages = createTestMessages(408)
+        val next = nextMessages.limitContextWithCacheFriendly(
+            maxSize = 400,
+            cacheFriendlyEnabled = true,
+            trimRatio = 0.5f,
+            minCacheFriendlySize = 200,
+            previousState = first.state,
+        )
+
+        assertFalse(next.isCacheFriendlyTrimmed)
+        assertTrue(next.isHardLimited)
+        assertEquals(207, next.messages.size)
+        assertEquals(nextMessages.takeLast(207), next.messages)
+        assertEquals(first.state, next.state)
+    }
+
     // ==================== isValidToUpload Tests ====================
 
     @Test
