@@ -6,6 +6,7 @@
 
 package me.rerere.rikkahub.data.service
 
+import android.content.Context
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.CompanionProactiveDecision
 import me.rerere.rikkahub.data.datastore.afterAssistantMessage
@@ -13,6 +14,7 @@ import me.rerere.rikkahub.data.datastore.afterProactiveMessage
 import me.rerere.rikkahub.data.datastore.afterUserMessage
 import me.rerere.rikkahub.data.datastore.evolveCompanionMood
 import me.rerere.rikkahub.data.datastore.proactiveDecision
+import me.rerere.rikkahub.widget.DaddyWidgetProvider
 
 /**
  * Persists only tiny local numeric state. It never talks to a model, network, notification service,
@@ -20,6 +22,7 @@ import me.rerere.rikkahub.data.datastore.proactiveDecision
  */
 class CompanionMoodEngine(
     private val settingsStore: SettingsStore,
+    private val context: Context,
 ) {
     suspend fun recordUserMessage() {
         settingsStore.update { settings ->
@@ -28,6 +31,7 @@ class CompanionMoodEngine(
                 companionMoodSetting = setting.copy(state = setting.state.afterUserMessage())
             )
         }
+        DaddyWidgetProvider.refreshAll(context)
     }
 
     suspend fun recordAssistantMessage() {
@@ -37,6 +41,7 @@ class CompanionMoodEngine(
                 companionMoodSetting = setting.copy(state = setting.state.afterAssistantMessage())
             )
         }
+        DaddyWidgetProvider.refreshAll(context)
     }
 
     suspend fun recordProactiveMessage() {
@@ -46,6 +51,7 @@ class CompanionMoodEngine(
                 companionMoodSetting = setting.copy(state = setting.state.afterProactiveMessage())
             )
         }
+        DaddyWidgetProvider.refreshAll(context)
     }
 
     /**

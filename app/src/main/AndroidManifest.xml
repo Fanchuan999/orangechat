@@ -268,6 +268,43 @@
         android:value="user-requested bedtime routine and screen-state reminder" />
     </service>
 
+    <!-- Daddy home-screen widgets -->
+    <receiver
+      android:name=".widget.DaddyWidget2x2Provider"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+        <action android:name="me.rerere.orangechat.widget.REFRESH" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/daddy_widget_2x2" />
+    </receiver>
+
+    <receiver
+      android:name=".widget.DaddyWidget2x4Provider"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+        <action android:name="me.rerere.orangechat.widget.REFRESH" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/daddy_widget_2x4" />
+    </receiver>
+
+    <receiver
+      android:name=".widget.DaddyWidget4x4Provider"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+        <action android:name="me.rerere.orangechat.widget.REFRESH" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/daddy_widget_4x4" />
+    </receiver>
+
     <!-- Supabase Sync Receiver -->
     <receiver
       android:name=".data.service.SupabaseSyncReceiver"
