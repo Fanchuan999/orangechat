@@ -12,7 +12,9 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.CustomBody
 import me.rerere.ai.provider.CustomHeader
 import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.ui.cacheFriendlyContextTrimTier
 import me.rerere.ai.ui.isCacheFriendlyContextAvailable
+import me.rerere.ai.ui.isCacheFriendlyContextTrimBoundary
 import me.rerere.ai.ui.limitContext
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.rikkahub.data.ai.tools.LocalToolOption
@@ -99,6 +101,7 @@ data class AssistantRegex(
 data class ContextMessageSelection(
     val messages: List<UIMessage>,
     val didCacheFriendlyTruncate: Boolean,
+    val cacheFriendlyTrimTier: Int = 0,
 )
 
 fun Assistant.selectContextMessagesWithMetadata(messages: List<UIMessage>): ContextMessageSelection {
@@ -111,7 +114,12 @@ fun Assistant.selectContextMessagesWithMetadata(messages: List<UIMessage>): Cont
         messages = selectedMessages,
         didCacheFriendlyTruncate = cacheFriendlyContextTruncation &&
             isCacheFriendlyContextAvailable(contextMessageSize) &&
-            selectedMessages.size < messages.size,
+            isCacheFriendlyContextTrimBoundary(messages.size, contextMessageSize),
+        cacheFriendlyTrimTier = if (cacheFriendlyContextTruncation) {
+            cacheFriendlyContextTrimTier(messages.size, contextMessageSize)
+        } else {
+            0
+        },
     )
 }
 

@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -27,7 +26,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.dokar.sonner.ToastType
 import kotlinx.coroutines.launch
@@ -56,7 +54,6 @@ fun CompanionBackupTab(
     var ombreUrl by remember(settings.companionBackupConfig.ombreBaseUrl) {
         mutableStateOf(settings.companionBackupConfig.ombreBaseUrl)
     }
-    var ombrePassword by remember { mutableStateOf("") }
     var isExporting by remember { mutableStateOf(false) }
     var isRestoring by remember { mutableStateOf(false) }
 
@@ -67,7 +64,7 @@ fun CompanionBackupTab(
         scope.launch {
             isExporting = true
             runCatching {
-                val result = vm.exportCompanionBackup(ombreUrl, ombrePassword.toCharArray())
+                val result = vm.exportCompanionBackup(ombreUrl)
                 try {
                     context.contentResolver.openOutputStream(uri)?.use { output ->
                         FileInputStream(result.file).use { input -> input.copyTo(output) }
@@ -97,7 +94,7 @@ fun CompanionBackupTab(
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(temporary).use { output -> input.copyTo(output) }
                 } ?: throw IllegalStateException("无法读取选择的备份文件。")
-                vm.restoreCompanionBackup(temporary, ombrePassword.toCharArray())
+                vm.restoreCompanionBackup(temporary)
             }.onSuccess { result ->
                 val skipped = result.supabaseReport.skippedTables
                 val suffix = if (skipped.isEmpty()) "" else " Supabase 跳过：${skipped.joinToString()}。"
@@ -134,24 +131,7 @@ fun CompanionBackupTab(
         }
 
         item {
-            OutlinedTextField(
-                value = ombreUrl,
-                onValueChange = { ombreUrl = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Ombre 地址") },
-                singleLine = true,
-            )
-        }
-
-        item {
-            OutlinedTextField(
-                value = ombrePassword,
-                onValueChange = { ombrePassword = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Ombre Dashboard 密码（首次可设置）") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-            )
+            Text("不需要 Ombre Dashboard 密码。Daddy 会通过已连接的 Termux Bridge 备份 Ombre 的本地记忆源文件；嵌入索引会在 Ombre 重启后自动重建。")
         }
 
         item {

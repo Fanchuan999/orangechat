@@ -79,10 +79,25 @@ class TermuxConfigBridge(
 
     suspend fun exportConfigArchive(): File = withContext(Dispatchers.IO) {
         val output = sharedFile("termux_config_${UUID.randomUUID()}.tar.gz")
-        executeWithFallback(
+        executeWithLocalBridgeOnly(
             command = exportCommand(output),
             completionFile = output,
             timeoutMessage = "Termux 配置归档未在 60 秒内生成。请确认 termux-bridge 服务正在运行。",
+        )
+        output
+    }
+
+    /**
+     * Creates a portable snapshot of Ombre's source-of-truth memory files without going through
+     * the Dashboard. Dashboard credentials are intentionally not required: Daddy already talks
+     * to the user's local Termux bridge, and the derived SQLite embedding index can be rebuilt.
+     */
+    suspend fun exportOmbreMemoryArchive(): File = withContext(Dispatchers.IO) {
+        val output = sharedFile("ombre_memory_${UUID.randomUUID()}.tar.gz")
+        executeWithLocalBridgeOnly(
+            command = exportOmbreMemoryCommand(output),
+            completionFile = output,
+            timeoutMessage = "Ombre 记忆快照未在 60 秒内生成。请确认 termux-bridge 与 Ombre 数据目录可用。",
         )
         output
     }
@@ -96,10 +111,31 @@ class TermuxConfigBridge(
         source.copyTo(sharedArchive, overwrite = false)
 
         try {
-            executeWithFallback(
+            executeWithLocalBridgeOnly(
                 command = restoreCommand(sharedArchive, completion, id),
                 completionFile = completion,
                 timeoutMessage = "Termux 配置未在 60 秒内恢复。请确认 termux-bridge 服务正在运行。",
+            )
+        } finally {
+            sharedArchive.delete()
+            completion.delete()
+        }
+    }
+
+    /** Restores Markdown/source memory data and discards only the regenerable embedding cache. */
+    suspend fun restoreOmbreMemoryArchive(source: File) = withContext(Dispatchers.IO) {
+        require(source.exists() && source.length() > 0L) { "Ombre 记忆快照不存在或为空。" }
+
+        val id = UUID.randomUUID().toString()
+        val sharedArchive = sharedFile("ombre_restore_$id.tar.gz")
+        val completion = sharedFile("ombre_restore_$id.done")
+        source.copyTo(sharedArchive, overwrite = false)
+
+        try {
+            executeWithLocalBridgeOnly(
+                command = restoreOmbreMemoryCommand(sharedArchive, completion, id),
+                completionFile = completion,
+                timeoutMessage = "Ombre 记忆未在 60 秒内恢复。请确认 termux-bridge 正在运行。",
             )
         } finally {
             sharedArchive.delete()
@@ -139,6 +175,26 @@ class TermuxConfigBridge(
             file = completionFile,
             timeoutMessage = "$timeoutMessage 同时，Termux 官方命令接口也未能完成。",
             attempts = fallbackWaitAttempts,
+        )
+    }
+
+    private suspend fun executeWithLocalBridgeOnly(
+        command: String,
+        completionFile: File,
+        timeoutMessage: String,
+        waitAttempts: Int = FILE_WAIT_ATTEMPTS,
+    ) {
+        val bridgeFailure = runCatching {
+            runWithLocalBridge(command)
+            waitForFile(completionFile, timeoutMessage, waitAttempts)
+        }.exceptionOrNull()
+        if (bridgeFailure == null) return
+
+        throw IllegalStateException(
+            "termux-bridge 没有完成联动备份命令：${bridgeFailure.message.orEmpty()} " +
+                "请先确认 Termux 里 127.0.0.1:8080 的桥服务正在运行，并让 Daddy 的 Termux桥插件执行 echo alive。"
+                .trim(),
+            bridgeFailure,
         )
     }
 
@@ -271,6 +327,58 @@ class TermuxConfigBridge(
           nohup "${'$'}HOME/daddy-amap/install-amap-mcp.sh" \
             > "${'$'}HOME/daddy-amap/restore.log" 2>&1 &
         fi
+        rm -rf "${'$'}staging"
+        : > "${'$'}completion"
+    """.trimIndent()
+
+    private fun exportOmbreMemoryCommand(output: File): String = """
+        set -eu
+        output='${output.absolutePath}'
+        temporary="${'$'}output.tmp"
+        memory_dir="${'$'}HOME/Ombre-Brain/data/memory"
+        [ -d "${'$'}memory_dir" ] || { echo "Ombre memory directory was not found" >&2; exit 31; }
+        if find "${'$'}memory_dir" -type l -print -quit | grep -q .; then
+          echo "Refusing to archive symbolic links in Ombre memory" >&2
+          exit 32
+        fi
+        if ! find "${'$'}memory_dir" -type f \( -name '*.md' -o -name '*.source' \) -print -quit | grep -q .; then
+          echo "Ombre memory directory has no portable memory files" >&2
+          exit 33
+        fi
+        mkdir -p "${'$'}(dirname "${'$'}output")"
+        tar -C "${'$'}HOME" \
+          --exclude='Ombre-Brain/data/memory/embeddings.db' \
+          --exclude='Ombre-Brain/data/memory/embeddings.db-*' \
+          --exclude='Ombre-Brain/data/memory/embeddings.db-wal' \
+          --exclude='Ombre-Brain/data/memory/embeddings.db-shm' \
+          -czf "${'$'}temporary" Ombre-Brain/data/memory
+        mv "${'$'}temporary" "${'$'}output"
+    """.trimIndent()
+
+    private fun restoreOmbreMemoryCommand(archive: File, completion: File, id: String): String = """
+        set -eu
+        archive='${archive.absolutePath}'
+        completion='${completion.absolutePath}'
+        staging="${'$'}HOME/.cache/orangechat-ombre-restore-$id"
+        tar -tzf "${'$'}archive" | while IFS= read -r path; do
+          case "${'$'}path" in
+            Ombre-Brain/data/memory|Ombre-Brain/data/memory/*) ;;
+            *) echo "Unsafe Ombre archive path: ${'$'}path" >&2; exit 41 ;;
+          esac
+        done
+        tar -tvzf "${'$'}archive" | awk '${'$'}1 !~ /^[-d]/ { exit 1 }'
+        mkdir -p "${'$'}staging"
+        tar -xzf "${'$'}archive" -C "${'$'}staging"
+        if find "${'$'}staging" -type l -print -quit | grep -q .; then
+          echo "Unsafe symbolic link in Ombre archive" >&2
+          exit 42
+        fi
+        source_dir="${'$'}staging/Ombre-Brain/data/memory"
+        [ -d "${'$'}source_dir" ] || { echo "Ombre archive has no memory directory" >&2; exit 43; }
+        target_dir="${'$'}HOME/Ombre-Brain/data/memory"
+        mkdir -p "${'$'}target_dir"
+        cp -R "${'$'}source_dir/." "${'$'}target_dir/"
+        rm -f -- "${'$'}target_dir/embeddings.db" "${'$'}target_dir/embeddings.db-wal" "${'$'}target_dir/embeddings.db-shm"
         rm -rf "${'$'}staging"
         : > "${'$'}completion"
     """.trimIndent()

@@ -53,6 +53,7 @@ import me.rerere.ai.provider.ModelAbility
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.service.CompanionMoodEngine
 import me.rerere.rikkahub.data.service.NightWatchManager
+import me.rerere.rikkahub.widget.DaddyWidgetProvider
 import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.ToolApprovalState
@@ -925,7 +926,7 @@ class ChatService(
                     add(workspaceReminderTransformer)
                 },
                 outputTransformers = outputTransformers,
-                tools = buildList {
+                tools = ToolNaming.deduplicateToolNames(buildList {
                     if (settings.enableWebSearch) {
                         addAll(createSearchTools(settings))
                     }
@@ -974,6 +975,8 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                             allowedPluginIds = smartToolSelection.allowedPluginIds,
                         )
                     )
+                }) { duplicateToolName ->
+                    Log.w(TAG, "Dropped duplicate tool name: $duplicateToolName")
                 },
                 pluginPromptInjections = pluginToolProvider.getPluginPromptInjections(
                     allowedPluginIds = smartToolSelection.allowedPluginIds,
@@ -1115,6 +1118,8 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
 
             runCatching { companionMoodEngine.recordAssistantMessage() }
                 .onFailure { Log.w(TAG, "Failed to update companion mood after assistant message", it) }
+            runCatching { DaddyWidgetProvider.refreshAll(context) }
+                .onFailure { Log.w(TAG, "Failed to refresh Daddy widget after assistant message", it) }
 
             launchWithConversationReference(conversationId) {
                 generateTitle(conversationId, finalConversation)

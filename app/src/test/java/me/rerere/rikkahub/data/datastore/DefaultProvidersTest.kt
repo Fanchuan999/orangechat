@@ -14,6 +14,22 @@ import org.junit.Test
 
 class DefaultProvidersTest {
     @Test
+    fun `default providers should include MiMo with expected chat models`() {
+        val provider = DEFAULT_PROVIDERS
+            .filterIsInstance<ProviderSetting.OpenAI>()
+            .single { it.name == "MiMo" }
+
+        assertTrue(provider.builtIn)
+        assertTrue(provider.enabled)
+        assertEquals("https://api.xiaomimimo.com/v1", provider.baseUrl)
+        assertEquals("/chat/completions", provider.chatCompletionsPath)
+        assertEquals(
+            listOf("mimo-v2.5", "mimo-v2.5-pro"),
+            provider.models.map { it.modelId }
+        )
+    }
+
+    @Test
     fun `default providers should include vercel ai gateway with expected balance config`() {
         val vercelProviders = DEFAULT_PROVIDERS
             .filterIsInstance<ProviderSetting.OpenAI>()

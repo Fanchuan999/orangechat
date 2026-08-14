@@ -68,6 +68,7 @@ import me.rerere.rikkahub.data.model.selectContextMessagesWithMetadata
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.utils.applyPlaceholders
+import java.util.concurrent.ConcurrentHashMap
 import java.util.Locale
 import kotlin.time.Clock
  
@@ -96,6 +97,8 @@ class GenerationHandler(
     private val aiLoggingManager: AILoggingManager,
     private val memoryBankService: MemoryBankService,
 ) {
+    private val cacheFriendlyTrimTiers = ConcurrentHashMap<String, Int>()
+
     fun generateText(
         settings: Settings,
         model: Model,
@@ -116,7 +119,10 @@ class GenerationHandler(
         val providerImpl = providerManager.getProviderByType(provider)
 
         var messages: List<UIMessage> = messages
-        if (assistant.selectContextMessagesWithMetadata(messages).didCacheFriendlyTruncate) {
+        val contextSelection = assistant.selectContextMessagesWithMetadata(messages)
+        val contextTrimKey = buildContextTrimKey(assistant, conversationId)
+        val previousTrimTier = cacheFriendlyTrimTiers.put(contextTrimKey, contextSelection.cacheFriendlyTrimTier)
+        if (contextSelection.cacheFriendlyTrimTier > (previousTrimTier ?: 0)) {
             Handler(Looper.getMainLooper()).post {
                 Toast.makeText(context, "缓存截断生效中", Toast.LENGTH_SHORT).show()
             }
@@ -560,14 +566,6 @@ class GenerationHandler(
                     appendLine("Your reply will be automatically split into separate chat bubbles at every line break (\\n) you write, similar to how a person sends several short texts in a row instead of one long message. You are fully in control of this: write a line break whenever you want the previous thought/sentence to appear as its own bubble, and keep things on the same line when they belong together. Do not insert blank lines purely for spacing — every line break becomes a new bubble, so use them intentionally. Exception: line breaks inside fenced code blocks (```) and Markdown tables are preserved as-is and will NOT create new bubbles, since those must stay intact as a single block.")
                 }
 
-                // Keep dynamic continuity after the stable assistant context. It never replaces the
-                // user's normal context-message count or the assistant's existing memories.
-                settings.continuityProfileFor(assistant.id).promptContext().takeIf { it.isNotBlank() }?.let {
-                    appendLine()
-                    appendLine()
-                    append(it)
-                }
-
                 settings.systemToolsSetting.gadgetbridgePromptContext().takeIf { it.isNotBlank() }?.let {
                     appendLine()
                     appendLine()
@@ -580,6 +578,15 @@ class GenerationHandler(
                     appendLine()
                     appendLine()
                     append(moodPrompt)
+                }
+
+                // Keep the editable life line and state card at the tail of the dynamic suffix.
+                // It is intentionally after stable persona/tool/plugin material: editing it then
+                // invalidates only this small tail instead of the expensive shared prompt prefix.
+                settings.continuityProfileFor(assistant.id).promptContext().takeIf { it.isNotBlank() }?.let {
+                    appendLine()
+                    appendLine()
+                    append(it)
                 }
  
             }
@@ -667,6 +674,13 @@ class GenerationHandler(
             onUpdateMessages(messages)
         }
     }
+
+    private fun buildContextTrimKey(assistant: Assistant, conversationId: String?): String = listOf(
+        conversationId ?: "temporary",
+        assistant.id,
+        assistant.contextMessageSize,
+        assistant.cacheFriendlyContextTruncation,
+    ).joinToString("|")
  
     fun translateText(
         settings: Settings,

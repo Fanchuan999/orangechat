@@ -24,6 +24,7 @@ data class ChatMediaStorageEntry(
     val displayName: String,
     val sizeBytes: Long,
     val createdAtMillis: Long,
+    val file: File,
 )
 
 data class ChatMediaCleanupResult(val deletedCount: Int, val deletedBytes: Long, val failures: Int)
@@ -54,7 +55,14 @@ class ChatMediaStorageService(
             nowMillis = System.currentTimeMillis(),
         ).mapNotNull { item ->
             filesManager.getByRelativePath(item.relativePath)?.let { entity ->
-                ChatMediaStorageEntry(entity.id, entity.relativePath, entity.displayName, entity.sizeBytes, entity.createdAt)
+                ChatMediaStorageEntry(
+                    id = entity.id,
+                    relativePath = entity.relativePath,
+                    displayName = entity.displayName,
+                    sizeBytes = entity.sizeBytes,
+                    createdAtMillis = entity.createdAt,
+                    file = filesManager.getFile(entity),
+                )
             }
         }
     }

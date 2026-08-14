@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -33,6 +34,23 @@ private const val MIMO_SAMPLE_RATE = 24000
 private val JSON_MEDIA_TYPE = "application/json".toMediaType()
 // 只关心 delta.audio.data 其余字段忽略
 private val mimoJson = Json { ignoreUnknownKeys = true }
+
+/**
+ * The optional instruction stays in a system message so the speech text itself remains unchanged.
+ * When the field is blank this deliberately matches the legacy single-message request shape.
+ */
+internal fun buildMiMoTtsMessages(styleInstruction: String, speechText: String): JsonArray = buildJsonArray {
+    styleInstruction.trim().takeIf { it.isNotEmpty() }?.let { instruction ->
+        add(buildJsonObject {
+            put("role", "system")
+            put("content", instruction)
+        })
+    }
+    add(buildJsonObject {
+        put("role", "assistant")
+        put("content", speechText)
+    })
+}
 
 @Serializable
 private data class MiMoChunk(
@@ -126,12 +144,7 @@ class MiMoTTSProvider : TTSProvider<TTSProviderSetting.MiMo> {
         // OpenAI 兼容的 chat/completions SSE 流式返回 音频增量在 delta.audio.data
         val requestBody = buildJsonObject {
             put("model", providerSetting.model)
-            put("messages", buildJsonArray {
-                add(buildJsonObject {
-                    put("role", "assistant")
-                    put("content", request.text)
-                })
-            })
+            put("messages", buildMiMoTtsMessages(providerSetting.styleInstruction, request.text))
             put("audio", buildJsonObject {
                 put("format", "pcm16")
                 put("voice", providerSetting.voice)

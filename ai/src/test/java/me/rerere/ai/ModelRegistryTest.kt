@@ -109,4 +109,24 @@ class ModelRegistryTest {
             ModelRegistry.MODEL_ABILITIES.getData("deepseek-v4-pro")
         )
     }
+
+    @Test
+    fun `MiMo v2_5 exposes expected input modalities and abilities`() {
+        assertEquals(
+            listOf(Modality.TEXT, Modality.IMAGE),
+            ModelRegistry.MODEL_INPUT_MODALITIES.getData("mimo-v2.5")
+        )
+        assertEquals(
+            listOf(Modality.TEXT),
+            ModelRegistry.MODEL_INPUT_MODALITIES.getData("mimo-v2.5-pro")
+        )
+        assertEquals(
+            listOf(ModelAbility.TOOL, ModelAbility.REASONING),
+            ModelRegistry.MODEL_ABILITIES.getData("mimo-v2.5")
+        )
+        assertEquals(
+            listOf(ModelAbility.TOOL, ModelAbility.REASONING),
+            ModelRegistry.MODEL_ABILITIES.getData("mimo-v2.5-pro")
+        )
+    }
 }

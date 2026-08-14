@@ -459,7 +459,7 @@ internal fun AssistantBasicContent(
                 },
                 description = {
                     Text(
-                        text = "按 25% 阶梯裁剪旧消息，让连续聊天更容易复用缓存；仅在上下文上限达到 200 条时可开启。",
+                        text = "按 50% 阶梯裁剪旧消息；只在进入新一档时提示一次，让连续聊天更容易复用缓存。仅在上下文上限达到 200 条时可开启。",
                     )
                 },
                 tail = {

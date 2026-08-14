@@ -27,19 +27,28 @@ class AssistantContextTruncationTest {
         val enabled = Assistant(contextMessageSize = 400, cacheFriendlyContextTruncation = true)
         val disabled = enabled.copy(cacheFriendlyContextTruncation = false)
 
-        assertEquals(301, enabled.selectContextMessages(messages).size)
+        assertEquals(201, enabled.selectContextMessages(messages).size)
         assertEquals(400, disabled.selectContextMessages(messages).size)
     }
 
     @Test
-    fun `cache friendly selection reports when it removes older messages`() {
-        val messages = List(401) { UIMessage.user("message $it") }
+    fun `cache friendly selection reports only when a new trim tier starts`() {
         val assistant = Assistant(contextMessageSize = 400, cacheFriendlyContextTruncation = true)
 
-        val selection = assistant.selectContextMessagesWithMetadata(messages)
+        val firstTrim = assistant.selectContextMessagesWithMetadata(
+            List(401) { UIMessage.user("message $it") },
+        )
+        val stableWindow = assistant.selectContextMessagesWithMetadata(
+            List(402) { UIMessage.user("message $it") },
+        )
+        val nextTrim = assistant.selectContextMessagesWithMetadata(
+            List(601) { UIMessage.user("message $it") },
+        )
 
-        assertEquals(301, selection.messages.size)
-        assertEquals(true, selection.didCacheFriendlyTruncate)
+        assertEquals(201, firstTrim.messages.size)
+        assertEquals(true, firstTrim.didCacheFriendlyTruncate)
+        assertFalse(stableWindow.didCacheFriendlyTruncate)
+        assertEquals(true, nextTrim.didCacheFriendlyTruncate)
     }
 
     @Test

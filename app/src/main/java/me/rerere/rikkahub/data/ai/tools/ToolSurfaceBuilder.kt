@@ -7,6 +7,7 @@
 package me.rerere.rikkahub.data.ai.tools
 
 import android.content.Context
+import android.util.Log
 import kotlinx.serialization.json.Json
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessage
@@ -47,7 +48,7 @@ class ToolSurfaceBuilder(
         invocationContext: ToolInvocationContext,
         recentMessages: List<UIMessage> = emptyList(),
         workspaceCwd: String? = null,
-    ): List<Tool> = buildList {
+    ): List<Tool> = ToolNaming.deduplicateToolNames(buildList {
         // Memory tools - mirror GenerationHandler: only when the assistant has memory enabled.
         if (assistant.enableMemory) {
             val memoryAssistantId = if (assistant.useGlobalMemory) {
@@ -87,5 +88,7 @@ class ToolSurfaceBuilder(
             )
         }
         addAll(pluginToolProvider.getTools())
+    }) { duplicateToolName ->
+        Log.w("ToolSurfaceBuilder", "Dropped duplicate tool name: $duplicateToolName")
     }
 }

@@ -16,8 +16,31 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Base64
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class MiMoTTSProviderTest {
+    @Test
+    fun speech_messages_keep_reply_as_only_message_when_style_instruction_is_blank() {
+        val messages = buildMiMoTtsMessages("", "晚安。")
+
+        assertEquals(1, messages.size)
+        assertEquals("assistant", messages.single().jsonObject["role"]?.jsonPrimitive?.content)
+        assertEquals("晚安。", messages.single().jsonObject["content"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun speech_messages_keep_style_as_system_instruction_not_spoken_content() {
+        val messages = buildMiMoTtsMessages("语气提示：温柔、低声。", "晚安。")
+
+        assertEquals(
+            listOf("system", "assistant"),
+            messages.map { it.jsonObject["role"]?.jsonPrimitive?.content }
+        )
+        assertEquals("语气提示：温柔、低声。", messages.first().jsonObject["content"]?.jsonPrimitive?.content)
+        assertEquals("晚安。", messages.last().jsonObject["content"]?.jsonPrimitive?.content)
+    }
+
     @Test
     fun decode_audio_data_from_sse_chunk() {
         val expected = byteArrayOf(1, 2, 3, 4)

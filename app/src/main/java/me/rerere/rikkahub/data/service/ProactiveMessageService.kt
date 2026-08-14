@@ -687,35 +687,13 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     deviceEventContext = if (isFromDeviceEvent) deviceEventContext else contextStr,
                 )
 
-                // user message 只放简短指令（上下文已在系统提示词中）
-                val userMessage = UIMessage(
-                    role = MessageRole.USER,
-                    parts = listOf(UIMessagePart.Text(
-                        if (isNightWatchTrigger) {
-                            "【INTERNAL_NIGHT_WATCH_TICK】"
-                        } else if (isIdleExploreTrigger) {
-                            "【INTERNAL_IDLE_EXPLORE】这是后台只读探索机会，不是用户发言。" +
-                                "从最近话题中自行选择一个真实感兴趣的方向，用公开网页工具查证；" +
-                                "有值得分享的新发现就简短告诉用户，否则只回复 [PASS]。"
-                        } else if (isFromDeviceEvent) {
-                            "【系统自动触发，不是用户发言】本轮用户没有发送任何文字。不要把这段话当作用户回复，" +
-                                "不要编造、补全或引用用户说过的话；只在确有必要时自然地主动发消息，否则回复 [PASS]。"
-                        } else {
-                            "请根据以上上下文决定是否发消息。没什么好说的就回复 [PASS] 即可，不要强行找话题。"
-                        }
-                    ))
+                val wakeMessage = buildProactiveWakeMessage(
+                    isNightWatchTrigger = isNightWatchTrigger,
+                    isIdleExploreTrigger = isIdleExploreTrigger,
+                    isFromDeviceEvent = isFromDeviceEvent,
                 )
 
-                // 应用输入转换器
-                val processedUserMessage = listOf(userMessage).transforms(
-                    transformers = inputTransformers + templateTransformer,
-                    context = this@ProactiveMessageTriggerService,
-                    model = model,
-                    assistant = assistant,
-                    settings = settings
-                ).first()
-
-                // 组合完整消息列表：System + History + User Context
+                // 组合完整消息列表：System + History + System Wake Event
                 // 合并相邻同角色消息（包括 history 末尾与合成 User 消息之间可能出现的 USER-USER 相邻），避免 400
                 val messages = mergeAdjacentSameRoleMessages(
                     buildList {
@@ -724,7 +702,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                             parts = listOf(UIMessagePart.Text(systemPrompt))
                         ))
                         addAll(historyMessages)
-                        add(processedUserMessage)
+                        add(wakeMessage)
                     }
                 )
 
@@ -1119,15 +1097,17 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 }
             }
 
-            settings.continuityProfileFor(assistant.id).promptContext().takeIf { it.isNotBlank() }?.let {
+            // Keep the short mood cue as the final dynamic suffix. This also covers aggressive
+            // device-event triggers, which do not build the regular proactive context above.
+            settings.companionMoodSetting.promptContext(proactive = true).takeIf { it.isNotBlank() }?.let {
                 appendLine()
                 appendLine()
                 append(it)
             }
 
-            // Keep the short mood cue as the final dynamic suffix. This also covers aggressive
-            // device-event triggers, which do not build the regular proactive context above.
-            settings.companionMoodSetting.promptContext(proactive = true).takeIf { it.isNotBlank() }?.let {
+            // This is user-edited dynamic state, so keep it behind all stable proactive rules as
+            // well. The factual boundary below remains final and takes precedence.
+            settings.continuityProfileFor(assistant.id).promptContext().takeIf { it.isNotBlank() }?.let {
                 appendLine()
                 appendLine()
                 append(it)
@@ -1273,7 +1253,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
      * 避免工具过多导致请求体过大触发 API 400。
      */
     private suspend fun buildTools(settings: Settings, assistant: Assistant, model: Model): List<Tool> {
-        return buildList {
+        return ToolNaming.deduplicateToolNames(buildList {
             // 本地工具（助手已启用的）
             addAll(localTools.getTools(assistant.localTools))
 
@@ -1301,6 +1281,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
 
             // 插件工具
             addAll(pluginToolProvider.getTools())
+        }) { duplicateToolName ->
+            Log.w(TAG, "Dropped duplicate tool name: $duplicateToolName")
         }
     }
 
@@ -1308,7 +1290,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
      * 空闲探索只暴露公开搜索与网页读取能力。插件工具必须明确是“读取网页”，并强制视为
      * 无需审批的只读动作；MCP、本地系统工具、记忆工具和其他插件工具一律不加入。
      */
-    private suspend fun buildIdleExploreTools(settings: Settings): List<Tool> = buildList {
+    private suspend fun buildIdleExploreTools(settings: Settings): List<Tool> = ToolNaming.deduplicateToolNames(buildList {
         addAll(createSearchTools(settings))
         pluginToolProvider.getTools()
             .filter { tool ->
@@ -1319,7 +1301,9 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     signature.contains("读取网页")
             }
             .forEach { tool -> add(tool.copy(needsApproval = false)) }
-    }.distinctBy { it.name }
+    }) { duplicateToolName ->
+        Log.w(TAG, "Dropped duplicate idle exploration tool name: $duplicateToolName")
+    }
 
     /**
      * 基于 AI 消息 id 在对话里就地更新（保留 MessageNode.id，避免 Compose 重建/状态丢失）
@@ -1379,6 +1363,31 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
             !hasResumableTool
         }
     }
+
+    internal fun buildProactiveWakeMessage(
+        isNightWatchTrigger: Boolean,
+        isIdleExploreTrigger: Boolean,
+        isFromDeviceEvent: Boolean,
+    ): UIMessage = UIMessage(
+        role = MessageRole.SYSTEM,
+        parts = listOf(
+            UIMessagePart.Text(
+                when {
+                    isNightWatchTrigger ->
+                        "【后台tick：晚安守夜】不要复盘上一轮，不要查时间；只判断要不要逮她。没必要只回 [PASS]。"
+
+                    isIdleExploreTrigger ->
+                        "【后台tick：空闲探索】不要复盘上一轮；可只读搜网页。有真实新发现才简短分享，否则只回 [PASS]。"
+
+                    isFromDeviceEvent ->
+                        "【后台tick：设备事件】不要复盘上一轮，不要查时间，不要脑补她说话。值得主动找她才发，否则只回 [PASS]。"
+
+                    else ->
+                        "【后台tick：主动消息】不要复盘上一轮。想找她/写日记/分享近况才发；没必要只回 [PASS]。"
+                },
+            ),
+        ),
+    )
 
     /**
      * 合并相邻同角色消息（ASSISTANT-ASSISTANT / USER-USER 都要合并），

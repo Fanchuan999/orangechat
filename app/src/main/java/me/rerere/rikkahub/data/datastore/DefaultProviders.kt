@@ -128,6 +128,33 @@ val DEFAULT_PROVIDERS = listOf(
         )
     ),
     ProviderSetting.OpenAI(
+        id = Uuid.parse("c7716a5f-2117-4fbd-87a5-1b3a6903e914"),
+        name = "MiMo",
+        baseUrl = "https://api.xiaomimimo.com/v1",
+        apiKey = "",
+        enabled = true,
+        builtIn = true,
+        chatCompletionsPath = "/chat/completions",
+        models = listOf(
+            Model(
+                id = Uuid.parse("c6d98e8f-59b5-4d43-9630-47ff56355fa9"),
+                modelId = "mimo-v2.5",
+                displayName = "MiMo v2.5",
+                inputModalities = listOf(Modality.TEXT, Modality.IMAGE),
+                outputModalities = listOf(Modality.TEXT),
+                abilities = listOf(ModelAbility.TOOL, ModelAbility.REASONING),
+            ),
+            Model(
+                id = Uuid.parse("a9bb913e-1472-48a5-a7bc-7a3d58d0f95d"),
+                modelId = "mimo-v2.5-pro",
+                displayName = "MiMo v2.5 Pro",
+                inputModalities = listOf(Modality.TEXT),
+                outputModalities = listOf(Modality.TEXT),
+                abilities = listOf(ModelAbility.TOOL, ModelAbility.REASONING),
+            ),
+        ),
+    ),
+    ProviderSetting.OpenAI(
         id = Uuid.parse("d5734028-d39b-4d41-9841-fd648d65440e"),
         name = "OpenRouter",
         baseUrl = "https://openrouter.ai/api/v1",

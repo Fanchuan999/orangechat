@@ -177,7 +177,8 @@ sealed class TTSProviderSetting {
         val apiKey: String = "",
         val baseUrl: String = "https://api.xiaomimimo.com/v1",
         val model: String = "mimo-v2-tts",
-        val voice: String = "mimo_default"
+        val voice: String = "mimo_default",
+        val styleInstruction: String = ""
     ) : TTSProviderSetting() {
         override fun copyProvider(
             id: Uuid,

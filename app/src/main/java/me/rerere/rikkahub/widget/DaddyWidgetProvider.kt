@@ -22,13 +22,17 @@ import me.rerere.rikkahub.data.gadgetbridge.GadgetbridgeReader
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
+import kotlin.uuid.Uuid
 
 abstract class DaddyWidgetProvider(
     private val size: DaddyWidgetSize,
 ) : AppWidgetProvider(), KoinComponent {
-    private val appScope: AppScope by inject()
-    private val settingsStore: SettingsStore by inject()
-    private val conversationRepository: ConversationRepository by inject()
+    private val appScope: AppScope
+        get() = getKoin().get()
+    private val settingsStore: SettingsStore
+        get() = getKoin().get()
+    private val conversationRepository: ConversationRepository
+        get() = getKoin().get()
 
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
         super.onUpdate(context, manager, appWidgetIds)
@@ -46,8 +50,15 @@ abstract class DaddyWidgetProvider(
 
     private fun refresh(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
         if (appWidgetIds.isEmpty()) return
+        val fallbackViews = DaddyWidgetRenderer.render(
+            context.applicationContext,
+            DaddyWidgetSnapshot.default(context.applicationContext.packageName),
+            size,
+        )
+        appWidgetIds.forEach { id -> manager.updateAppWidget(id, fallbackViews) }
         appScope.launch(Dispatchers.IO) {
-            val snapshot = buildSnapshot(context.applicationContext)
+            val snapshot = runCatching { buildSnapshot(context.applicationContext) }
+                .getOrElse { DaddyWidgetSnapshot.default(context.applicationContext.packageName) }
             val views = DaddyWidgetRenderer.render(context.applicationContext, snapshot, size)
             withContext(Dispatchers.Main) {
                 appWidgetIds.forEach { id ->
@@ -63,7 +74,10 @@ abstract class DaddyWidgetProvider(
         val state = buildDaddyWidgetState(
             moodSetting = settings.companionMoodSetting,
             shortLine = widgetSetting.shortLine,
-            recentReply = findRecentAssistantReply(settings.assistantId.toString()),
+            recentReply = findWidgetRecentAssistantReply(
+                primaryConversationId = settings.proactiveMessageSetting.primaryConversationId,
+                fallbackAssistantId = settings.assistantId,
+            ),
             stepsToday = runCatching { GadgetbridgeReader.readDailySummaries(days = 1).firstOrNull()?.steps }.getOrNull(),
             weather = null,
         )
@@ -75,8 +89,32 @@ abstract class DaddyWidgetProvider(
         )
     }
 
-    private suspend fun findRecentAssistantReply(assistantId: String): String {
-        val assistantUuid = runCatching { kotlin.uuid.Uuid.parse(assistantId) }.getOrNull() ?: return ""
+    private suspend fun findWidgetRecentAssistantReply(
+        primaryConversationId: String,
+        fallbackAssistantId: Uuid,
+    ): String {
+        primaryConversationId
+            .takeIf(String::isNotBlank)
+            ?.let { value -> runCatching { Uuid.parse(value) }.getOrNull() }
+            ?.let { conversationId ->
+                val reply = findRecentAssistantReplyInConversation(conversationId)
+                if (reply.isNotBlank()) return reply
+            }
+        return findRecentAssistantReply(fallbackAssistantId)
+    }
+
+    private suspend fun findRecentAssistantReplyInConversation(conversationId: Uuid): String = runCatching {
+        conversationRepository.getConversationById(conversationId)
+            ?.messageNodes
+            ?.asReversed()
+            ?.asSequence()
+            ?.mapNotNull { node -> node.messages.getOrNull(node.selectIndex) }
+            ?.firstOrNull { it.role == MessageRole.ASSISTANT }
+            ?.toText()
+            .orEmpty()
+    }.getOrDefault("")
+
+    private suspend fun findRecentAssistantReply(assistantUuid: Uuid): String {
         return runCatching {
             conversationRepository.getRecentConversations(assistantUuid, limit = 3)
                 .asSequence()
@@ -118,4 +156,19 @@ data class DaddyWidgetSnapshot(
     val backgroundImageUri: String,
     val state: DaddyWidgetState,
     val packageName: String,
-)
+) {
+    companion object {
+        fun default(packageName: String): DaddyWidgetSnapshot = DaddyWidgetSnapshot(
+            enabled = true,
+            backgroundImageUri = "",
+            state = buildDaddyWidgetState(
+                moodSetting = me.rerere.rikkahub.data.datastore.CompanionMoodSetting(),
+                shortLine = "我在这里。",
+                recentReply = "等你打开主聊天窗，我会把最近回复放到这里。",
+                stepsToday = null,
+                weather = null,
+            ),
+            packageName = packageName,
+        )
+    }
+}

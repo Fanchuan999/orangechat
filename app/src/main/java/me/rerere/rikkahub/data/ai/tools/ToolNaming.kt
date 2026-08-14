@@ -6,6 +6,7 @@
 
 package me.rerere.rikkahub.data.ai.tools
 
+import me.rerere.ai.core.Tool
 import kotlin.uuid.Uuid
 
 /**
@@ -69,6 +70,25 @@ object ToolNaming {
             name.length > HEADER_LENGTH && name.startsWith(PLUGIN_PREFIX) ->
                 name.substring(HEADER_LENGTH)
             else -> name
+        }
+    }
+
+    /**
+     * Provider APIs require every final tool name to be unique. Keep the first source so the
+     * tool order remains predictable, and let callers log discarded names in their own context.
+     */
+    internal fun deduplicateToolNames(
+        tools: List<Tool>,
+        onDuplicate: (String) -> Unit = {},
+    ): List<Tool> {
+        val acceptedNames = mutableSetOf<String>()
+        return tools.filter { tool ->
+            if (acceptedNames.add(tool.name)) {
+                true
+            } else {
+                onDuplicate(tool.name)
+                false
+            }
         }
     }
 }

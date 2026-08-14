@@ -340,6 +340,20 @@ private fun MiMoTTSConfiguration(
             placeholder = { Text("mimo_default") }
         )
     }
+
+    FormItem(
+        label = { Text("语气提示（可选）") },
+        description = { Text("仅在使用 MiMo TTS 时发送给 MiMo，不会影响 MiniMax 或其他语音服务") }
+    ) {
+        OutlinedTextField(
+            value = setting.styleInstruction,
+            onValueChange = { newStyleInstruction ->
+                onValueChange(setting.copy(styleInstruction = newStyleInstruction))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("例如：温柔、低声、放慢一点") },
+        )
+    }
 }
 
 @Composable

@@ -36,8 +36,12 @@ object DaddyWidgetRenderer {
 
         val showLarge = size == DaddyWidgetSize.Large
         val showRecent = size != DaddyWidgetSize.Compact
+        val showSideText = size != DaddyWidgetSize.Compact
+        val showArchivePanel = size != DaddyWidgetSize.Compact
         views.setViewVisibility(R.id.widget_recent_reply, if (showRecent) View.VISIBLE else View.GONE)
         views.setViewVisibility(R.id.widget_large_grid, if (showLarge) View.VISIBLE else View.GONE)
+        views.setViewVisibility(R.id.widget_side_text, if (showSideText) View.VISIBLE else View.GONE)
+        views.setViewVisibility(R.id.widget_archive_panel, if (showArchivePanel) View.VISIBLE else View.GONE)
 
         resolveBackground(context, snapshot.backgroundImageUri)?.let {
             views.setImageViewBitmap(R.id.widget_background_image, it)

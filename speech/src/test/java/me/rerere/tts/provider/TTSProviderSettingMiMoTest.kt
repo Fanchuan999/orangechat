@@ -20,6 +20,7 @@ class TTSProviderSettingMiMoTest {
         assertEquals("mimo-v2-tts", setting.model)
         assertEquals("mimo_default", setting.voice)
         assertEquals("", setting.apiKey)
+        assertEquals("", setting.styleInstruction)
     }
 
     @Test

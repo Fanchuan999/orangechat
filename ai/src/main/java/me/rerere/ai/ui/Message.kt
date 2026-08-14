@@ -278,17 +278,34 @@ fun List<UIMessagePart>.isEmptyUIMessage(): Boolean {
 }
 
 private const val CACHE_FRIENDLY_CONTEXT_MIN_LIMIT = 200
-private const val CACHE_FRIENDLY_CONTEXT_TRIM_RATIO = 0.25f
+private const val CACHE_FRIENDLY_CONTEXT_TRIM_RATIO = 0.5f
 
 fun isCacheFriendlyContextAvailable(limit: Int): Boolean = limit >= CACHE_FRIENDLY_CONTEXT_MIN_LIMIT
+
+/**
+ * Returns the current cache-friendly trim tier. A tier changes only after one complete
+ * trim batch has accumulated, so callers can avoid treating every message in the same
+ * retained window as a fresh trim event.
+ */
+fun cacheFriendlyContextTrimTier(totalSize: Int, limit: Int): Int {
+    if (!isCacheFriendlyContextAvailable(limit) || totalSize <= limit) return 0
+    val stride = (limit * CACHE_FRIENDLY_CONTEXT_TRIM_RATIO).roundToInt().coerceAtLeast(1)
+    val overflow = totalSize - limit
+    return (overflow + stride - 1) / stride
+}
+
+fun isCacheFriendlyContextTrimBoundary(totalSize: Int, limit: Int): Boolean {
+    if (!isCacheFriendlyContextAvailable(limit) || totalSize <= limit) return false
+    val stride = (limit * CACHE_FRIENDLY_CONTEXT_TRIM_RATIO).roundToInt().coerceAtLeast(1)
+    return (totalSize - limit - 1) % stride == 0
+}
 
 fun List<UIMessage>.limitContext(limit: Int, cacheFriendly: Boolean = false): List<UIMessage> {
     if (limit <= 0 || this.size <= limit) return this
 
     val startIndex = if (cacheFriendly && isCacheFriendlyContextAvailable(limit)) {
         val stride = (limit * CACHE_FRIENDLY_CONTEXT_TRIM_RATIO).roundToInt().coerceAtLeast(1)
-        val overflow = this.size - limit
-        (((overflow + stride - 1) / stride) * stride).coerceAtMost(this.lastIndex)
+        (cacheFriendlyContextTrimTier(this.size, limit) * stride).coerceAtMost(this.lastIndex)
     } else {
         this.size - limit
     }

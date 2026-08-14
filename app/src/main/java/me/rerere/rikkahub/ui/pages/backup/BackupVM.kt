@@ -120,20 +120,18 @@ class BackupVM(
 
     suspend fun exportCompanionBackup(
         ombreBaseUrl: String,
-        ombrePassword: CharArray,
     ): CompanionBackupExportResult {
         settingsStore.update(settings.value.copy(
             companionBackupConfig = settings.value.companionBackupConfig.copy(ombreBaseUrl = ombreBaseUrl.trim()),
         ))
-        return companionBackupService.export(ombreBaseUrl, ombrePassword).also {
+        return companionBackupService.export(ombreBaseUrl).also {
             recordBackupTime()
         }
     }
 
     suspend fun restoreCompanionBackup(
         file: File,
-        ombrePassword: CharArray,
-    ): CompanionBackupRestoreResult = companionBackupService.restore(file, ombrePassword)
+    ): CompanionBackupRestoreResult = companionBackupService.restore(file)
 
     suspend fun restoreFromChatBox(file: File): ChatboxRestoreResult {
         val payload = ChatboxImporter.import(

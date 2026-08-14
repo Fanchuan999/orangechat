@@ -55,30 +55,31 @@ class MessageTest {
     }
 
     @Test
-    fun `cache friendly 200 limit keeps 151 through 200 messages per step`() {
+    fun `cache friendly 200 limit keeps 101 through 200 messages per step`() {
         val messages = createTestMessages(251)
 
-        assertEquals(151, messages.take(201).limitContext(200, cacheFriendly = true).size)
-        assertEquals(200, messages.take(250).limitContext(200, cacheFriendly = true).size)
-        assertEquals(151, messages.limitContext(200, cacheFriendly = true).size)
+        assertEquals(101, messages.take(201).limitContext(200, cacheFriendly = true).size)
+        assertEquals(200, messages.take(300).limitContext(200, cacheFriendly = true).size)
+        assertEquals(101, messages.take(301).limitContext(200, cacheFriendly = true).size)
+        assertEquals(151, messages.limitContext(251, cacheFriendly = true).size)
     }
 
     @Test
-    fun `cache friendly 400 limit keeps 301 through 400 messages per step`() {
-        val messages = createTestMessages(501)
+    fun `cache friendly 400 limit keeps 201 through 400 messages per step`() {
+        val messages = createTestMessages(601)
 
-        assertEquals(301, messages.take(401).limitContext(400, cacheFriendly = true).size)
-        assertEquals(400, messages.take(500).limitContext(400, cacheFriendly = true).size)
-        assertEquals(301, messages.limitContext(400, cacheFriendly = true).size)
+        assertEquals(201, messages.take(401).limitContext(400, cacheFriendly = true).size)
+        assertEquals(400, messages.take(600).limitContext(400, cacheFriendly = true).size)
+        assertEquals(201, messages.limitContext(400, cacheFriendly = true).size)
     }
 
     @Test
-    fun `cache friendly 500 limit keeps 376 through 500 messages per step`() {
-        val messages = createTestMessages(626)
+    fun `cache friendly 500 limit keeps 251 through 500 messages per step`() {
+        val messages = createTestMessages(751)
 
-        assertEquals(376, messages.take(501).limitContext(500, cacheFriendly = true).size)
-        assertEquals(500, messages.take(625).limitContext(500, cacheFriendly = true).size)
-        assertEquals(376, messages.limitContext(500, cacheFriendly = true).size)
+        assertEquals(251, messages.take(501).limitContext(500, cacheFriendly = true).size)
+        assertEquals(500, messages.take(750).limitContext(500, cacheFriendly = true).size)
+        assertEquals(251, messages.limitContext(500, cacheFriendly = true).size)
     }
 
     @Test

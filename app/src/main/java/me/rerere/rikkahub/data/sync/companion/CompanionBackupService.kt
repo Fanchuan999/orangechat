@@ -35,7 +35,7 @@ data class CompanionBackupRestoreResult(
     val externalMcpStatuses: List<ExternalMcpServiceStatus>,
 )
 
-/** Coordinates a complete local companion backup without persisting Ombre's password. */
+/** Coordinates a complete local companion backup without persisting an Ombre Dashboard password. */
 class CompanionBackupService(
     private val context: Context,
     private val settingsStore: SettingsStore,
@@ -47,10 +47,10 @@ class CompanionBackupService(
 
     suspend fun export(
         ombreBaseUrl: String,
-        ombrePassword: CharArray,
     ): CompanionBackupExportResult = withContext(Dispatchers.IO) {
         val workDir = newWorkDir()
         var orangeBackup: File? = null
+        var ombreBackup: File? = null
         val output = File(context.cacheDir, "orangechat_companion_${UUID.randomUUID()}.zip")
         try {
             val settings = settingsStore.settingsFlow.value
@@ -60,8 +60,10 @@ class CompanionBackupService(
                 ),
                 includePlugins = true,
             )
-            val ombreBackup = File(workDir, OMBRE_ARCHIVE)
-            OmbreBackupClient(ombreBaseUrl).export(ombrePassword, ombreBackup)
+            // Ombre v2.16+ can have an independent Dashboard password even on a local MCP-only
+            // deployment. Backing up the portable Markdown/source files through the already
+            // configured Termux bridge avoids a false 401 and preserves the real memory data.
+            ombreBackup = termuxConfigBridge.exportOmbreMemoryArchive()
 
             val supabaseBackup = File(workDir, SUPABASE_ARCHIVE)
             val supabaseTableCount = supabaseBackupClient.export(settings, supabaseBackup)
@@ -73,7 +75,7 @@ class CompanionBackupService(
                     ombreBaseUrl = ombreBaseUrl,
                     parts = listOf(
                         ArchivePart(ORANGECHAT_ARCHIVE, orangeBackup),
-                        ArchivePart(OMBRE_ARCHIVE, ombreBackup),
+                        ArchivePart(OMBRE_ARCHIVE, requireNotNull(ombreBackup)),
                         ArchivePart(SUPABASE_ARCHIVE, supabaseBackup),
                         ArchivePart(TERMUX_ARCHIVE, termuxBackup),
                     ),
@@ -87,14 +89,13 @@ class CompanionBackupService(
             throw exception
         } finally {
             orangeBackup?.delete()
+            ombreBackup?.delete()
             workDir.deleteRecursively()
-            ombrePassword.fill('\u0000')
         }
     }
 
     suspend fun restore(
         archive: File,
-        ombrePassword: CharArray,
     ): CompanionBackupRestoreResult = withContext(Dispatchers.IO) {
         require(archive.exists() && archive.length() > 0L) { "联动备份包不存在或为空。" }
         val workDir = newWorkDir()
@@ -111,7 +112,7 @@ class CompanionBackupService(
             )
             val restoredSettings = settingsStore.settingsFlow.first()
 
-            OmbreBackupClient(ombreUrl).restore(ombrePassword, File(workDir, OMBRE_ARCHIVE))
+            termuxConfigBridge.restoreOmbreMemoryArchive(File(workDir, OMBRE_ARCHIVE))
             val supabaseReport = supabaseBackupClient.restore(
                 restoredSettings,
                 File(workDir, SUPABASE_ARCHIVE),
@@ -123,7 +124,6 @@ class CompanionBackupService(
             )
         } finally {
             workDir.deleteRecursively()
-            ombrePassword.fill('\u0000')
         }
     }
 
