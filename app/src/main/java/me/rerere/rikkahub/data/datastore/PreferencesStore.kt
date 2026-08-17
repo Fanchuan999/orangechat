@@ -168,6 +168,9 @@ class SettingsStore(
         // 系统工具设置
         val SYSTEM_TOOLS_SETTING = stringPreferencesKey("system_tools_setting")
 
+        // DeepSeek Harness 独立工作台
+        val HARNESS_SETTING = stringPreferencesKey("harness_setting")
+
         // 主动消息设置
         val PROACTIVE_MESSAGE_SETTING = stringPreferencesKey("proactive_message_setting")
 
@@ -307,6 +310,9 @@ class SettingsStore(
                 systemToolsSetting = preferences[SYSTEM_TOOLS_SETTING]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: SystemToolsSetting(),
+                harnessSetting = preferences[HARNESS_SETTING]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: HarnessSetting(),
                 proactiveMessageSetting = preferences[PROACTIVE_MESSAGE_SETTING]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: ProactiveMessageSetting(),
@@ -511,6 +517,7 @@ class SettingsStore(
             preferences[LAUNCH_COUNT] = settings.launchCount
             preferences[SPONSOR_ALERT_DISMISSED_AT] = settings.sponsorAlertDismissedAt
             preferences[SYSTEM_TOOLS_SETTING] = JsonInstant.encodeToString(settings.systemToolsSetting)
+            preferences[HARNESS_SETTING] = JsonInstant.encodeToString(settings.harnessSetting)
             preferences[PROACTIVE_MESSAGE_SETTING] = JsonInstant.encodeToString(settings.proactiveMessageSetting)
             preferences[COMPANION_MOOD_SETTING] = JsonInstant.encodeToString(settings.companionMoodSetting)
             preferences[COMPANION_CONTINUITY_PROFILES] = JsonInstant.encodeToString(settings.companionContinuityProfiles)
@@ -690,6 +697,7 @@ data class Settings(
     val launchCount: Int = 0,
     val sponsorAlertDismissedAt: Int = 0,
     val systemToolsSetting: SystemToolsSetting = SystemToolsSetting(),
+    val harnessSetting: HarnessSetting = HarnessSetting(),
     val proactiveMessageSetting: ProactiveMessageSetting = ProactiveMessageSetting(),
     val companionMoodSetting: CompanionMoodSetting = CompanionMoodSetting(),
     val companionContinuityProfiles: List<CompanionContinuityProfile> = emptyList(),
