@@ -7,6 +7,7 @@
 package me.rerere.rikkahub
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -17,6 +18,14 @@ import androidx.compose.runtime.tooling.ComposeStackTraceMode
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.gif.AnimatedImageDecoder
+import coil3.gif.GifDecoder
+import coil3.network.cachecontrol.CacheControlCacheStrategy
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.crossfade
+import coil3.svg.SvgDecoder
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +60,7 @@ import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
 import org.koin.androidx.workmanager.koin.workManagerFactory
 import org.koin.core.context.startKoin
+import okhttp3.OkHttpClient
 
 private const val TAG = "RikkaHubApp"
 
@@ -63,7 +73,7 @@ const val DEVICE_EVENT_NOTIFICATION_CHANNEL_ID = "device_event_tracking"
 const val VOICE_CALL_NOTIFICATION_CHANNEL_ID = "voice_call"
 const val ANNOUNCEMENT_NOTIFICATION_CHANNEL_ID = "announcement"
 
-class RikkaHubApp : Application() {
+class RikkaHubApp : Application(), SingletonImageLoader.Factory {
     companion object {
         var INSTANCE: RikkaHubApp? = null
             private set
@@ -155,6 +165,26 @@ class RikkaHubApp : Application() {
 
         // Composer.setDiagnosticStackTraceMode(ComposeStackTraceMode.Auto)
     }
+
+    @OptIn(coil3.annotation.ExperimentalCoilApi::class)
+    override fun newImageLoader(context: Context): ImageLoader =
+        ImageLoader.Builder(context)
+            .crossfade(true)
+            .components {
+                add(
+                    OkHttpNetworkFetcherFactory(
+                        callFactory = { get<OkHttpClient>() },
+                        cacheStrategy = { CacheControlCacheStrategy() },
+                    ),
+                )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    add(AnimatedImageDecoder.Factory())
+                } else {
+                    add(GifDecoder.Factory())
+                }
+                add(SvgDecoder.Factory(scaleToDensity = true))
+            }
+            .build()
 
     private fun incrementLaunchCount() {
         get<AppScope>().launch {
