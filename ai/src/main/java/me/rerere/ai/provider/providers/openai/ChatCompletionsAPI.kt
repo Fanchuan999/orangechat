@@ -15,9 +15,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonArrayBuilder
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
@@ -72,6 +72,84 @@ import kotlin.time.Clock
 
 private const val TAG = "ChatCompletionsAPI"
 
+internal fun extractReasoningText(message: JsonObject): String? =
+    message["reasoning_content"]?.jsonPrimitiveOrNull?.contentOrNull
+        ?: message["reasoning"]?.jsonPrimitiveOrNull?.contentOrNull
+        ?: message["reasoning_details"]?.jsonArrayOrNull
+            ?.mapNotNull { detail ->
+                detail.jsonObjectOrNull
+                    ?.get("text")
+                    ?.jsonPrimitiveOrNull
+                    ?.contentOrNull
+            }
+            ?.joinToString("")
+            ?.takeIf { it.isNotBlank() }
+
+internal class MiniMaxStreamDeltaNormalizer {
+    private var reasoningSoFar = ""
+    private var contentSoFar = ""
+
+    private fun suffix(previous: String, candidate: String): Pair<String, String> =
+        if (candidate.startsWith(previous)) {
+            candidate.removePrefix(previous) to candidate
+        } else {
+            candidate to (previous + candidate)
+        }
+
+    fun normalize(message: JsonObject): JsonObject {
+        val reasoning = extractReasoningText(message).orEmpty()
+        val content = message["content"]?.jsonPrimitiveOrNull?.contentOrNull.orEmpty()
+        val (reasoningDelta, nextReasoning) = suffix(reasoningSoFar, reasoning)
+        val (contentDelta, nextContent) = suffix(contentSoFar, content)
+        reasoningSoFar = nextReasoning
+        contentSoFar = nextContent
+
+        return buildJsonObject {
+            message.forEach { (key, value) ->
+                if (key !in setOf("reasoning_content", "reasoning", "reasoning_details", "content")) {
+                    put(key, value)
+                }
+            }
+            if (reasoningDelta.isNotEmpty()) put("reasoning_content", reasoningDelta)
+            if (contentDelta.isNotEmpty()) put("content", contentDelta)
+        }
+    }
+}
+
+/** 把一次性拿到的完整 SSE 响应体解析成 data 事件列表。 */
+internal fun parseOpenAISseEvents(body: String): List<String> {
+    val events = mutableListOf<String>()
+    val dataLines = mutableListOf<String>()
+
+    fun flush() {
+        if (dataLines.isNotEmpty()) {
+            events.add(dataLines.joinToString("\n"))
+            dataLines.clear()
+        }
+    }
+
+    for (line in body.split("\n")) {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) {
+            flush()
+        } else if (trimmed.startsWith("data:")) {
+            dataLines.add(trimmed.removePrefix("data:").trim())
+        }
+    }
+    flush()
+    return events
+}
+
+internal fun parseOpenAIErrorPayload(body: String): JsonElement {
+    val trimmed = body.trim()
+    if (!trimmed.startsWith("data:")) return json.parseToJsonElement(trimmed)
+
+    val event = parseOpenAISseEvents(trimmed)
+        .firstOrNull { it.isNotBlank() && it != "[DONE]" }
+        ?: error("Empty SSE error response")
+    return json.parseToJsonElement(event)
+}
+
 class ChatCompletionsAPI(
     private val client: OkHttpClient,
     private val keyRoulette: KeyRoulette
@@ -118,7 +196,7 @@ class ChatCompletionsAPI(
             // 可能出现多行 data: 字段(中间链路可能把一条消息物理断行),必须把它们用
             // '\n' 拼接还原为一条完整消息后再作为单个 JSON 解析。否则一旦某条消息被
             // 断成多行,按行取 data: 会把完整 JSON 拆碎导致解析失败(Unexpected EOF)。
-            val sseChunks = parseSseEvents(bodyStr)
+            val sseChunks = parseOpenAISseEvents(bodyStr)
                 .mapNotNull { data ->
                     if (data.isNotBlank() && data != "[DONE]") {
                         json.parseToJsonElement(data).jsonObject
@@ -244,6 +322,10 @@ class ChatCompletionsAPI(
         // just for debugging response body
         // println(client.newCall(request).await().body?.string())
 
+        val miniMaxStreamNormalizer = providerSetting.baseUrl.toHttpUrl().host
+            .takeIf { it == "api.minimaxi.com" }
+            ?.let { MiniMaxStreamDeltaNormalizer() }
+
         val listener = object : EventSourceListener() {
             override fun onEvent(
                 eventSource: EventSource,
@@ -315,9 +397,10 @@ class ChatCompletionsAPI(
                 val choiceList = buildList {
                     if (choices.isNotEmpty()) {
                         val choice = choices[0].jsonObject
-                        val message =
+                        val rawMessage =
                             choice["delta"]?.jsonObject ?: choice["message"]?.jsonObject
                             ?: throw Exception("delta/message is null")
+                        val message = miniMaxStreamNormalizer?.normalize(rawMessage) ?: rawMessage
                         val finishReason =
                             choice["finish_reason"]?.jsonPrimitive?.contentOrNull
                                 ?: "unknown"
@@ -359,7 +442,7 @@ class ChatCompletionsAPI(
                 }
                 try {
                     if (!bodyRaw.isNullOrBlank()) {
-                        val bodyElement = Json.parseToJsonElement(bodyRaw)
+                        val bodyElement = parseOpenAIErrorPayload(bodyRaw)
                         exception = bodyElement.parseErrorDetail()
                         val detailMsg = "onFailure: parsed error detail: $exception"
                         Log.e(TAG, detailMsg)
@@ -407,12 +490,23 @@ class ChatCompletionsAPI(
             // moonshot/deepseek 的 thinking 字段结构与智谱一致, 一并处理。
             val thinkingEnabled = params.model.abilities.contains(ModelAbility.REASONING) &&
                 params.reasoningLevel.isEnabled &&
-                host in setOf("open.bigmodel.cn", "api.moonshot.cn", "api.deepseek.com")
+                host in setOf(
+                    "open.bigmodel.cn",
+                    "api.moonshot.cn",
+                    "api.deepseek.com",
+                    "api.xiaomimimo.com",
+                )
             if (isModelAllowTemperature(params.model) && !thinkingEnabled) {
                 if (params.temperature != null) put("temperature", params.temperature)
                 if (params.topP != null) put("top_p", params.topP)
             }
-            if (params.maxTokens != null) put("max_tokens", params.maxTokens)
+            if (params.maxTokens != null) {
+                if (host == "api.xiaomimimo.com") {
+                    put("max_completion_tokens", params.maxTokens)
+                } else {
+                    put("max_tokens", params.maxTokens)
+                }
+            }
 
             put("stream", stream)
             if (stream) {
@@ -436,6 +530,20 @@ class ChatCompletionsAPI(
             if (params.model.abilities.contains(ModelAbility.REASONING)) {
                 val level = params.reasoningLevel
                 when (host) {
+                    "api.minimaxi.com" -> {
+                        // MiniMax 的 reasoning_details/content 在流式接口中可能为累计值。
+                        // reasoning_split 要求服务端把思考与最终正文分开返回。
+                        put("reasoning_split", true)
+                    }
+
+                    "api.xiaomimimo.com" -> {
+                        // MiMo 的 OpenAI 兼容接口使用 thinking.type，不接受
+                        // OpenAI reasoning_effort（尤其 xhigh 会直接触发 400）。
+                        put("thinking", buildJsonObject {
+                            put("type", if (level.isEnabled) "enabled" else "disabled")
+                        })
+                    }
+
                     "openrouter.ai" -> {
                         // https://openrouter.ai/docs/use-cases/reasoning-tokens
                         put("reasoning", buildJsonObject {
@@ -824,8 +932,7 @@ class ChatCompletionsAPI(
 
         // 也许支持其他模态的输出content?
         val content = jsonObject["content"]?.jsonPrimitiveOrNull?.contentOrNull ?: ""
-        val reasoning = jsonObject["reasoning_content"]?.jsonPrimitiveOrNull?.contentOrNull
-            ?: jsonObject["reasoning"]?.jsonPrimitiveOrNull?.contentOrNull
+        val reasoning = extractReasoningText(jsonObject)
             ?: jsonObject["content"]?.takeIf { it is JsonArray }?.let { arr ->
                 // Mistral接口
                 // {"id":"","object":"chat.completion.chunk","created":1772351733,"model":"magistral-medium-2509","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"好的"}]}]},"finish_reason":null}]}
@@ -919,39 +1026,4 @@ class ChatCompletionsAPI(
         return gonnaSend == texts && texts == 1
     }
 
-    /**
-     * 把一段完整的 SSE 响应体解析成 data 事件列表。
-     *
-     * 遵循 SSE 协议: 事件之间用空行分隔, 一个事件内可以有多行 `data:` 字段, 多行 data
-     * 必须用 '\n' 拼接成一条完整消息。这样即使中间链路(Zeabur 等反代)把一条 data:
-     * 物理断成多行发送, 也能还原成原始的完整 JSON, 避免按行粗暴切分导致 Unexpected EOF。
-     *
-     * 注意: 这里解析的是一次性拿到的整个响应体(generateText 非 stream 场景, 但服务端
-     * 仍返回了 SSE), 不是 okHttp EventSource 拼好的单条事件, 所以需要自己做事件边界识别。
-     */
-    private fun parseSseEvents(body: String): List<String> {
-        val events = mutableListOf<String>()
-        val dataLines = mutableListOf<String>()
-
-        fun flush() {
-            if (dataLines.isNotEmpty()) {
-                events.add(dataLines.joinToString("\n"))
-                dataLines.clear()
-            }
-        }
-
-        for (line in body.split("\n")) {
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) {
-                // 空行 = 事件边界
-                flush()
-            } else if (trimmed.startsWith("data:")) {
-                dataLines.add(trimmed.removePrefix("data:").trim())
-            }
-            // 忽略 event:/id:/retry: 等其它 SSE 字段, 这里只关心 data
-        }
-        // body 末尾可能没有空行收尾
-        flush()
-        return events
-    }
 }
