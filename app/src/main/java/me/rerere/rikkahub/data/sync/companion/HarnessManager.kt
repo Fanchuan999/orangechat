@@ -75,7 +75,17 @@ class HarnessManager(
         .readTimeout(2, TimeUnit.SECONDS)
         .callTimeout(2, TimeUnit.SECONDS)
         .build()
-    private val _snapshot = MutableStateFlow(HarnessSnapshot())
+    private val initialSetting = settingsStore.settingsFlow.value.harnessSetting
+    private val _snapshot = MutableStateFlow(
+        HarnessSnapshot(
+            status = if (initialSetting.installedVersion.isBlank()) {
+                HarnessStatus.NOT_INSTALLED
+            } else {
+                HarnessStatus.STOPPED
+            },
+            installedVersion = initialSetting.installedVersion,
+        )
+    )
     val snapshot: StateFlow<HarnessSnapshot> = _snapshot.asStateFlow()
 
     suspend fun inspect(): HarnessSnapshot {

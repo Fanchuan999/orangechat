@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,11 +65,14 @@ import me.rerere.hugeicons.stroke.Image02
 import me.rerere.hugeicons.stroke.MusicNote03
 import me.rerere.hugeicons.stroke.Package
 import me.rerere.hugeicons.stroke.Package01
+import me.rerere.hugeicons.stroke.Rocket01
 import me.rerere.hugeicons.stroke.Video01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.datastore.HarnessStatus
+import me.rerere.rikkahub.data.sync.companion.HarnessManager
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
@@ -111,6 +115,9 @@ internal fun FilesPicker(
     val mcpServers = LocalMcpServers.current
     val provider = currentChatModel?.findProvider(providers = providers)
     val pluginToolProvider = koinInject<PluginToolProvider>()
+    val harnessManager = koinInject<HarnessManager>()
+    val harnessSnapshot by harnessManager.snapshot.collectAsStateWithLifecycle()
+    val navController = LocalNavController.current
     val manualToolPlugins = pluginToolProvider.getToolStats().pluginDetails
     val dismissDistance = with(LocalDensity.current) { 72.dp.toPx() }
     var downwardDragDistance by remember { mutableFloatStateOf(0f) }
@@ -222,6 +229,27 @@ internal fun FilesPicker(
             modifier = Modifier
                 .clip(MaterialTheme.shapes.large)
                 .clickable { showManualToolPicker = true },
+            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
+        )
+
+        val harnessStatus = when (harnessSnapshot.status) {
+            HarnessStatus.NOT_INSTALLED -> "未安装"
+            HarnessStatus.STOPPED -> "未启动"
+            HarnessStatus.RUNNING -> "运行中"
+            HarnessStatus.ERROR -> "异常"
+        }
+        ListItem(
+            leadingContent = {
+                Icon(HugeIcons.Rocket01, contentDescription = null)
+            },
+            headlineContent = { Text("DeepSeek Harness") },
+            supportingContent = { Text(harnessStatus) },
+            modifier = Modifier
+                .clip(MaterialTheme.shapes.large)
+                .clickable {
+                    onDismiss()
+                    navController.navigate(Screen.Harness)
+                },
             colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
         )
 

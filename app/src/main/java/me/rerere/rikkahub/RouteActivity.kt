@@ -120,6 +120,8 @@ import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceTerminalPage
 import me.rerere.rikkahub.ui.pages.favorite.FavoritePage
 import me.rerere.rikkahub.ui.pages.companion.CompanionSpacePage
 import me.rerere.rikkahub.ui.pages.health.HealthPage
+import me.rerere.rikkahub.ui.pages.harness.HarnessPage
+import me.rerere.rikkahub.ui.pages.harness.HarnessWebViewPage
 import me.rerere.rikkahub.ui.pages.history.HistoryPage
 import me.rerere.rikkahub.ui.pages.imggen.ImageGenPage
 import me.rerere.rikkahub.ui.pages.log.LogPage
@@ -453,6 +455,17 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.History> {
                                 HistoryPage()
+                            }
+
+                            entry<Screen.Harness> {
+                                val nav = LocalNavController.current
+                                HarnessPage(
+                                    onOpenWorkspace = { nav.navigate(Screen.HarnessWorkspace) },
+                                )
+                            }
+
+                            entry<Screen.HarnessWorkspace> {
+                                HarnessWebViewPage()
                             }
 
                             entry<Screen.Favorite> {
@@ -895,6 +908,12 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object History : Screen
+
+    @Serializable
+    data object Harness : Screen
+
+    @Serializable
+    data object HarnessWorkspace : Screen
 
     @Serializable
     data object Favorite : Screen

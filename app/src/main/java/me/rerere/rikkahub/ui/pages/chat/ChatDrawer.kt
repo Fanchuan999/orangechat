@@ -86,6 +86,8 @@ import me.rerere.hugeicons.stroke.Zap
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.datastore.HarnessStatus
+import me.rerere.rikkahub.data.sync.companion.HarnessManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Folder
@@ -738,6 +740,14 @@ private fun DrawerActions(
     navController: Navigator,
     drawerItemAlpha: Float = 1f,
 ) {
+    val harnessManager = koinInject<HarnessManager>()
+    val harnessSnapshot by harnessManager.snapshot.collectAsStateWithLifecycle()
+    val harnessStatus = when (harnessSnapshot.status) {
+        HarnessStatus.NOT_INSTALLED -> "未安装"
+        HarnessStatus.STOPPED -> "未启动"
+        HarnessStatus.RUNNING -> "运行中"
+        HarnessStatus.ERROR -> "异常"
+    }
     Column {
         // 搜索入口
         Surface(
@@ -796,6 +806,39 @@ private fun DrawerActions(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
+            }
+        }
+
+        // DeepSeek Harness 固定入口；这里只展示状态，不会静默安装或启动。
+        Surface(
+            onClick = { navController.navigate(Screen.Harness) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = drawerItemAlpha),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    imageVector = HugeIcons.Rocket01,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("DeepSeek Harness", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        harnessStatus,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
