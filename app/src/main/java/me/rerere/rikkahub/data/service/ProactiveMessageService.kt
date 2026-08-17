@@ -50,9 +50,7 @@ import me.rerere.rikkahub.data.ai.transformers.OcrTransformer
 import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
 import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
 import me.rerere.rikkahub.data.ai.transformers.RegexOutputTransformer
-import me.rerere.rikkahub.data.ai.transformers.transforms
 import me.rerere.rikkahub.data.ai.transformers.visualTransforms
-import me.rerere.rikkahub.data.ai.transformers.onGenerationFinish
 import me.rerere.rikkahub.data.ai.tools.LocalTools
 import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.ai.tools.createSearchTools
@@ -783,8 +781,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 )
 
                 // 解析 [JUMP] 标记（AI总是可以跳转，不需要开关）
-                val rawText = aiMessage.parts.filterIsInstance<UIMessagePart.Text>()
-                    .joinToString("\n") { it.text }.trim()
+                val rawText = proactiveVisibleReplyText(aiMessage)
                 val replyText = rawText.replace("\\[JUMP]".toRegex(RegexOption.IGNORE_CASE), "").trim()
                 // AI总是可以跳转，不需要allowForceJump开关
                 val shouldJump = hasJumpFlag && !isIdleExploreTrigger
@@ -1450,7 +1447,14 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 val currentAiMessage = streamMessages.lastOrNull { it.role == MessageRole.ASSISTANT }
                 if (currentAiMessage != null && persistDuringGeneration) {
                     // 用 id 匹配就地更新（保留 node id，避免思考链闪烁 / 覆盖上一条 assistant）
-                    updateOrAppendAiMessage(conversationId, currentAiMessage)
+                    val visualMessage = listOf(currentAiMessage).visualTransforms(
+                        transformers = outputTransformers,
+                        context = this@ProactiveMessageTriggerService,
+                        model = model,
+                        assistant = assistant,
+                        settings = settings,
+                    ).single()
+                    updateOrAppendAiMessage(conversationId, visualMessage)
                 }
             }
 
@@ -1468,14 +1472,16 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 hasJumpFlag = true
                 Log.d(TAG, "[JUMP] flag detected in raw AI output")
             }
-            // 应用输出转换器
-            val processedMessage = listOf(aiMessage).transforms(
+            // 主动消息必须走“生成完成”转换：普通 transform 不会拆分 <think> 标签。
+            // 先分离思考与正文，再做通知、存储和正文级去重。
+            val processedMessage = finalizeProactiveReply(
+                message = aiMessage,
                 transformers = outputTransformers,
                 context = this@ProactiveMessageTriggerService,
                 model = model,
                 assistant = assistant,
-                settings = settings
-            ).first()
+                settings = settings,
+            )
             messages[messages.lastIndex] = processedMessage
 
             // 检查是否有工具调用
@@ -1483,17 +1489,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
 
             if (toolCalls.isEmpty()) {
                 // 没有工具调用，生成完成
-                // 设置 Reasoning 的 finishedAt，否则UI会一直显示"思考中"
-                val now = kotlin.time.Clock.System.now()
-                val finalMessage = processedMessage.copy(
-                    parts = processedMessage.parts.map { part ->
-                        if (part is UIMessagePart.Reasoning && part.finishedAt == null) {
-                            part.copy(finishedAt = now)
-                        } else {
-                            part
-                        }
-                    }
-                )
+                val finalMessage = processedMessage
                 messages[messages.lastIndex] = finalMessage
                 // 最终更新 session 状态（用 id 匹配就地更新）
                 if (persistDuringGeneration) {
