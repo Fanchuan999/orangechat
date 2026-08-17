@@ -77,6 +77,38 @@ class TermuxConfigBridge(
         waitForFile(completionFile, timeoutMessage, waitAttempts)
     }
 
+    /**
+     * Executes a fixed Daddy-owned command sequence in order. The tiny local
+     * bridge is preferred because it works on OEM builds that hide Termux's
+     * RUN_COMMAND permission; the documented Termux service receives the same
+     * sequence as one shell job when the bridge is unavailable.
+     */
+    internal suspend fun executeCommandsAndWait(
+        commands: List<String>,
+        completionFile: File,
+        timeoutMessage: String,
+        waitAttempts: Int,
+    ) = withContext(Dispatchers.IO) {
+        require(commands.isNotEmpty()) { "至少需要一条 Termux 命令。" }
+
+        val bridgeFailure = runCatching {
+            commands.forEach(::runWithLocalBridge)
+            waitForFile(completionFile, timeoutMessage, waitAttempts)
+        }.exceptionOrNull()
+        if (bridgeFailure == null) return@withContext
+
+        require(isTermuxInstalled()) {
+            "termux-bridge 不可用，且未检测到可回退的 Termux。${bridgeFailure.message.orEmpty()}"
+        }
+        val orderedCommand = commands.joinToString(separator = " && ") { command -> "($command)" }
+        launchCommand(command = orderedCommand, workDir = TERMUX_HOME)
+        waitForFile(
+            file = completionFile,
+            timeoutMessage = "$timeoutMessage 同时，Termux 官方命令接口也未能完成。",
+            attempts = waitAttempts,
+        )
+    }
+
     suspend fun exportConfigArchive(): File = withContext(Dispatchers.IO) {
         val output = sharedFile("termux_config_${UUID.randomUUID()}.tar.gz")
         executeWithLocalBridgeOnly(

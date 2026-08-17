@@ -51,6 +51,7 @@ import me.rerere.rikkahub.data.service.ChatMediaStorageService
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.rikkahub.data.sync.companion.AmapMcpService
 import me.rerere.rikkahub.data.sync.companion.CompanionBackupService
+import me.rerere.rikkahub.data.sync.companion.HarnessManager
 import me.rerere.rikkahub.data.sync.companion.TermuxConfigBridge
 import me.rerere.search.SearchService
 import me.rerere.rikkahub.data.sync.S3Sync
@@ -293,11 +294,22 @@ val dataSourceModule = module {
 
     single { ChatMediaStorageService(filesManager = get(), conversationRepository = get(), settingsStore = get()) }
 
+    single { TermuxConfigBridge(context = get()) }
+
+    single {
+        HarnessManager(
+            context = get(),
+            settingsStore = get(),
+            termuxConfigBridge = get(),
+            sharedHttpClient = get(),
+        )
+    }
+
     single {
         AmapMcpService(
             context = get(),
             settingsStore = get(),
-            termuxConfigBridge = TermuxConfigBridge(get()),
+            termuxConfigBridge = get(),
         )
     }
 
@@ -306,6 +318,7 @@ val dataSourceModule = module {
             context = get(),
             settingsStore = get(),
             webDavSync = get(),
+            termuxConfigBridge = get(),
         )
     }
 

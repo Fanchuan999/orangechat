@@ -40,8 +40,8 @@ class CompanionBackupService(
     private val context: Context,
     private val settingsStore: SettingsStore,
     private val webDavSync: WebDavSync,
+    private val termuxConfigBridge: TermuxConfigBridge,
 ) {
-    private val termuxConfigBridge = TermuxConfigBridge(context)
     private val supabaseBackupClient = SupabaseBackupClient()
     private val externalMcpServiceChecker = ExternalMcpServiceChecker()
 
