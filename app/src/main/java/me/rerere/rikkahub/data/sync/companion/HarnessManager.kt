@@ -37,7 +37,11 @@ internal fun shouldRecover(
     autoKeepRunning: Boolean,
     manuallyStopped: Boolean,
     running: Boolean,
-): Boolean = autoKeepRunning && !manuallyStopped && !running
+): Boolean = decideHarnessRecovery(
+    autoKeepRunning = autoKeepRunning,
+    manuallyStopped = manuallyStopped,
+    running = running,
+) == HarnessRecoveryDecision.RECOVER
 
 internal fun redactHarnessLog(text: String): String {
     val patterns = listOf(

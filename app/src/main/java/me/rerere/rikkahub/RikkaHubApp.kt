@@ -51,6 +51,8 @@ import me.rerere.rikkahub.data.service.NightWatchManager
 import me.rerere.rikkahub.data.service.IdleExploreScheduler
 import me.rerere.rikkahub.data.service.ProactiveMessageService
 import me.rerere.rikkahub.data.service.SupabaseSyncService
+import me.rerere.rikkahub.data.sync.companion.HarnessManager
+import me.rerere.rikkahub.data.sync.companion.HarnessRecoveryScheduler
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.service.WebServerService
 import me.rerere.rikkahub.utils.CrashHandler
@@ -132,6 +134,9 @@ class RikkaHubApp : Application(), SingletonImageLoader.Factory {
 
         // The optional idle exploration loop is independent and defaults to disabled.
         rescheduleIdleExploreIfEnabled()
+
+        // Keep the local Harness workspace available without a foreground service.
+        recoverHarnessIfEnabled()
 
         // If Android restarts this process during the same night, resume the still-valid watch.
         NightWatchManager.startIfArmed(this)
@@ -249,6 +254,24 @@ class RikkaHubApp : Application(), SingletonImageLoader.Factory {
                 IdleExploreScheduler.sync(this@RikkaHubApp, setting)
             }.onFailure {
                 Log.e(TAG, "rescheduleIdleExploreIfEnabled failed", it)
+            }
+        }
+    }
+
+    private fun recoverHarnessIfEnabled() {
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                val setting = get<SettingsStore>().settingsFlowRaw.first().harnessSetting
+                HarnessRecoveryScheduler.sync(this@RikkaHubApp, setting)
+                if (
+                    setting.installedVersion.isNotBlank() &&
+                    setting.autoKeepRunning &&
+                    !setting.manuallyStopped
+                ) {
+                    get<HarnessManager>().recoverIfNeeded()
+                }
+            }.onFailure {
+                Log.e(TAG, "recoverHarnessIfEnabled failed", it)
             }
         }
     }
