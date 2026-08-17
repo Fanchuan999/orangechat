@@ -134,7 +134,7 @@ data class SystemToolsSetting(
 fun SystemToolsSetting.gadgetbridgePromptContext(): String {
     if (!gadgetbridgeEnabled || !gadgetbridgeHealthAwarenessEnabled) return ""
 
-    return "【健康感知】已连接 Gadgetbridge 手环数据。谈到睡眠、疲劳、心率、运动、身体不适、作息，" +
+    return "【健康感知】已连接 Gadgetbridge 手环数据。谈到睡眠（sleep）、疲劳、心率、运动、身体不适、作息，" +
         "或在早晚适合自然关心近况时，可按需调用 get_gadgetbridge_data；先读数据再说，不猜测，" +
         "同一段聊天别反复查询。数据只用于生活关怀，不作诊断。"
 }

@@ -56,12 +56,12 @@ class MessageTest {
 
     @Test
     fun `cache friendly 200 limit keeps 101 through 200 messages per step`() {
-        val messages = createTestMessages(251)
+        val messages = createTestMessages(301)
 
         assertEquals(101, messages.take(201).limitContext(200, cacheFriendly = true).size)
         assertEquals(200, messages.take(300).limitContext(200, cacheFriendly = true).size)
         assertEquals(101, messages.take(301).limitContext(200, cacheFriendly = true).size)
-        assertEquals(151, messages.limitContext(251, cacheFriendly = true).size)
+        assertEquals(151, messages.take(251).limitContext(200, cacheFriendly = true).size)
     }
 
     @Test
@@ -106,12 +106,15 @@ class MessageTest {
                 )
             ),
         )
-        val messages = createTestMessages(48) + user + toolCall + toolResult + createTestMessages(150)
+        // With 201 total messages and a 200-message limit, the 50% trim starts at index 100.
+        // Put the executed result exactly at that boundary so alignment must recover its
+        // tool call and the preceding user query.
+        val messages = createTestMessages(98) + user + toolCall + toolResult + createTestMessages(100)
 
         val result = messages.limitContext(200, cacheFriendly = true)
 
         assertEquals(user, result.first())
-        assertEquals(153, result.size)
+        assertEquals(103, result.size)
     }
 
     @Test
