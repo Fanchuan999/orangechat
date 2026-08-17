@@ -49,6 +49,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
+import me.rerere.rikkahub.data.datastore.formatThinkingForDisplay
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import me.rerere.rikkahub.ui.components.ui.ChainOfThoughtScope
 import me.rerere.rikkahub.ui.components.ui.icons.OrangePetalIcon
@@ -134,6 +135,7 @@ private fun ReasoningContent(
 ) {
     val isPreview = expandState == ReasoningCardState.Preview
     val displaySettings = LocalDisplaySettings.current
+    val displayReasoning = displaySettings.formatThinkingForDisplay(reasoning.reasoning)
     val thinkingStyle = MaterialTheme.typography.bodySmall.copy(
         fontSize = MaterialTheme.typography.bodySmall.fontSize * displaySettings.thinkingFontSizeRatio,
         lineHeight = MaterialTheme.typography.bodySmall.lineHeight * displaySettings.thinkingFontSizeRatio,
@@ -175,7 +177,7 @@ private fun ReasoningContent(
     ) {
         SelectionContainer {
             MarkdownBlock(
-                content = reasoning.reasoning.replaceRegexes(
+                content = displayReasoning.replaceRegexes(
                     assistant = assistant,
                     scope = AssistantAffectScope.ASSISTANT,
                     visual = true,
@@ -196,7 +198,9 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
     collapsedAdaptiveWidth: Boolean = false,
 ) {
     val (state, loading) = rememberReasoningState(reasoning)
-    val thinkingTitle = reasoning.reasoning.extractThinkingTitle()
+    val thinkingTitle = LocalDisplaySettings.current
+        .formatThinkingForDisplay(reasoning.reasoning)
+        .extractThinkingTitle()
     val showThinkingTitle = loading && thinkingTitle != null
  
     ControlledChainOfThoughtStep(

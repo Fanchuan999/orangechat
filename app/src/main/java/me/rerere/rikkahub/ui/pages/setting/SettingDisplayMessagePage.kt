@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -203,6 +204,71 @@ fun SettingDisplayMessagePage(vm: SettingVM = koinViewModel()) {
                             )
                         },
                     )
+                    item(
+                        headlineContent = { Text("思考沉浸化") },
+                        supportingContent = {
+                            Text("优先使用中文思考，并用你的昵称代替“用户 / user”。只影响思考区。")
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = displaySetting.thinkingImmersionEnabled,
+                                onCheckedChange = {
+                                    updateDisplaySetting(displaySetting.copy(thinkingImmersionEnabled = it))
+                                }
+                            )
+                        },
+                    )
+                    if (displaySetting.thinkingImmersionEnabled) {
+                        item(
+                            headlineContent = { Text("思考里怎样称呼你") },
+                            supportingContent = {
+                                OutlinedTextField(
+                                    value = displaySetting.thinkingUserAlias,
+                                    onValueChange = {
+                                        updateDisplaySetting(displaySetting.copy(thinkingUserAlias = it))
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    placeholder = { Text("宝宝") },
+                                )
+                            },
+                        )
+                        item(
+                            headlineContent = { Text("需要统一替换的旧称") },
+                            supportingContent = {
+                                Column {
+                                    Text("把思考里偶尔出现的本名、旧昵称统一显示成上面的称呼；可用逗号或换行分隔。")
+                                    OutlinedTextField(
+                                        value = displaySetting.thinkingUserAlternateNames,
+                                        onValueChange = {
+                                            updateDisplaySetting(
+                                                displaySetting.copy(thinkingUserAlternateNames = it),
+                                            )
+                                        },
+                                        modifier = Modifier
+                                            .padding(top = 8.dp)
+                                            .fillMaxWidth(),
+                                        minLines = 2,
+                                        placeholder = { Text("例如：应帆，帆帆") },
+                                    )
+                                }
+                            },
+                        )
+                        item(
+                            headlineContent = { Text("思考里 Daddy 的自称") },
+                            supportingContent = {
+                                OutlinedTextField(
+                                    value = displaySetting.thinkingAssistantAlias,
+                                    onValueChange = {
+                                        updateDisplaySetting(displaySetting.copy(thinkingAssistantAlias = it))
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    placeholder = { Text("Daddy") },
+                                )
+                            },
+                        )
+                    }
                     item(
                         headlineContent = { Text(stringResource(R.string.setting_display_page_enable_latex_rendering_title)) },
                         supportingContent = { Text(stringResource(R.string.setting_display_page_enable_latex_rendering_desc)) },

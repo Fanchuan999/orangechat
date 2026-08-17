@@ -58,6 +58,7 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.continuityProfileFor
 import me.rerere.rikkahub.data.datastore.gadgetbridgePromptContext
 import me.rerere.rikkahub.data.datastore.promptContext
+import me.rerere.rikkahub.data.datastore.thinkingImmersionPrompt
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
@@ -402,7 +403,13 @@ class GenerationHandler(
                 if (effectiveSystemPrompt.isNotBlank()) {
                     append(effectiveSystemPrompt)
                 }
- 
+
+                settings.displaySetting.thinkingImmersionPrompt().takeIf { it.isNotBlank() }?.let { prompt ->
+                    appendLine()
+                    appendLine()
+                    append(prompt)
+                }
+
                 // 记忆
                 if (assistant.enableMemory) {
                     appendLine()
