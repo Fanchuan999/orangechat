@@ -32,7 +32,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -66,6 +65,7 @@ import me.rerere.hugeicons.stroke.MusicNote03
 import me.rerere.hugeicons.stroke.Package
 import me.rerere.hugeicons.stroke.Package01
 import me.rerere.hugeicons.stroke.Rocket01
+import me.rerere.hugeicons.stroke.SlidersHorizontal
 import me.rerere.hugeicons.stroke.Video01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
@@ -122,6 +122,7 @@ internal fun FilesPicker(
     val dismissDistance = with(LocalDensity.current) { 72.dp.toPx() }
     var downwardDragDistance by remember { mutableFloatStateOf(0f) }
     var showManualToolPicker by remember { mutableStateOf(false) }
+    var showToolThrottleSheet by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -181,54 +182,24 @@ internal fun FilesPicker(
             )
         }
 
+        val throttleMode = assistant.toolThrottleMode()
         ListItem(
-            headlineContent = { Text("智能工具节流") },
-            supportingContent = {
-                Text("按本条内容只附加相关 MCP/插件；上下文条数、记忆和世界书不变。")
+            leadingContent = {
+                Icon(HugeIcons.SlidersHorizontal, contentDescription = null)
             },
-            trailingContent = {
-                Switch(
-                    checked = assistant.smartToolThrottlingEnabled,
-                    onCheckedChange = { enabled ->
-                        onUpdateAssistant(
-                            assistant.copy(
-                                smartToolThrottlingEnabled = enabled,
-                                manualToolSelectionEnabled = if (enabled) false else assistant.manualToolSelectionEnabled,
-                            )
-                        )
-                    },
-                )
-            },
-            colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
-        )
-
-        ListItem(
-            headlineContent = { Text("手动选择工具") },
+            headlineContent = { Text("工具节流") },
             supportingContent = {
                 Text(
-                    if (assistant.manualToolSelectionEnabled) {
-                        "只发送你在清单中勾选的 MCP 服务和工具插件。"
-                    } else {
-                        "自己决定每个 MCP 服务和工具插件是否发送给 Daddy。"
+                    when (throttleMode) {
+                        ToolThrottleMode.OFF -> "已关闭"
+                        ToolThrottleMode.SMART -> "智能模式"
+                        ToolThrottleMode.MANUAL -> "手动模式"
                     }
-                )
-            },
-            trailingContent = {
-                Switch(
-                    checked = assistant.manualToolSelectionEnabled,
-                    onCheckedChange = { enabled ->
-                        onUpdateAssistant(
-                            assistant.copy(
-                                manualToolSelectionEnabled = enabled,
-                                smartToolThrottlingEnabled = if (enabled) false else assistant.smartToolThrottlingEnabled,
-                            )
-                        )
-                    },
                 )
             },
             modifier = Modifier
                 .clip(MaterialTheme.shapes.large)
-                .clickable { showManualToolPicker = true },
+                .clickable { showToolThrottleSheet = true },
             colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = Color.Transparent),
         )
 
@@ -326,6 +297,18 @@ internal fun FilesPicker(
             plugins = manualToolPlugins,
             onUpdateAssistant = onUpdateAssistant,
             onDismiss = { showManualToolPicker = false },
+        )
+    }
+
+    if (showToolThrottleSheet) {
+        ToolThrottleSheet(
+            assistant = assistant,
+            onUpdateAssistant = onUpdateAssistant,
+            onOpenManualPicker = {
+                showToolThrottleSheet = false
+                showManualToolPicker = true
+            },
+            onDismiss = { showToolThrottleSheet = false },
         )
     }
 
