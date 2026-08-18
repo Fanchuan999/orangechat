@@ -205,8 +205,14 @@ internal fun FilesPicker(
 
         val harnessStatus = when (harnessSnapshot.status) {
             HarnessStatus.NOT_INSTALLED -> "未安装"
+            HarnessStatus.INSTALLING,
+            HarnessStatus.REPAIRING,
+            -> "安装中"
             HarnessStatus.STOPPED -> "未启动"
+            HarnessStatus.STARTING -> "启动中"
             HarnessStatus.RUNNING -> "运行中"
+            HarnessStatus.MANUALLY_STOPPED -> "主动停止"
+            HarnessStatus.BACKING_OFF -> "等待恢复"
             HarnessStatus.ERROR -> "异常"
         }
         ListItem(

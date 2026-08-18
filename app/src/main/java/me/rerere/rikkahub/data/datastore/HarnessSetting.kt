@@ -17,9 +17,27 @@ data class HarnessSetting(
 
 enum class HarnessStatus {
     NOT_INSTALLED,
+    INSTALLING,
     STOPPED,
+    STARTING,
     RUNNING,
+    MANUALLY_STOPPED,
+    BACKING_OFF,
+    REPAIRING,
     ERROR,
+}
+
+enum class HarnessInstallStage {
+    UNKNOWN,
+    PRECHECK,
+    INSTALL_PROOT,
+    INSTALL_DEBIAN,
+    INSTALL_NODE,
+    INSTALL_HARNESS,
+    WRITE_SCRIPTS,
+    START_AND_HEALTHCHECK,
+    READY,
+    FAILED,
 }
 
 data class HarnessSnapshot(
@@ -27,4 +45,7 @@ data class HarnessSnapshot(
     val installedVersion: String = "",
     val detail: String = "",
     val logTail: String = "",
+    val installStage: HarnessInstallStage = HarnessInstallStage.UNKNOWN,
+    val legacyRuntimeFound: Boolean = false,
+    val installProgressPercent: Int = 0,
 )

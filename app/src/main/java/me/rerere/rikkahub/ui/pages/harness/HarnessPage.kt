@@ -207,8 +207,13 @@ fun HarnessPage(
 private fun StatusCard(state: HarnessUiState) {
     val statusText = when (state.snapshot.status) {
         HarnessStatus.NOT_INSTALLED -> "未安装"
+        HarnessStatus.INSTALLING -> "安装中"
         HarnessStatus.STOPPED -> "已停止"
+        HarnessStatus.STARTING -> "启动中"
         HarnessStatus.RUNNING -> "运行中"
+        HarnessStatus.MANUALLY_STOPPED -> "主动停止"
+        HarnessStatus.BACKING_OFF -> "等待恢复"
+        HarnessStatus.REPAIRING -> "修复中"
         HarnessStatus.ERROR -> "异常"
     }
     val statusColor = when (state.snapshot.status) {
