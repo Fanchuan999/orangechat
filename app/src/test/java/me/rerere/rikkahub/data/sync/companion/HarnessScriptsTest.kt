@@ -126,7 +126,35 @@ class HarnessScriptsTest {
             .body
 
         assertTrue(watchdog.contains(".manual-stop"))
-        assertTrue(watchdog.contains("sleep 3"))
+        assertTrue(watchdog.contains("failure-count"))
+        assertTrue(watchdog.contains("next-restart-at"))
+        assertTrue(watchdog.contains("3 10 30 300"))
+        assertTrue(watchdog.contains("stable_seconds >= 900"))
+        assertTrue(watchdog.contains("mkdir \"\$lock_dir\""))
+    }
+
+    @Test
+    fun bootAndWatchdogBothRefuseToReviveAfterManualStop() {
+        val files = HarnessScripts.scriptFiles("/sdcard/result")
+        val watchdog = files.single { it.path.endsWith("/watchdog-harness.sh") }.body
+        val boot = files.single { it.path.endsWith("start-daddy-harness.sh") }.body
+
+        assertTrue(watchdog.contains("[ ! -f \"\$run/.manual-stop\" ]"))
+        assertTrue(boot.contains("[ ! -f \"\$run/.manual-stop\" ]"))
+    }
+
+    @Test
+    fun stopOnlySignalsTheRecordedManagedProcessGroup() {
+        val stop = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/stop-harness.sh") }
+            .body
+
+        assertTrue(stop.contains("process-start-ticks"))
+        assertTrue(stop.contains("kill -- \"-\$pid\""))
+        assertTrue(stop.contains("http://127.0.0.1:3080"))
+        assertFalse(stop.contains("pkill"))
+        assertFalse(stop.contains("fuser"))
+        assertFalse(stop.contains("killall"))
     }
 
     @Test

@@ -51,4 +51,19 @@ class HarnessRecoveryPolicyTest {
 
         assertEquals(HarnessRecoveryRunResult.SUCCESS, result)
     }
+
+    @Test
+    fun repeatedCrashesUseBoundedProgressiveBackoff() {
+        assertEquals(3L, harnessRestartDelaySeconds(failureCount = 0))
+        assertEquals(10L, harnessRestartDelaySeconds(failureCount = 1))
+        assertEquals(30L, harnessRestartDelaySeconds(failureCount = 2))
+        assertEquals(300L, harnessRestartDelaySeconds(failureCount = 3))
+        assertEquals(300L, harnessRestartDelaySeconds(failureCount = 99))
+    }
+
+    @Test
+    fun failureCounterResetsOnlyAfterFifteenStableMinutes() {
+        assertEquals(false, shouldResetHarnessFailureCount(stableSeconds = 899))
+        assertEquals(true, shouldResetHarnessFailureCount(stableSeconds = 900))
+    }
 }

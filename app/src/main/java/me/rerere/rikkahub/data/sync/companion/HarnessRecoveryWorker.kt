@@ -30,6 +30,15 @@ internal fun decideHarnessRecovery(
     else -> HarnessRecoveryDecision.RECOVER
 }
 
+internal fun harnessRestartDelaySeconds(failureCount: Int): Long = when (failureCount.coerceAtLeast(0)) {
+    0 -> 3L
+    1 -> 10L
+    2 -> 30L
+    else -> 300L
+}
+
+internal fun shouldResetHarnessFailureCount(stableSeconds: Long): Boolean = stableSeconds >= 15 * 60
+
 internal enum class HarnessRecoveryRunResult {
     SUCCESS,
     RETRY,

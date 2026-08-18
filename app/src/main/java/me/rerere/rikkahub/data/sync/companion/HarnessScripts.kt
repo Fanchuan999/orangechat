@@ -280,31 +280,104 @@ internal object HarnessScripts {
         scripts="${'$'}base/scripts"
         pid_file="${'$'}run/watchdog.pid"
         child_file="${'$'}run/harness.pid"
+        child_start_file="${'$'}run/process-start-ticks"
+        child_group_file="${'$'}run/process-group-managed"
+        failure_file="${'$'}run/failure-count"
+        next_restart_file="${'$'}run/next-restart-at"
+        lock_dir="${'$'}run/watchdog.lock"
+        delays="3 10 30 300"
         mkdir -p "${'$'}run" "${'$'}services/logs"
 
+        [ ! -f "${'$'}run/.manual-stop" ] || exit 0
+        [ -f "${'$'}run/.auto-keep-running" ] || exit 0
+
         old_pid="${'$'}(cat "${'$'}pid_file" 2>/dev/null || true)"
-        if [ -n "${'$'}old_pid" ] && [ "${'$'}old_pid" != "${'$'}${'$'}" ] && kill -0 "${'$'}old_pid" 2>/dev/null; then
-          exit 0
+        if ! mkdir "${'$'}lock_dir" 2>/dev/null; then
+          if [ -n "${'$'}old_pid" ] && [ "${'$'}old_pid" != "${'$'}${'$'}" ] && kill -0 "${'$'}old_pid" 2>/dev/null; then
+            exit 0
+          fi
+          rmdir "${'$'}lock_dir" 2>/dev/null || exit 0
+          mkdir "${'$'}lock_dir" 2>/dev/null || exit 0
         fi
         printf %s "${'$'}${'$'}" > "${'$'}pid_file"
-        trap 'rm -f "${'$'}pid_file"' EXIT
+        trap 'rm -f "${'$'}pid_file"; rmdir "${'$'}lock_dir" 2>/dev/null || true' EXIT
+
+        process_start_ticks() {
+          pid="${'$'}1"
+          awk '{print ${'$'}22}' "/proc/${'$'}pid/stat" 2>/dev/null || true
+        }
+        managed_child_alive() {
+          pid="${'$'}(cat "${'$'}child_file" 2>/dev/null || true)"
+          expected="${'$'}(cat "${'$'}child_start_file" 2>/dev/null || true)"
+          [ -n "${'$'}pid" ] && [ -n "${'$'}expected" ] && kill -0 "${'$'}pid" 2>/dev/null &&
+            [ "${'$'}(process_start_ticks "${'$'}pid")" = "${'$'}expected" ]
+        }
+        restart_delay() {
+          count="${'$'}1"
+          case "${'$'}count" in
+            0) echo 3 ;;
+            1) echo 10 ;;
+            2) echo 30 ;;
+            *) echo 300 ;;
+          esac
+        }
+        wait_until_restart() {
+          target="${'$'}1"
+          while [ "${'$'}(date +%s)" -lt "${'$'}target" ]; do
+            [ -f "${'$'}run/.auto-keep-running" ] || return 1
+            [ ! -f "${'$'}run/.manual-stop" ] || return 1
+            sleep 1
+          done
+        }
 
         while [ -f "${'$'}run/.auto-keep-running" ] && [ ! -f "${'$'}run/.manual-stop" ]; do
-          child="${'$'}(cat "${'$'}child_file" 2>/dev/null || true)"
-          if [ -z "${'$'}child" ] || ! kill -0 "${'$'}child" 2>/dev/null; then
-            nohup "${'$'}scripts/run-harness.sh" >> "${'$'}services/logs/harness.log" 2>&1 &
+          failure_count="${'$'}(cat "${'$'}failure_file" 2>/dev/null || echo 0)"
+          next_restart="${'$'}(cat "${'$'}next_restart_file" 2>/dev/null || echo 0)"
+          wait_until_restart "${'$'}next_restart" || break
+
+          if ! managed_child_alive; then
+            if command -v setsid >/dev/null 2>&1; then
+              setsid "${'$'}scripts/run-harness.sh" >> "${'$'}services/logs/harness.log" 2>&1 &
+              printf %s 1 > "${'$'}child_group_file"
+            else
+              nohup "${'$'}scripts/run-harness.sh" >> "${'$'}services/logs/harness.log" 2>&1 &
+              printf %s 0 > "${'$'}child_group_file"
+            fi
             child="${'$'}!"
             printf %s "${'$'}child" > "${'$'}child_file"
+            for attempt in 1 2 3 4 5; do
+              start_ticks="${'$'}(process_start_ticks "${'$'}child")"
+              [ -n "${'$'}start_ticks" ] && break
+              sleep 1
+            done
+            [ -n "${'$'}start_ticks" ] || { echo 'Managed Harness process did not start.' >&2; exit 47; }
+            printf %s "${'$'}start_ticks" > "${'$'}child_start_file"
           fi
-          while kill -0 "${'$'}child" 2>/dev/null &&
+          started_at="${'$'}(date +%s)"
+          while managed_child_alive &&
                 [ -f "${'$'}run/.auto-keep-running" ] &&
                 [ ! -f "${'$'}run/.manual-stop" ]; do
             sleep 3
+            stable_seconds="${'$'}(( ${'$'}(date +%s) - started_at ))"
+            if (( stable_seconds >= 900 )) && [ "${'$'}failure_count" -ne 0 ]; then
+              failure_count=0
+              printf %s 0 > "${'$'}failure_file"
+              rm -f "${'$'}next_restart_file"
+            fi
           done
           [ -f "${'$'}run/.auto-keep-running" ] || break
           [ ! -f "${'$'}run/.manual-stop" ] || break
-          printf '%s Harness exited; restarting.\n' "${'$'}(date '+%F %T')" >> "${'$'}services/logs/watchdog.log"
-          sleep 3
+          stable_seconds="${'$'}(( ${'$'}(date +%s) - started_at ))"
+          if (( stable_seconds >= 900 )); then
+            failure_count=0
+          fi
+          delay="${'$'}(restart_delay "${'$'}failure_count")"
+          failure_count="${'$'}((failure_count + 1))"
+          next_restart="${'$'}(( ${'$'}(date +%s) + delay ))"
+          printf %s "${'$'}failure_count" > "${'$'}failure_file"
+          printf %s "${'$'}next_restart" > "${'$'}next_restart_file"
+          printf '%s Harness exited; retry %s in %ss.\n' \
+            "${'$'}(date '+%F %T')" "${'$'}failure_count" "${'$'}delay" >> "${'$'}services/logs/watchdog.log"
         done
     """.trimIndent() + "\n"
 
@@ -313,13 +386,38 @@ internal object HarnessScripts {
         set -u
         base="${'$'}HOME/daddy-linux"
         run="${'$'}base/services/harness/run"
-        for file in "${'$'}run/watchdog.pid" "${'$'}run/harness.pid"; do
-          pid="${'$'}(cat "${'$'}file" 2>/dev/null || true)"
-          if [ -n "${'$'}pid" ] && kill -0 "${'$'}pid" 2>/dev/null; then
+        web_url="http://127.0.0.1:3080"
+        mkdir -p "${'$'}run"
+        touch "${'$'}run/.manual-stop"
+
+        watchdog="${'$'}(cat "${'$'}run/watchdog.pid" 2>/dev/null || true)"
+        if [ -n "${'$'}watchdog" ] && kill -0 "${'$'}watchdog" 2>/dev/null; then
+          kill "${'$'}watchdog" 2>/dev/null || true
+        fi
+        rm -f "${'$'}run/watchdog.pid"
+
+        pid="${'$'}(cat "${'$'}run/harness.pid" 2>/dev/null || true)"
+        expected="${'$'}(cat "${'$'}run/process-start-ticks" 2>/dev/null || true)"
+        actual="${'$'}(awk '{print ${'$'}22}' "/proc/${'$'}pid/stat" 2>/dev/null || true)"
+        group_managed="${'$'}(cat "${'$'}run/process-group-managed" 2>/dev/null || echo 0)"
+        if [ -n "${'$'}pid" ] && [ -n "${'$'}expected" ] && [ "${'$'}actual" = "${'$'}expected" ] &&
+           kill -0 "${'$'}pid" 2>/dev/null; then
+          if [ "${'$'}group_managed" = 1 ]; then
+            kill -- "-${'$'}pid" 2>/dev/null || true
+          else
             kill "${'$'}pid" 2>/dev/null || true
           fi
-          rm -f "${'$'}file"
-        done
+          for attempt in ${'$'}(seq 1 20); do
+            kill -0 "${'$'}pid" 2>/dev/null || break
+            sleep 1
+          done
+        fi
+        rm -f "${'$'}run/harness.pid" "${'$'}run/process-start-ticks" "${'$'}run/process-group-managed"
+
+        if command -v curl >/dev/null 2>&1 && curl -fsS "${'$'}web_url" >/dev/null 2>&1; then
+          echo 'Port 3080 is still active; Daddy did not signal an unverified owner.' >&2
+          exit 46
+        fi
     """.trimIndent() + "\n"
 
     private fun statusScript(): String = """
