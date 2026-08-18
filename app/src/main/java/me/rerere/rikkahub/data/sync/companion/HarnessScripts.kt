@@ -68,6 +68,9 @@ internal object HarnessScripts {
         HarnessScriptFile("$SCRIPTS/stop-harness.sh", stopScript()),
         HarnessScriptFile("$SCRIPTS/status-harness.sh", statusScript()),
         HarnessScriptFile("$SCRIPTS/setup.sh", setupScript()),
+        HarnessScriptFile("$SERVICES/risk-gate/index.mjs", riskGatePluginScript()),
+        HarnessScriptFile("$SERVICES/risk-gate/package.json", riskGatePackageJson()),
+        HarnessScriptFile("$SERVICES/config/daddy-risk-gate.patch.yml", riskGatePatch()),
         HarnessScriptFile("\$HOME/.termux/boot/start-daddy-harness.sh", bootScript()),
     ).also {
         require(resultPath.isNotBlank()) { "Harness setup result path is required." }
@@ -177,12 +180,24 @@ internal object HarnessScripts {
             export PATH="/opt/daddy-harness/runtime/node-current/bin:${'$'}PATH"
             prefix="/opt/daddy-harness/runtime/harness"
             dsh="${'$'}prefix/node_modules/.bin/dsh"
+            risk_source="/opt/daddy-harness/risk-gate"
+            risk_target="${'$'}prefix/node_modules/@daddy/harness-risk-gate"
+            install_risk_gate() {
+              test -r "${'$'}risk_source/index.mjs"
+              test -r "${'$'}risk_source/package.json"
+              rm -rf "${'$'}risk_target"
+              mkdir -p "${'$'}(dirname "${'$'}risk_target")"
+              cp -a "${'$'}risk_source" "${'$'}risk_target"
+              "${'$'}prefix/../node-current/bin/node" "${'$'}risk_target/index.mjs" --self-test
+            }
             installed="${'$'}(cat "${'$'}prefix/VERSION" 2>/dev/null || true)"
             if [ "${'$'}installed" = "${HarnessRuntimeContract.HARNESS_VERSION}" ] && [ -x "${'$'}dsh" ]; then
               "${'$'}dsh" --version >/dev/null
+              install_risk_gate
               exit 0
             fi
             npm install --prefix "${'$'}prefix" "@deepseek-ai/dsh@${HarnessRuntimeContract.HARNESS_VERSION}"
+            install_risk_gate
             "${'$'}dsh" --version
             printf %s "${HarnessRuntimeContract.HARNESS_VERSION}" > "${'$'}prefix/VERSION"
           '
@@ -268,7 +283,160 @@ internal object HarnessScripts {
             DSH_HOME=/data/daddy-harness/dsh-home \
             PATH=/opt/daddy-harness/runtime/node-current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             /opt/daddy-harness/runtime/node-current/bin/node \
-            /opt/daddy-harness/runtime/harness/node_modules/.bin/dsh web --port 3080
+            /opt/daddy-harness/runtime/harness/node_modules/.bin/dsh \
+            --patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml web --port 3080
+    """.trimIndent() + "\n"
+
+    private fun riskGatePackageJson(): String = """
+        {
+          "name": "@daddy/harness-risk-gate",
+          "version": "1.0.0",
+          "type": "module",
+          "exports": "./index.mjs"
+        }
+    """.trimIndent() + "\n"
+
+    private fun riskGatePatch(): String = """
+        - insert:
+            - id: daddy-harness-risk-gate
+              name: '@daddy/harness-risk-gate'
+    """.trimIndent() + "\n"
+
+    private fun riskGatePluginScript(): String = """
+        import { existsSync } from 'node:fs'
+        import { isAbsolute, resolve } from 'node:path'
+
+        export const name = 'daddy-harness-risk-gate'
+
+        const READ_ONLY_TOOLS = new Set([
+          'read', 'read_image', 'glob', 'grep',
+          'session_event_read', 'session_event_search', 'session_event_trace',
+          'session_search', 'session_trace', 'job_list', 'job_output',
+        ])
+        const REASONS = {
+          delete: 'Daddy 安全确认：这一步会删除文件，是否只允许执行这一次？',
+          overwrite: 'Daddy 安全确认：这一步会覆盖或改写已有文件，是否只允许执行这一次？',
+          'bulk-move': 'Daddy 安全确认：这一步会批量移动或重命名文件，是否只允许执行这一次？',
+          'high-risk-shell': 'Daddy 安全确认：这是一条高风险 Shell 操作，是否只允许执行这一次？',
+        }
+
+        function objectArgs(value) {
+          return value !== null && typeof value === 'object' ? value : {}
+        }
+
+        function stringArg(args, ...names) {
+          for (const key of names) {
+            if (typeof args[key] === 'string' && args[key].trim().length > 0) return args[key]
+          }
+          return undefined
+        }
+
+        function targetExists(exec, args) {
+          const path = stringArg(args, 'path', 'file_path', 'target', 'destination', 'dest')
+          if (path === undefined) return undefined
+          const cwd = exec.agent?.session?.header?.cwd
+          const absolute = isAbsolute(path) ? path : resolve(cwd ?? process.cwd(), path)
+          try {
+            return existsSync(absolute)
+          } catch {
+            return undefined
+          }
+        }
+
+        function tokenize(command) {
+          return command.match(/"[^"\n]*"|'[^'\n]*'|[^\s]+/g)?.map(value => value.replace(/^['"]|['"]${'$'}/g, '')) ?? []
+        }
+
+        function shellRisk(command) {
+          const normalized = command.trim().replace(/\s+/g, ' ')
+          if (normalized.length === 0) return null
+
+          if (/(^|[;&|()\s])(?:rm|rmdir|unlink|shred)\s/i.test(normalized)) return 'delete'
+          if (/\bfind\b[^\n]*(?:-delete|-exec\s+(?:rm|rmdir|unlink|shred)\b)/i.test(normalized)) return 'delete'
+          if (/\brsync\b[^\n]*--delete(?:-|\s|${'$'})/i.test(normalized)) return 'delete'
+          if (/\bgit\s+clean\b/i.test(normalized)) return 'delete'
+          if (/\bgit\s+reset\s+--hard\b/i.test(normalized)) return 'high-risk-shell'
+          if (/\bgit\s+(?:checkout|restore)\b[^\n]*(?:--\s+|\s--source=)/i.test(normalized)) return 'overwrite'
+
+          const move = normalized.match(/(?:^|[;&|()\s])mv\s+([^;&|\n]+)/i)
+          if (move !== null) {
+            const operands = tokenize(move[1]).filter(token => !token.startsWith('-'))
+            return operands.length > 2 ? 'bulk-move' : 'overwrite'
+          }
+
+          if (/(^|[^>])>(?!>)/.test(normalized)) return 'overwrite'
+          if (/\b(?:truncate|tee|dd)\b/i.test(normalized)) return 'overwrite'
+          if (/\b(?:sed\s+-[^\s]*i|perl\s+-[^\s]*i)\b/i.test(normalized)) return 'overwrite'
+          if (/\b(?:cp|install)\b[^\n]*(?:-f|--force)\b/i.test(normalized)) return 'overwrite'
+
+          if (/\b(?:mkfs(?:\.[a-z0-9]+)?|fdisk|parted|wipefs|mount|umount)\b/i.test(normalized)) return 'high-risk-shell'
+          if (/\b(?:shutdown|reboot|poweroff|halt)\b/i.test(normalized)) return 'high-risk-shell'
+          if (/\b(?:chmod|chown|chgrp)\b[^\n]*(?:-R|--recursive)\b/i.test(normalized)) return 'high-risk-shell'
+          if (/\b(?:sudo|su|eval)\b/i.test(normalized)) return 'high-risk-shell'
+          if (/\b(?:python(?:3)?\s+-c|node\s+-e|bash\s+-c|sh\s+-c|xargs)\b/i.test(normalized)) return 'high-risk-shell'
+          return null
+        }
+
+        export function classifyToolCall(exec) {
+          const tool = String(exec.name ?? '')
+          const lower = tool.toLowerCase()
+          const args = objectArgs(exec.arguments)
+          if (READ_ONLY_TOOLS.has(lower)) return null
+
+          if (lower === 'write' || /(?:^|[_-])write(?:[_-]|${'$'})/.test(lower)) {
+            return targetExists(exec, args) === false ? null : 'overwrite'
+          }
+          if (lower === 'edit' || lower === 'patch' || /(?:^|[_-])(?:edit|replace|patch)(?:[_-]|${'$'})/.test(lower)) {
+            return 'overwrite'
+          }
+          if (lower === 'str_replace_editor') {
+            const command = stringArg(args, 'command')?.toLowerCase()
+            if (command === 'view') return null
+            if (command === 'create' && targetExists(exec, args) === false) return null
+            return 'overwrite'
+          }
+          if (/(?:^|[_-])(?:delete|remove|unlink|trash)(?:[_-]|${'$'})/.test(lower)) return 'delete'
+          if (/(?:^|[_-])(?:move|rename)(?:[_-]|${'$'})/.test(lower)) {
+            const sources = args.sources ?? args.paths ?? args.files
+            return Array.isArray(sources) && sources.length > 1 ? 'bulk-move' : 'overwrite'
+          }
+          if (lower === 'terminal_send') return 'high-risk-shell'
+          if (lower === 'cordis_define' || lower === 'cordis_run' || lower === 'cordis_undefine') return 'high-risk-shell'
+          if (lower === 'bash' || lower === 'pwsh' || lower === 'shell' || lower.endsWith('_shell') || lower.endsWith('_exec')) {
+            return shellRisk(stringArg(args, 'command', 'cmd', 'script') ?? '')
+          }
+          return null
+        }
+
+        export function apply(ctx) {
+          ctx.on('tools/pre-execute', async (exec, next) => {
+            const risk = classifyToolCall(exec)
+            if (risk === null) return next()
+            return { kind: 'ask', reason: REASONS[risk] ?? REASONS['high-risk-shell'] }
+          })
+        }
+
+        export function runSelfTest() {
+          const cases = [
+            [{ name: 'read', arguments: { path: 'x' } }, null],
+            [{ name: 'bash', arguments: { command: 'ls -la' } }, null],
+            [{ name: 'bash', arguments: { command: 'rm -rf build' } }, 'delete'],
+            [{ name: 'bash', arguments: { command: 'git clean -fd' } }, 'delete'],
+            [{ name: 'bash', arguments: { command: 'git reset --hard HEAD' } }, 'high-risk-shell'],
+            [{ name: 'bash', arguments: { command: 'mv a b archive/' } }, 'bulk-move'],
+            [{ name: 'edit', arguments: { path: 'x' } }, 'overwrite'],
+            [{ name: 'terminal_send', arguments: { chars: 'x' } }, 'high-risk-shell'],
+          ]
+          for (const [exec, expected] of cases) {
+            const actual = classifyToolCall(exec)
+            if (actual !== expected) throw new Error('risk-gate self-test failed for ' + JSON.stringify(exec))
+          }
+        }
+
+        if (process.argv.includes('--self-test')) {
+          runSelfTest()
+          process.stdout.write('Daddy Harness risk gate self-test OK\n')
+        }
     """.trimIndent() + "\n"
 
     private fun watchdogScript(): String = """

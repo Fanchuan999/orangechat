@@ -6,6 +6,8 @@
 
 package me.rerere.rikkahub.data.sync.companion
 
+import java.nio.file.Files
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -163,6 +165,63 @@ class HarnessScriptsTest {
 
         assertFalse(text.contains("cat \"\$DSH_HOME/.credentials.yaml\""))
         assertFalse(text.contains("cat \"/data/daddy-harness/dsh-home/.credentials.yaml\""))
+    }
+
+    @Test
+    fun dangerousOperationsAreGatedByHarnessExecutionPolicyInsteadOfPromptText() {
+        val files = HarnessScripts.scriptFiles("/sdcard/result")
+        val gate = files.single { it.path.endsWith("/risk-gate/index.mjs") }.body
+        val patch = files.single { it.path.endsWith("/daddy-risk-gate.patch.yml") }.body
+        val runner = files.single { it.path.endsWith("/run-harness.sh") }.body
+
+        assertTrue(gate.contains("ctx.on('tools/pre-execute'"))
+        assertTrue(gate.contains("kind: 'ask'"))
+        assertTrue(gate.contains("delete"))
+        assertTrue(gate.contains("overwrite"))
+        assertTrue(gate.contains("bulk-move"))
+        assertTrue(gate.contains("high-risk-shell"))
+        assertTrue(gate.contains("runSelfTest"))
+        assertTrue(patch.contains("@daddy/harness-risk-gate"))
+        assertTrue(runner.contains("--patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml"))
+        assertFalse(gate.contains("Please remember to ask the user"))
+    }
+
+    @Test
+    fun riskGateAllowsReadOnlyCallsButAsksBeforeMutatingOrAmbiguousCalls() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+
+        assertTrue(gate.contains("read"))
+        assertTrue(gate.contains("read_image"))
+        assertTrue(gate.contains("glob"))
+        assertTrue(gate.contains("grep"))
+        assertTrue(gate.contains("return next()"))
+        assertTrue(gate.contains("str_replace_editor"))
+        assertTrue(gate.contains("terminal_send"))
+        assertTrue(gate.contains("rm"))
+        assertTrue(gate.contains("git clean"))
+        assertTrue(gate.contains("git reset --hard"))
+    }
+
+    @Test
+    fun generatedRiskGatePassesItsNodeSelfTest() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+        val temp = Files.createTempFile("daddy-harness-risk-gate", ".mjs")
+        try {
+            Files.writeString(temp, gate)
+            val process = ProcessBuilder("node", temp.toString(), "--self-test")
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            assertEquals(output, 0, process.waitFor())
+            assertTrue(output, output.contains("risk gate self-test OK"))
+        } finally {
+            Files.deleteIfExists(temp)
+        }
     }
 
     @Test
