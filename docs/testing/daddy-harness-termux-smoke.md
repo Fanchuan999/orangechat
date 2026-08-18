@@ -41,7 +41,7 @@ Bookworm ARM64 运行时，并稳定运行官方 DeepSeek Harness `0.1.0-rc.7`�
 | 包名 / 版本 | 通过 | `me.rerere.orangechat.companion` / `2.5.30-companion`（216） |
 | CPU 架构 | 通过 | ARM64 APK 中原生库仅含 `arm64-v8a` |
 | 覆盖更新签名 | 通过 | 与 v215 同为 `ea958214d61fac06047eb4a5316bebf621d7da5a6d21af74768d144cc4217b68` |
-| APK SHA-256 | 通过 | `4d9a5b5a61e2eef3eae8ab9692fa978442d6beb922c6c8b7f72ee02dd84a9e66` |
+| APK SHA-256 | 通过 | `006a7778aacd2d53f067e02945530de1c1e04c6d4490fd2d79ee9584bb494021` |
 
 ## 安装与迁移
 
