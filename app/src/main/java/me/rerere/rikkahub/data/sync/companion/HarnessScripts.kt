@@ -582,7 +582,13 @@ internal object HarnessScripts {
         fi
         rm -f "${'$'}run/harness.pid" "${'$'}run/process-start-ticks" "${'$'}run/process-group-managed"
 
+        port_active=0
         if command -v curl >/dev/null 2>&1 && curl -fsS "${'$'}web_url" >/dev/null 2>&1; then
+          port_active=1
+        elif (echo > /dev/tcp/127.0.0.1/3080) >/dev/null 2>&1; then
+          port_active=1
+        fi
+        if [ "${'$'}port_active" = 1 ]; then
           echo 'Port 3080 is still active; Daddy did not signal an unverified owner.' >&2
           exit 46
         fi

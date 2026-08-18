@@ -154,6 +154,7 @@ class HarnessScriptsTest {
         assertTrue(stop.contains("process-start-ticks"))
         assertTrue(stop.contains("kill -- \"-\$pid\""))
         assertTrue(stop.contains("http://127.0.0.1:3080"))
+        assertTrue(stop.contains("/dev/tcp/127.0.0.1/3080"))
         assertFalse(stop.contains("pkill"))
         assertFalse(stop.contains("fuser"))
         assertFalse(stop.contains("killall"))
