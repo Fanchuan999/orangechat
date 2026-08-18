@@ -12,63 +12,94 @@ import org.junit.Test
 
 class HarnessScriptsTest {
     @Test
-    fun installPinsOfficialHarnessAndKeepsTheWebServerOnLoopback() {
+    fun installUsesPinnedDebianArm64NodeAndHarnessWithoutFloatingVersions() {
         val scripts = HarnessScripts.scriptFiles("/sdcard/result").joinToString("\n") { it.body }
 
+        assertTrue(scripts.contains("debian:bookworm"))
+        assertTrue(scripts.contains("--architecture aarch64"))
+        assertTrue(scripts.contains("node-v24.19.0-linux-arm64.tar.xz"))
+        assertTrue(scripts.contains("SHASUMS256.txt"))
+        assertTrue(scripts.contains("sha256sum -c"))
         assertTrue(scripts.contains("@deepseek-ai/dsh@0.1.0-rc.7"))
         assertFalse(scripts.contains("@deepseek-ai/dsh@0.1.0-rc.5"))
-        assertTrue(scripts.contains("runtime/node_modules/.bin/dsh"))
         assertTrue(scripts.contains("web --port 3080"))
         assertTrue(scripts.contains("http://127.0.0.1:3080"))
-        assertFalse(scripts.contains("@deepseek-ai/dsh@latest"))
+        assertFalse(scripts.contains("@latest"))
         assertFalse(scripts.contains("0.0.0.0"))
     }
 
     @Test
-    fun runUsesTermuxNodeInsteadOfThePackagesUsrBinEnvShebang() {
-        val run = HarnessScripts.scriptFiles("/sdcard/result")
-            .single { it.path.endsWith("/run.sh") }
-            .body
+    fun installerCreatesNamedDebianContainerWithLegacyCliFallback() {
+        val scripts = HarnessScripts.scriptFiles("/sdcard/result").joinToString("\n") { it.body }
 
-        assertTrue(run.contains("exec node \"\$dsh\" web --port 3080"))
-        assertFalse(run.contains("exec \"\$dsh\" web --port 3080"))
+        assertTrue(scripts.contains("command -v proot-distro"))
+        assertTrue(scripts.contains("pkg install -y proot-distro"))
+        assertTrue(scripts.contains("proot-distro install debian:bookworm --name daddy-linux"))
+        assertTrue(scripts.contains("proot-distro install debian --override-alias daddy-linux"))
+        assertTrue(scripts.contains("proot-distro login daddy-linux"))
     }
 
     @Test
-    fun repeatedInstallPreservesHarnessHomeAndSkipsMatchingRuntime() {
-        val install = HarnessScripts.scriptFiles("/sdcard/result")
-            .single { it.path.endsWith("/install.sh") }
-            .body
+    fun guestCommandsUseOnlyApprovedExplicitBindsAndPersistentDshHome() {
+        val scripts = HarnessScripts.scriptFiles("/sdcard/result").joinToString("\n") { it.body }
 
-        assertTrue(install.contains("\"\$base/dsh-home\""))
-        assertTrue(install.contains("installed_version"))
-        assertTrue(install.contains("\"\$installed_version\" != \"\$version\""))
-        assertFalse(install.contains("rm -rf \"\$base/dsh-home\""))
+        assertTrue(scripts.contains("--bind \"\$services:/opt/daddy-harness\""))
+        assertTrue(scripts.contains("--bind \"\$data:/data/daddy-harness\""))
+        assertTrue(scripts.contains("--bind \"\$HOME:/host/termux\""))
+        assertTrue(scripts.contains("--bind \"/sdcard:/host/storage\""))
+        assertTrue(scripts.contains("DSH_HOME=/data/daddy-harness/dsh-home"))
+        assertTrue(scripts.contains("/opt/daddy-harness/runtime/node-current/bin/node"))
+        assertFalse(scripts.contains("pkg install -y nodejs"))
     }
 
     @Test
-    fun installRejectsUnsupportedNodeMajorAndOldNode22() {
-        val install = HarnessScripts.scriptFiles("/sdcard/result")
-            .single { it.path.endsWith("/install.sh") }
-            .body
+    fun setupWritesStagesAtomicallyAndValidatesArtifactsBeforeSkipping() {
+        val scripts = HarnessScripts.scriptFiles("/sdcard/result").joinToString("\n") { it.body }
 
-        assertTrue(install.contains("node_major == 22 && node_minor < 19"))
-        assertTrue(install.contains("node_major == 23"))
+        listOf(
+            "precheck",
+            "install_proot",
+            "install_debian",
+            "install_node",
+            "install_harness",
+            "write_scripts",
+            "start_and_healthcheck",
+            "ready",
+            "failed",
+        ).forEach { stage -> assertTrue("Missing stage $stage", scripts.contains(stage)) }
+        assertTrue(scripts.contains("mv \"\$tmp\" \"\$state_file\""))
+        assertTrue(scripts.contains("proot-distro login daddy-linux"))
+        assertTrue(scripts.contains("node --version"))
+        assertTrue(scripts.contains("dsh --version"))
+    }
+
+    @Test
+    fun repairNeverDeletesPersistentDataLegacyRuntimeOrOtherContainers() {
+        val scripts = HarnessScripts.scriptFiles("/sdcard/result").joinToString("\n") { it.body }
+
+        assertTrue(HarnessScripts.BASE.contains("daddy-linux"))
+        assertTrue(scripts.contains("\$HOME/daddy-harness"))
+        assertFalse(scripts.contains("rm -rf \"\$HOME/daddy-harness\""))
+        assertFalse(scripts.contains("rm -rf \"\$data\""))
+        assertFalse(scripts.contains("proot-distro remove"))
+        assertFalse(scripts.contains("node-pty=false"))
+        assertFalse(scripts.contains("koffi=false"))
+        assertFalse(scripts.contains("sharp=false"))
     }
 
     @Test
     fun stopWritesManualMarkerBeforeStoppingProcesses() {
         val command = HarnessScripts.stopCommand()
 
-        assertTrue(command.indexOf(".manual-stop") < command.indexOf("stop.sh"))
+        assertTrue(command.indexOf(".manual-stop") < command.indexOf("stop-harness.sh"))
     }
 
     @Test
     fun restartTemporarilyBlocksTheWatchdogBeforeStoppingProcesses() {
         val command = HarnessScripts.restartCommand()
-        val markerIndex = command.indexOf("touch \"\$HOME/daddy-harness/.manual-stop\"")
-        val stopIndex = command.indexOf("stop.sh")
-        val clearIndex = command.indexOf("rm -f \"\$HOME/daddy-harness/.manual-stop\"")
+        val markerIndex = command.indexOf("touch \"\$HOME/daddy-linux/services/harness/run/.manual-stop\"")
+        val stopIndex = command.indexOf("stop-harness.sh")
+        val clearIndex = command.indexOf("rm -f \"\$HOME/daddy-linux/services/harness/run/.manual-stop\"")
 
         assertTrue(markerIndex >= 0)
         assertTrue(markerIndex < stopIndex)
@@ -78,7 +109,7 @@ class HarnessScriptsTest {
     @Test
     fun stopShutsDownTheWatchdogBeforeTheHarnessChild() {
         val stop = HarnessScripts.scriptFiles("/sdcard/result")
-            .single { it.path.endsWith("/stop.sh") }
+            .single { it.path.endsWith("/stop-harness.sh") }
             .body
         val watchdogIndex = stop.indexOf("watchdog.pid")
         val harnessIndex = stop.indexOf("harness.pid")
@@ -91,7 +122,7 @@ class HarnessScriptsTest {
     @Test
     fun watchdogHonorsManualStopAndWaitsBeforeRestart() {
         val watchdog = HarnessScripts.scriptFiles("/sdcard/result")
-            .single { it.path.endsWith("/watchdog.sh") }
+            .single { it.path.endsWith("/watchdog-harness.sh") }
             .body
 
         assertTrue(watchdog.contains(".manual-stop"))
@@ -103,20 +134,20 @@ class HarnessScriptsTest {
         val text = HarnessScripts.scriptFiles("/sdcard/result").joinToString("\n") { it.body }
 
         assertFalse(text.contains("cat \"\$DSH_HOME/.credentials.yaml\""))
-        assertFalse(text.contains("cat \"\$base/dsh-home/.credentials.yaml\""))
+        assertFalse(text.contains("cat \"/data/daddy-harness/dsh-home/.credentials.yaml\""))
     }
 
     @Test
     fun bootstrapExpandsHomeWhenWritingAndMakingScriptsExecutable() {
         val commands = HarnessScripts.bootstrapCommands("/sdcard/result")
         val runScriptWrite = commands.single {
-            it.contains("base64 -d") && it.contains("daddy-harness/run.sh")
+            it.contains("base64 -d") && it.contains("daddy-linux/scripts/run-harness.sh")
         }
         val chmod = commands.single { it.startsWith("chmod 700 ") }
 
-        assertTrue(runScriptWrite.contains("> \"\$HOME/daddy-harness/run.sh\""))
-        assertFalse(runScriptWrite.contains("> '\$HOME/daddy-harness/run.sh'"))
-        assertTrue(chmod.contains("\"\$HOME/daddy-harness/run.sh\""))
-        assertFalse(chmod.contains("'\$HOME/daddy-harness/run.sh'"))
+        assertTrue(runScriptWrite.contains("> \"\$HOME/daddy-linux/scripts/run-harness.sh\""))
+        assertFalse(runScriptWrite.contains("> '\$HOME/daddy-linux/scripts/run-harness.sh'"))
+        assertTrue(chmod.contains("\"\$HOME/daddy-linux/scripts/run-harness.sh\""))
+        assertFalse(chmod.contains("'\$HOME/daddy-linux/scripts/run-harness.sh'"))
     }
 }
