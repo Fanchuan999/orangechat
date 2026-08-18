@@ -428,11 +428,13 @@ internal object HarnessScripts {
         stage="${'$'}(sed -n 's/^stage=//p' "${'$'}services/install.state" 2>/dev/null | head -n 1)"
         marker="${'$'}(cat "${'$'}services/runtime.marker" 2>/dev/null || true)"
         child="${'$'}(cat "${'$'}services/run/harness.pid" 2>/dev/null || true)"
-        printf 'stage=%s\nruntime=%s\nlegacy=%s\nmanual_stop=%s\nmanaged_pid=%s\n' \
+        setup_pid="${'$'}(cat "${'$'}services/run/setup.pid" 2>/dev/null || true)"
+        backoff_until="${'$'}(cat "${'$'}services/run/next-restart-at" 2>/dev/null || echo 0)"
+        printf 'stage=%s\nruntime=%s\nlegacy=%s\nmanual_stop=%s\nmanaged_pid=%s\nsetup_pid=%s\nbackoff_until=%s\n' \
           "${'$'}stage" "${'$'}marker" \
           "${'$'}([ -d "${'$'}HOME/daddy-harness" ] && echo 1 || echo 0)" \
           "${'$'}([ -f "${'$'}services/run/.manual-stop" ] && echo 1 || echo 0)" \
-          "${'$'}child"
+          "${'$'}child" "${'$'}setup_pid" "${'$'}backoff_until"
     """.trimIndent() + "\n"
 
     private fun setupScript(): String = """
@@ -446,6 +448,21 @@ internal object HarnessScripts {
         result="${'$'}{1:?Missing result file}"
         web_url="$WEB_URL"
         mkdir -p "${'$'}(dirname "${'$'}result")" "${'$'}run" "${'$'}services/logs"
+
+        setup_pid_file="${'$'}run/setup.pid"
+        setup_start_file="${'$'}run/setup-start-ticks"
+        old_setup_pid="${'$'}(cat "${'$'}setup_pid_file" 2>/dev/null || true)"
+        old_setup_expected="${'$'}(cat "${'$'}setup_start_file" 2>/dev/null || true)"
+        old_setup_actual="${'$'}(awk '{print ${'$'}22}' "/proc/${'$'}old_setup_pid/stat" 2>/dev/null || true)"
+        if [ -n "${'$'}old_setup_pid" ] && [ -n "${'$'}old_setup_expected" ] &&
+           [ "${'$'}old_setup_actual" = "${'$'}old_setup_expected" ] && kill -0 "${'$'}old_setup_pid" 2>/dev/null; then
+          printf %s in_progress > "${'$'}result"
+          exit 0
+        fi
+        printf %s "${'$'}${'$'}" > "${'$'}setup_pid_file"
+        setup_start="${'$'}(awk '{print ${'$'}22}' "/proc/${'$'}${'$'}/stat" 2>/dev/null || true)"
+        printf %s "${'$'}setup_start" > "${'$'}setup_start_file"
+        trap 'rm -f "${'$'}setup_pid_file" "${'$'}setup_start_file"' EXIT
 
         write_stage() {
           stage="${'$'}1"

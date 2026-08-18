@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import me.rerere.rikkahub.data.datastore.HarnessInstallStage
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.HarnessStatus
 import me.rerere.rikkahub.data.datastore.SettingsStore
@@ -33,6 +34,83 @@ internal fun classifyHarness(
     else -> HarnessStatus.STOPPED
 }
 
+internal data class HarnessProbe(
+    val runtimeMarker: String = "",
+    val installStage: HarnessInstallStage = HarnessInstallStage.UNKNOWN,
+    val processRunning: Boolean = false,
+    val setupRunning: Boolean = false,
+    val legacyRuntimeFound: Boolean = false,
+    val manuallyStopped: Boolean = false,
+    val backoffUntilEpochSeconds: Long = 0,
+    val version: String = "",
+    val detail: String = "",
+)
+
+internal fun harnessInstallStageProgress(stage: HarnessInstallStage): Int = when (stage) {
+    HarnessInstallStage.UNKNOWN -> 0
+    HarnessInstallStage.PRECHECK -> 5
+    HarnessInstallStage.INSTALL_PROOT -> 15
+    HarnessInstallStage.INSTALL_DEBIAN -> 35
+    HarnessInstallStage.INSTALL_NODE -> 55
+    HarnessInstallStage.INSTALL_HARNESS -> 75
+    HarnessInstallStage.WRITE_SCRIPTS -> 85
+    HarnessInstallStage.START_AND_HEALTHCHECK -> 95
+    HarnessInstallStage.READY -> 100
+    HarnessInstallStage.FAILED -> 0
+}
+
+internal fun parseHarnessProbe(text: String): HarnessProbe {
+    val values = text.lineSequence()
+        .filter { it.contains('=') }
+        .associate { line -> line.substringBefore('=') to line.substringAfter('=') }
+    return HarnessProbe(
+        runtimeMarker = values["runtime"].orEmpty().trim(),
+        installStage = parseHarnessInstallStage(values["stage"].orEmpty()),
+        processRunning = values["process"] == "1",
+        setupRunning = values["setup"] == "1",
+        legacyRuntimeFound = values["legacy"] == "1",
+        manuallyStopped = values["manual_stop"] == "1",
+        backoffUntilEpochSeconds = values["backoff_until"]?.toLongOrNull() ?: 0,
+        version = values["version"].orEmpty().trim(),
+        detail = values["detail"].orEmpty().trim(),
+    )
+}
+
+internal fun classifyLinuxHarness(
+    probe: HarnessProbe,
+    httpHealthy: Boolean,
+    nowEpochSeconds: Long = System.currentTimeMillis() / 1_000,
+): HarnessStatus {
+    if (probe.installStage == HarnessInstallStage.FAILED) return HarnessStatus.ERROR
+    if (probe.setupRunning) {
+        return if (probe.installStage == HarnessInstallStage.START_AND_HEALTHCHECK) {
+            HarnessStatus.STARTING
+        } else {
+            HarnessStatus.INSTALLING
+        }
+    }
+
+    val linuxReady = isLinuxHarnessRuntime(probe.runtimeMarker) &&
+        probe.installStage == HarnessInstallStage.READY &&
+        probe.version.isNotBlank()
+    if (!linuxReady) {
+        return if (probe.installStage !in setOf(HarnessInstallStage.UNKNOWN, HarnessInstallStage.READY)) {
+            HarnessStatus.REPAIRING
+        } else {
+            HarnessStatus.NOT_INSTALLED
+        }
+    }
+    if (probe.manuallyStopped) return HarnessStatus.MANUALLY_STOPPED
+    if (probe.backoffUntilEpochSeconds > nowEpochSeconds) return HarnessStatus.BACKING_OFF
+    return when {
+        probe.processRunning && httpHealthy -> HarnessStatus.RUNNING
+        probe.processRunning || httpHealthy -> HarnessStatus.ERROR
+        else -> HarnessStatus.STOPPED
+    }
+}
+
+internal fun shouldSubmitHarnessInstall(setupRunning: Boolean): Boolean = !setupRunning
+
 internal fun shouldRecover(
     autoKeepRunning: Boolean,
     manuallyStopped: Boolean,
@@ -45,11 +123,12 @@ internal fun shouldRecover(
 
 internal fun redactHarnessLog(text: String): String {
     val patterns = listOf(
-        Regex("(?im)^(\\s*Authorization\\s*:).*$"),
-        Regex("(?im)^(\\s*Cookie\\s*:).*$"),
-        Regex("(?im)^(\\s*API_KEY\\s*=).*$"),
-        Regex("(?im)^(\\s*apiKey\\s*:).*$"),
-        Regex("(?im)^(\\s*token\\s*:).*$"),
+        Regex("(?i)(\\bAuthorization\\s*[:=]\\s*)(?:Bearer\\s+)?[^\\s,;]+"),
+        Regex("(?im)(^\\s*(?:Cookie|Set-Cookie)\\s*:\\s*)[^\\r\\n]+"),
+        Regex(
+            "(?i)([\\\"']?(?:api[_-]?key|apiKey|token|access[_-]?token|password|secret)" +
+                "[\\\"']?\\s*[:=]\\s*[\\\"']?)[^\\\"'\\s,}\\]]+",
+        ),
     )
     return patterns.fold(text) { redacted, pattern ->
         pattern.replace(redacted) { match -> "${match.groupValues[1]} [REDACTED]" }
@@ -101,25 +180,20 @@ class HarnessManager(
         }.exceptionOrNull()
 
         val probe = if (probeFailure == null) {
-            parseProbe(resultFile.readText())
+            parseHarnessProbe(resultFile.readText())
         } else {
             HarnessProbe(
-                installed = settingsStore.settingsFlow.value.harnessSetting.installedVersion.isNotBlank(),
+                version = settingsStore.settingsFlow.value.harnessSetting.installedVersion,
                 detail = probeFailure.message.orEmpty(),
             )
         }
         resultFile.delete()
 
         val httpHealthy = isHttpHealthy()
-        val status = if (probeFailure != null && probe.installed) {
+        val status = if (probeFailure != null && probe.version.isNotBlank()) {
             HarnessStatus.ERROR
         } else {
-            classifyHarness(
-                installed = probe.installed,
-                processRunning = probe.processRunning,
-                httpHealthy = httpHealthy,
-                detail = probe.detail,
-            )
+            classifyLinuxHarness(probe = probe, httpHealthy = httpHealthy)
         }
         val next = HarnessSnapshot(
             status = status,
@@ -128,19 +202,25 @@ class HarnessManager(
             },
             detail = probe.detail,
             logTail = boundedHarnessLog(redactHarnessLog(probe.detail)),
+            installStage = probe.installStage,
+            legacyRuntimeFound = probe.legacyRuntimeFound,
+            installProgressPercent = harnessInstallStageProgress(probe.installStage),
         )
         _snapshot.value = next
         return next
     }
 
     suspend fun install(): HarnessSnapshot {
+        val before = inspect()
+        if (before.status in setOf(HarnessStatus.INSTALLING, HarnessStatus.STARTING)) return before
+
         val resultFile = resultFile("setup")
         resultFile.delete()
         try {
             termuxConfigBridge.executeCommandsAndWait(
                 commands = HarnessScripts.bootstrapCommands(resultFile.absolutePath),
                 completionFile = resultFile,
-                timeoutMessage = "Harness 在三分钟内没有准备好，请查看 ~/daddy-harness/setup.log。",
+                timeoutMessage = "Harness 在三十分钟内没有准备好，请查看 ~/daddy-linux/services/harness/logs/setup.log。",
                 waitAttempts = HARNESS_INSTALL_WAIT_ATTEMPTS,
             )
             require(resultFile.readText().trim() == READY_MARKER) {
@@ -155,6 +235,10 @@ class HarnessManager(
                     )
                 )
             }
+        } catch (failure: Throwable) {
+            val current = inspect()
+            if (current.status in setOf(HarnessStatus.INSTALLING, HarnessStatus.STARTING)) return current
+            throw failure
         } finally {
             resultFile.delete()
         }
@@ -164,6 +248,7 @@ class HarnessManager(
     suspend fun start(): HarnessSnapshot = runLifecycle(
         command = HarnessScripts.startCommand(),
         actionName = "启动",
+        waitForHttpHealthy = true,
     ) { setting ->
         setting.copy(autoKeepRunning = true, manuallyStopped = false)
     }
@@ -178,6 +263,7 @@ class HarnessManager(
     suspend fun restart(): HarnessSnapshot = runLifecycle(
         command = HarnessScripts.restartCommand(),
         actionName = "重启",
+        waitForHttpHealthy = true,
     ) { setting ->
         setting.copy(autoKeepRunning = true, manuallyStopped = false)
     }
@@ -192,9 +278,9 @@ class HarnessManager(
     suspend fun recoverIfNeeded(): Boolean {
         val setting = settingsStore.settingsFlow.value.harnessSetting
         val current = inspect()
-        val installed = current.status != HarnessStatus.NOT_INSTALLED || current.installedVersion.isNotBlank()
+        val installed = current.installStage == HarnessInstallStage.READY && current.installedVersion.isNotBlank()
         if (
-            installed && shouldRecover(
+            installed && current.status == HarnessStatus.STOPPED && shouldRecover(
                 autoKeepRunning = setting.autoKeepRunning,
                 manuallyStopped = setting.manuallyStopped,
                 running = current.status == HarnessStatus.RUNNING,
@@ -231,6 +317,7 @@ class HarnessManager(
     private suspend fun runLifecycle(
         command: String,
         actionName: String,
+        waitForHttpHealthy: Boolean = false,
         updateSetting: (me.rerere.rikkahub.data.datastore.HarnessSetting) ->
             me.rerere.rikkahub.data.datastore.HarnessSetting,
     ): HarnessSnapshot {
@@ -238,12 +325,13 @@ class HarnessManager(
         resultFile.delete()
         try {
             termuxConfigBridge.executeCommandsAndWait(
-                commands = listOf(
-                    command,
-                    "printf '%s' '$READY_MARKER' > ${shellQuote(resultFile.absolutePath)}",
-                ),
+                commands = buildList {
+                    add(command)
+                    if (waitForHttpHealthy) add(waitForHarnessHealthCommand())
+                    add("printf '%s' '$READY_MARKER' > ${shellQuote(resultFile.absolutePath)}")
+                },
                 completionFile = resultFile,
-                timeoutMessage = "Harness $actionName 没有在 20 秒内完成。",
+                timeoutMessage = "Harness $actionName 没有在 90 秒内完成。",
                 waitAttempts = ACTION_WAIT_ATTEMPTS,
             )
             require(resultFile.readText().trim() == READY_MARKER) { "Harness $actionName 没有成功。" }
@@ -255,6 +343,22 @@ class HarnessManager(
         }
         return inspect()
     }
+
+    private fun waitForHarnessHealthCommand(): String = """
+        ready=0
+        for attempt in ${'$'}(seq 1 90); do
+          if command -v curl >/dev/null 2>&1 && curl -fsS '${HarnessScripts.WEB_URL}' >/dev/null 2>&1; then
+            ready=1
+            break
+          fi
+          if (echo > /dev/tcp/127.0.0.1/3080) >/dev/null 2>&1; then
+            ready=1
+            break
+          fi
+          sleep 1
+        done
+        [ "${'$'}ready" = 1 ] || exit 48
+    """.trimIndent()
 
     private fun isHttpHealthy(): Boolean = runCatching {
         val request = Request.Builder().url(HarnessScripts.WEB_URL).get().build()
@@ -271,70 +375,75 @@ class HarnessManager(
     }
 
     private fun probeCommand(resultFile: File): String = """
-        base="${'$'}HOME/daddy-harness"
-        installed=0
+        base="${'$'}HOME/daddy-linux"
+        services="${'$'}base/services/harness"
+        run="${'$'}services/run"
         process=0
+        setup=0
+        legacy=0
+        manual_stop=0
         version=""
-        [ -x "${'$'}base/runtime/node_modules/.bin/dsh" ] && installed=1
-        [ -f "${'$'}base/VERSION" ] && version="${'$'}(cat "${'$'}base/VERSION" 2>/dev/null || true)"
-        pid="${'$'}(cat "${'$'}base/harness.pid" 2>/dev/null || true)"
-        if [ -n "${'$'}pid" ] && kill -0 "${'$'}pid" 2>/dev/null; then process=1; fi
-        detail="${'$'}(tail -n 1 "${'$'}base/harness.log" 2>/dev/null || tail -n 1 "${'$'}base/setup.log" 2>/dev/null || true)"
+        runtime="${'$'}(cat "${'$'}services/runtime.marker" 2>/dev/null || true)"
+        stage="${'$'}(sed -n 's/^stage=//p' "${'$'}services/install.state" 2>/dev/null | head -n 1)"
+        detail="${'$'}(sed -n 's/^detail=//p' "${'$'}services/install.state" 2>/dev/null | head -n 1)"
+        [ -f "${'$'}services/runtime/harness/VERSION" ] && version="${'$'}(cat "${'$'}services/runtime/harness/VERSION" 2>/dev/null || true)"
+        [ -d "${'$'}HOME/daddy-harness" ] && legacy=1
+        [ -f "${'$'}run/.manual-stop" ] && manual_stop=1
+        backoff_until="${'$'}(cat "${'$'}run/next-restart-at" 2>/dev/null || echo 0)"
+
+        pid="${'$'}(cat "${'$'}run/harness.pid" 2>/dev/null || true)"
+        expected="${'$'}(cat "${'$'}run/process-start-ticks" 2>/dev/null || true)"
+        actual="${'$'}(awk '{print ${'$'}22}' "/proc/${'$'}pid/stat" 2>/dev/null || true)"
+        if [ -n "${'$'}pid" ] && [ -n "${'$'}expected" ] && [ "${'$'}actual" = "${'$'}expected" ] &&
+           kill -0 "${'$'}pid" 2>/dev/null; then process=1; fi
+
+        setup_pid="${'$'}(cat "${'$'}run/setup.pid" 2>/dev/null || true)"
+        setup_expected="${'$'}(cat "${'$'}run/setup-start-ticks" 2>/dev/null || true)"
+        setup_actual="${'$'}(awk '{print ${'$'}22}' "/proc/${'$'}setup_pid/stat" 2>/dev/null || true)"
+        if [ -n "${'$'}setup_pid" ] && [ -n "${'$'}setup_expected" ] &&
+           [ "${'$'}setup_actual" = "${'$'}setup_expected" ] && kill -0 "${'$'}setup_pid" 2>/dev/null; then setup=1; fi
+
+        [ -n "${'$'}detail" ] || detail="${'$'}(tail -n 1 "${'$'}services/logs/harness.log" 2>/dev/null || true)"
         detail="${'$'}(printf '%s' "${'$'}detail" | tr '\r\n' '  ')"
-        printf 'installed=%s\nprocess=%s\nversion=%s\ndetail=%s\n' \
-          "${'$'}installed" "${'$'}process" "${'$'}version" "${'$'}detail" > ${shellQuote(resultFile.absolutePath)}
+        printf 'runtime=%s\nstage=%s\nprocess=%s\nsetup=%s\nlegacy=%s\nmanual_stop=%s\nbackoff_until=%s\nversion=%s\ndetail=%s\n' \
+          "${'$'}runtime" "${'$'}stage" "${'$'}process" "${'$'}setup" "${'$'}legacy" "${'$'}manual_stop" \
+          "${'$'}backoff_until" "${'$'}version" "${'$'}detail" > ${shellQuote(resultFile.absolutePath)}
     """.trimIndent()
 
     private fun logTailCommand(resultFile: File): String = """
-        base="${'$'}HOME/daddy-harness"
-        { tail -n $MAX_LOG_LINES "${'$'}base/setup.log" 2>/dev/null || true; \
-          tail -n $MAX_LOG_LINES "${'$'}base/watchdog.log" 2>/dev/null || true; \
-          tail -n $MAX_LOG_LINES "${'$'}base/harness.log" 2>/dev/null || true; } | \
+        logs="${'$'}HOME/daddy-linux/services/harness/logs"
+        { tail -n $MAX_LOG_LINES "${'$'}logs/setup.log" 2>/dev/null || true; \
+          tail -n $MAX_LOG_LINES "${'$'}logs/watchdog.log" 2>/dev/null || true; \
+          tail -n $MAX_LOG_LINES "${'$'}logs/harness.log" 2>/dev/null || true; } | \
           tail -n $MAX_LOG_LINES > ${shellQuote(resultFile.absolutePath)}
         [ -s ${shellQuote(resultFile.absolutePath)} ] || printf '%s' '暂无 Harness 日志。' > ${shellQuote(resultFile.absolutePath)}
     """.trimIndent()
-
-    private fun parseProbe(text: String): HarnessProbe {
-        val values = text.lineSequence()
-            .filter { it.contains('=') }
-            .associate { line -> line.substringBefore('=') to line.substringAfter('=') }
-        return HarnessProbe(
-            installed = values["installed"] == "1",
-            processRunning = values["process"] == "1",
-            version = values["version"].orEmpty().trim(),
-            detail = values["detail"].orEmpty().trim(),
-        )
-    }
 
     private fun setupFailureMessage(result: String): String {
         val trimmed = result.trim()
         return if (trimmed.startsWith("error:")) {
             "Harness 没有启动：${trimmed.removePrefix("error:").trim()}"
         } else {
-            "Harness 安装没有正确完成，请查看 ~/daddy-harness/setup.log。"
+            "Harness 安装没有正确完成，请查看 ~/daddy-linux/services/harness/logs/setup.log。"
         }
     }
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
-    private data class HarnessProbe(
-        val installed: Boolean = false,
-        val processRunning: Boolean = false,
-        val version: String = "",
-        val detail: String = "",
-    )
-
     private companion object {
         const val READY_MARKER = "ready"
         const val QUICK_WAIT_ATTEMPTS = 20
-        const val ACTION_WAIT_ATTEMPTS = 28
+        const val ACTION_WAIT_ATTEMPTS = 120
     }
 }
 
-internal const val HARNESS_INSTALL_WAIT_ATTEMPTS = 1_200
+internal const val HARNESS_INSTALL_WAIT_ATTEMPTS = 2_400
 
 internal fun harnessInstallWaitDurationMillis(pollIntervalMillis: Long): Long =
     HARNESS_INSTALL_WAIT_ATTEMPTS * pollIntervalMillis
+
+internal fun harnessActionWaitDurationMillis(pollIntervalMillis: Long): Long =
+    120 * pollIntervalMillis
 
 private const val MAX_LOG_LINES = 200
 private const val MAX_LOG_BYTES = 24 * 1024

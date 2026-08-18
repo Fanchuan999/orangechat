@@ -6,6 +6,7 @@
 
 package me.rerere.rikkahub.data.sync.companion
 
+import me.rerere.rikkahub.data.datastore.HarnessInstallStage
 import me.rerere.rikkahub.data.datastore.HarnessStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,6 +20,60 @@ class HarnessManagerPolicyTest {
         assertEquals(HarnessStatus.ERROR, classifyHarness(true, true, false, "web failed"))
         assertEquals(HarnessStatus.STOPPED, classifyHarness(true, false, false, ""))
         assertEquals(HarnessStatus.NOT_INSTALLED, classifyHarness(false, false, false, ""))
+    }
+
+    @Test
+    fun linuxReadyRequiresMarkerReadyStageManagedProcessAndHttpHealth() {
+        val ready = HarnessProbe(
+            runtimeMarker = HarnessRuntimeContract.LINUX_RUNTIME_MARKER,
+            installStage = HarnessInstallStage.READY,
+            processRunning = true,
+            version = HarnessRuntimeContract.HARNESS_VERSION,
+        )
+
+        assertEquals(HarnessStatus.RUNNING, classifyLinuxHarness(ready, httpHealthy = true))
+        assertEquals(HarnessStatus.ERROR, classifyLinuxHarness(ready, httpHealthy = false))
+        assertEquals(
+            HarnessStatus.NOT_INSTALLED,
+            classifyLinuxHarness(ready.copy(runtimeMarker = "android-native"), httpHealthy = true),
+        )
+    }
+
+    @Test
+    fun legacyRuntimeIsReportedButNeverTreatedAsInstalledLinux() {
+        val probe = parseHarnessProbe("legacy=1\nstage=unknown\nruntime=android-native")
+
+        assertTrue(probe.legacyRuntimeFound)
+        assertEquals(HarnessStatus.NOT_INSTALLED, classifyLinuxHarness(probe, httpHealthy = false))
+    }
+
+    @Test
+    fun wireStagesMapToStableProgressAndLifecycleStates() {
+        assertEquals(5, harnessInstallStageProgress(HarnessInstallStage.PRECHECK))
+        assertEquals(35, harnessInstallStageProgress(HarnessInstallStage.INSTALL_DEBIAN))
+        assertEquals(75, harnessInstallStageProgress(HarnessInstallStage.INSTALL_HARNESS))
+        assertEquals(100, harnessInstallStageProgress(HarnessInstallStage.READY))
+
+        val installing = HarnessProbe(
+            installStage = HarnessInstallStage.INSTALL_NODE,
+            setupRunning = true,
+        )
+        assertEquals(HarnessStatus.INSTALLING, classifyLinuxHarness(installing, httpHealthy = false))
+        assertEquals(
+            HarnessStatus.REPAIRING,
+            classifyLinuxHarness(installing.copy(setupRunning = false), httpHealthy = false),
+        )
+    }
+
+    @Test
+    fun failedStageKeepsSanitizedDetail() {
+        val probe = parseHarnessProbe(
+            "stage=failed\ndetail=npm failed Authorization: Bearer secret-value\nlegacy=0",
+        )
+
+        assertEquals(HarnessInstallStage.FAILED, probe.installStage)
+        assertFalse(redactHarnessLog(probe.detail).contains("secret-value"))
+        assertEquals(HarnessStatus.ERROR, classifyLinuxHarness(probe, httpHealthy = false))
     }
 
     @Test
@@ -36,25 +91,36 @@ class HarnessManagerPolicyTest {
     }
 
     @Test
-    fun firstInstallAllowsAtLeastFifteenMinutesForLargeDependencyTrees() {
-        assertTrue(harnessInstallWaitDurationMillis(pollIntervalMillis = 750L) >= 15 * 60 * 1_000L)
+    fun firstInstallAllowsAtLeastThirtyMinutesForLargeDependencyTrees() {
+        assertTrue(harnessInstallWaitDurationMillis(pollIntervalMillis = 750L) >= 30 * 60 * 1_000L)
+        assertTrue(harnessActionWaitDurationMillis(pollIntervalMillis = 750L) >= 60 * 1_000L)
+    }
+
+    @Test
+    fun activeBackgroundInstallIsObservedInsteadOfSubmittedAgain() {
+        assertFalse(shouldSubmitHarnessInstall(setupRunning = true))
+        assertTrue(shouldSubmitHarnessInstall(setupRunning = false))
+        assertFalse(shouldFallbackToRunCommand(bridgeSubmitted = true))
     }
 
     @Test
     fun logRedactionRemovesCommonSecrets() {
         val text = redactHarnessLog(
-            "Authorization: Bearer abc\n" +
+            "authorization: bearer abc\n" +
                 "API_KEY=secret\n" +
                 "Cookie: sid=x\n" +
                 "apiKey: another-secret\n" +
-                "token: private-token",
+                "token: private-token\n" +
+                "{\"password\":\"quoted-password\",\"access_token\":\"json-token\"}",
         )
 
         assertFalse(text.contains("abc"))
         assertFalse(text.contains("secret"))
         assertFalse(text.contains("sid=x"))
         assertFalse(text.contains("private-token"))
-        assertEquals(5, text.lineSequence().count { it.contains("[REDACTED]") })
+        assertFalse(text.contains("quoted-password"))
+        assertFalse(text.contains("json-token"))
+        assertEquals(7, Regex(Regex.escape("[REDACTED]")).findAll(text).count())
     }
 
     @Test
