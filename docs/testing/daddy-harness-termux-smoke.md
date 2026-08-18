@@ -36,12 +36,12 @@ Bookworm ARM64 运行时，并稳定运行官方 DeepSeek Harness `0.1.0-rc.7`�
 | 检查项 | 结果 | 说明 |
 |---|---|---|
 | Harness 聚焦单元测试 | 通过 | 运行时契约、脚本、恢复、Manager、UI 与安全门均通过 |
-| 全仓 JVM 单元测试 | 通过 | `215 actionable tasks`，无测试失败 |
-| Companion APK 构建 | 通过 | `:app:packageCompanion`，`233 actionable tasks` |
+| 全仓 JVM 单元测试 | 通过 | 最终 `test + :app:packageCompanion` 共 `302 actionable tasks`，无测试失败 |
+| Companion APK 构建 | 通过 | 最终组合验证中的 `:app:packageCompanion` 成功 |
 | 包名 / 版本 | 通过 | `me.rerere.orangechat.companion` / `2.5.30-companion`（216） |
 | CPU 架构 | 通过 | ARM64 APK 中原生库仅含 `arm64-v8a` |
 | 覆盖更新签名 | 通过 | 与 v215 同为 `ea958214d61fac06047eb4a5316bebf621d7da5a6d21af74768d144cc4217b68` |
-| APK SHA-256 | 通过 | `119ae048c386204c257c83dd7929555960d8584466d8bedb8cf7201b19805f5c` |
+| APK SHA-256 | 通过 | `4d9a5b5a61e2eef3eae8ab9692fa978442d6beb922c6c8b7f72ee02dd84a9e66` |
 
 ## 安装与迁移
 
