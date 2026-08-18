@@ -91,14 +91,17 @@ class TermuxConfigBridge(
     ) = withContext(Dispatchers.IO) {
         require(commands.isNotEmpty()) { "至少需要一条 Termux 命令。" }
 
-        val bridgeFailure = runCatching {
+        val bridgeSubmissionFailure = runCatching {
             commands.forEach(::runWithLocalBridge)
-            waitForFile(completionFile, timeoutMessage, waitAttempts)
         }.exceptionOrNull()
-        if (bridgeFailure == null) return@withContext
+        val bridgeSubmitted = bridgeSubmissionFailure == null
+        if (!shouldFallbackToRunCommand(bridgeSubmitted)) {
+            waitForFile(completionFile, timeoutMessage, waitAttempts)
+            return@withContext
+        }
 
         require(isTermuxInstalled()) {
-            "termux-bridge 不可用，且未检测到可回退的 Termux。${bridgeFailure.message.orEmpty()}"
+            "termux-bridge 不可用，且未检测到可回退的 Termux。${bridgeSubmissionFailure?.message.orEmpty()}"
         }
         val orderedCommand = commands.joinToString(separator = " && ") { command -> "($command)" }
         launchCommand(command = orderedCommand, workDir = TERMUX_HOME)
@@ -435,3 +438,5 @@ class TermuxConfigBridge(
         const val LOCAL_BRIDGE_BASE = "http://127.0.0.1:8080"
     }
 }
+
+internal fun shouldFallbackToRunCommand(bridgeSubmitted: Boolean): Boolean = !bridgeSubmitted

@@ -2,7 +2,7 @@
 
 ## 测试目标
 
-确认 Daddy v2.5.25（v211）可在 iQOO Neo 10 上覆盖更新，并通过现有 Termux 环境安装、运行和自动恢复官方 DeepSeek Harness `0.1.0-rc.5`。
+确认 Daddy v2.5.29（v215）可在 iQOO Neo 10 上覆盖更新，并通过现有 Termux 环境安装、运行和自动恢复官方 DeepSeek Harness `0.1.0-rc.7`。
 
 ## 环境
 
@@ -11,20 +11,20 @@
 | 手机 | iQOO Neo 10 |
 | Android / OriginOS | 待手机实测 |
 | Daddy 包名 | `me.rerere.orangechat.companion` |
-| Daddy 版本 | `2.5.25-companion`（211） |
+| Daddy 版本 | `2.5.29-companion`（215） |
 | Termux 版本 | 待手机实测 |
 | Node.js | 待手机实测 |
 | npm | 待手机实测 |
-| Harness | `@deepseek-ai/dsh@0.1.0-rc.5` |
+| Harness | `@deepseek-ai/dsh@0.1.0-rc.7` |
 
 ## 桌面构建验证
 
 | 检查项 | 结果 | 说明 |
 |---|---|---|
-| 全仓 JVM 单元测试 | 通过 | 215 个 Gradle 任务完成，无测试失败 |
+| 全仓 JVM 单元测试 | 通过 | 与 Companion 打包合并执行，302 个 Gradle 任务完成，无测试失败 |
 | Companion APK 构建 | 通过 | `:app:packageCompanion` 成功 |
 | 包名 | 通过 | `me.rerere.orangechat.companion` |
-| 版本 | 通过 | `2.5.25-companion`（211） |
+| 版本 | 待重新构建验证 | `2.5.29-companion`（215） |
 | CPU 架构 | 通过 | 仅 `arm64-v8a` |
 | 签名 | 通过 | SHA-256 `ea958214d61fac06047eb4a5316bebf621d7da5a6d21af74768d144cc4217b68` |
 | Android Lint | 旧债阻塞 | 全仓仍有 177 个既有错误；本次新增 Harness 代码未出现错误级问题 |
@@ -33,8 +33,8 @@
 
 | 检查项 | 结果 | 说明 |
 |---|---|---|
-| Daddy 一键安装 | 待测 | 优先走 `127.0.0.1:8080` termux-bridge |
-| Termux RunCommand 回退 | 待测 | 仅在本地桥失败时使用 |
+| Daddy 一键安装 | 待复测 | v211 修 `$HOME`；v213 切到 rc.7；v214 禁止超时重放并延长等待；v215 通过 Termux `node` 启动官方入口，绕过包内 `/usr/bin/env` shebang |
+| Termux RunCommand 回退 | 已打通，待复测安装 | 真机已授予 `com.termux.permission.RUN_COMMAND`，仅在本地桥失败时使用 |
 | 手动复制备用命令 | 待测 | 不含 API Key 或 Harness 凭据 |
 | 重复安装保留 `dsh-home` | 待测 | 不应覆盖登录与工作区数据 |
 

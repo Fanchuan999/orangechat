@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.rikkahub.data.datastore.HarnessStatus
+import me.rerere.rikkahub.data.sync.companion.HarnessScripts
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.theme.CustomColors
 import org.koin.androidx.compose.koinViewModel
@@ -222,7 +223,7 @@ private fun StatusCard(state: HarnessUiState) {
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(statusText, color = statusColor, style = MaterialTheme.typography.headlineSmall)
-            Text("固定版本：0.1.0-rc.5")
+            Text("固定版本：${HarnessScripts.VERSION}")
             Text("已安装版本：${state.snapshot.installedVersion.ifBlank { "—" }}")
             Text("本机端口：127.0.0.1:3080")
             if (state.snapshot.detail.isNotBlank()) {

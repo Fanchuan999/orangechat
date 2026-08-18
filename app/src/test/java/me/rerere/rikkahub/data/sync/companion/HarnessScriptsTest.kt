@@ -15,12 +15,23 @@ class HarnessScriptsTest {
     fun installPinsOfficialHarnessAndKeepsTheWebServerOnLoopback() {
         val scripts = HarnessScripts.scriptFiles("/sdcard/result").joinToString("\n") { it.body }
 
-        assertTrue(scripts.contains("@deepseek-ai/dsh@0.1.0-rc.5"))
+        assertTrue(scripts.contains("@deepseek-ai/dsh@0.1.0-rc.7"))
+        assertFalse(scripts.contains("@deepseek-ai/dsh@0.1.0-rc.5"))
         assertTrue(scripts.contains("runtime/node_modules/.bin/dsh"))
         assertTrue(scripts.contains("web --port 3080"))
         assertTrue(scripts.contains("http://127.0.0.1:3080"))
         assertFalse(scripts.contains("@deepseek-ai/dsh@latest"))
         assertFalse(scripts.contains("0.0.0.0"))
+    }
+
+    @Test
+    fun runUsesTermuxNodeInsteadOfThePackagesUsrBinEnvShebang() {
+        val run = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/run.sh") }
+            .body
+
+        assertTrue(run.contains("exec node \"\$dsh\" web --port 3080"))
+        assertFalse(run.contains("exec \"\$dsh\" web --port 3080"))
     }
 
     @Test
@@ -93,5 +104,19 @@ class HarnessScriptsTest {
 
         assertFalse(text.contains("cat \"\$DSH_HOME/.credentials.yaml\""))
         assertFalse(text.contains("cat \"\$base/dsh-home/.credentials.yaml\""))
+    }
+
+    @Test
+    fun bootstrapExpandsHomeWhenWritingAndMakingScriptsExecutable() {
+        val commands = HarnessScripts.bootstrapCommands("/sdcard/result")
+        val runScriptWrite = commands.single {
+            it.contains("base64 -d") && it.contains("daddy-harness/run.sh")
+        }
+        val chmod = commands.single { it.startsWith("chmod 700 ") }
+
+        assertTrue(runScriptWrite.contains("> \"\$HOME/daddy-harness/run.sh\""))
+        assertFalse(runScriptWrite.contains("> '\$HOME/daddy-harness/run.sh'"))
+        assertTrue(chmod.contains("\"\$HOME/daddy-harness/run.sh\""))
+        assertFalse(chmod.contains("'\$HOME/daddy-harness/run.sh'"))
     }
 }

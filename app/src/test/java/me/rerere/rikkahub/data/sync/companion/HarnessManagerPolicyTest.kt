@@ -30,6 +30,17 @@ class HarnessManagerPolicyTest {
     }
 
     @Test
+    fun submittedBridgeCommandIsNeverReplayedThroughRunCommandFallback() {
+        assertFalse(shouldFallbackToRunCommand(bridgeSubmitted = true))
+        assertTrue(shouldFallbackToRunCommand(bridgeSubmitted = false))
+    }
+
+    @Test
+    fun firstInstallAllowsAtLeastFifteenMinutesForLargeDependencyTrees() {
+        assertTrue(harnessInstallWaitDurationMillis(pollIntervalMillis = 750L) >= 15 * 60 * 1_000L)
+    }
+
+    @Test
     fun logRedactionRemovesCommonSecrets() {
         val text = redactHarnessLog(
             "Authorization: Bearer abc\n" +

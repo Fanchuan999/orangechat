@@ -141,7 +141,7 @@ class HarnessManager(
                 commands = HarnessScripts.bootstrapCommands(resultFile.absolutePath),
                 completionFile = resultFile,
                 timeoutMessage = "Harness 在三分钟内没有准备好，请查看 ~/daddy-harness/setup.log。",
-                waitAttempts = INSTALL_WAIT_ATTEMPTS,
+                waitAttempts = HARNESS_INSTALL_WAIT_ATTEMPTS,
             )
             require(resultFile.readText().trim() == READY_MARKER) {
                 setupFailureMessage(resultFile.readText())
@@ -328,9 +328,13 @@ class HarnessManager(
         const val READY_MARKER = "ready"
         const val QUICK_WAIT_ATTEMPTS = 20
         const val ACTION_WAIT_ATTEMPTS = 28
-        const val INSTALL_WAIT_ATTEMPTS = 240
     }
 }
+
+internal const val HARNESS_INSTALL_WAIT_ATTEMPTS = 1_200
+
+internal fun harnessInstallWaitDurationMillis(pollIntervalMillis: Long): Long =
+    HARNESS_INSTALL_WAIT_ATTEMPTS * pollIntervalMillis
 
 private const val MAX_LOG_LINES = 200
 private const val MAX_LOG_BYTES = 24 * 1024

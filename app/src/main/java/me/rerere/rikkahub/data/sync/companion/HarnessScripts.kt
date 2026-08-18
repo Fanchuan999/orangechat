@@ -14,7 +14,7 @@ internal data class HarnessScriptFile(
 )
 
 internal object HarnessScripts {
-    const val VERSION = "0.1.0-rc.5"
+    const val VERSION = "0.1.0-rc.7"
     const val BASE = "\$HOME/daddy-harness"
     const val WEB_URL = "http://127.0.0.1:3080"
 
@@ -23,7 +23,7 @@ internal object HarnessScripts {
         return buildList {
             add("mkdir -p \"$BASE\" \"\$HOME/.termux/boot\"")
             files.forEach { script -> add(writeScriptCommand(script)) }
-            add(files.joinToString(prefix = "chmod 700 ", separator = " ") { shellQuote(it.path) })
+            add(files.joinToString(prefix = "chmod 700 ", separator = " ") { expandableHomePath(it.path) })
             add("nohup \"$BASE/setup.sh\" ${shellQuote(resultPath)} >/dev/null 2>&1 &")
         }
     }
@@ -68,7 +68,7 @@ internal object HarnessScripts {
         dsh="${'$'}base/runtime/node_modules/.bin/dsh"
         [ -x "${'$'}dsh" ] || { echo 'Harness executable is missing.'; exit 41; }
         cd "${'$'}HOME"
-        exec "${'$'}dsh" web --port 3080
+        exec node "${'$'}dsh" web --port 3080
     """.trimIndent() + "\n"
 
     private fun installScript(): String = """
@@ -188,7 +188,14 @@ internal object HarnessScripts {
 
     private fun writeScriptCommand(script: HarnessScriptFile): String {
         val encoded = Base64.getEncoder().encodeToString(script.body.toByteArray(Charsets.UTF_8))
-        return "printf %s ${shellQuote(encoded)} | base64 -d > ${shellQuote(script.path)}"
+        return "printf %s ${shellQuote(encoded)} | base64 -d > ${expandableHomePath(script.path)}"
+    }
+
+    private fun expandableHomePath(path: String): String {
+        require(path.matches(Regex("""^\${'$'}HOME/[A-Za-z0-9._/-]+$"""))) {
+            "Harness script path must be a safe path below \$HOME"
+        }
+        return "\"$path\""
     }
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
