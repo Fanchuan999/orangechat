@@ -335,7 +335,8 @@ internal object HarnessScripts {
           const path = stringArg(args, 'path', 'file_path', 'target', 'destination', 'dest')
           if (path === undefined) return undefined
           const cwd = exec.agent?.session?.header?.cwd
-          const absolute = isAbsolute(path) ? path : resolve(cwd ?? process.cwd(), path)
+          if (!isAbsolute(path) && (typeof cwd !== 'string' || !isAbsolute(cwd))) return undefined
+          const absolute = isAbsolute(path) ? path : resolve(cwd, path)
           try {
             return existsSync(absolute)
           } catch {

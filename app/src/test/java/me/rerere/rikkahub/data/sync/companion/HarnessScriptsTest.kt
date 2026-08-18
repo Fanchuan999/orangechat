@@ -226,6 +226,78 @@ class HarnessScriptsTest {
     }
 
     @Test
+    fun riskGateAsksBeforeOverwritingAnExistingRelativePathFromTheSessionCwd() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+        val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-cwd")
+        val gateFile = tempDir.resolve("risk-gate.mjs")
+        val runnerFile = tempDir.resolve("relative-path-test.mjs")
+        Files.writeString(tempDir.resolve("existing.txt"), "already here")
+        Files.writeString(gateFile, gate)
+        Files.writeString(
+            runnerFile,
+            """
+                import { classifyToolCall } from './risk-gate.mjs'
+                const risk = classifyToolCall({
+                  name: 'write',
+                  arguments: { path: 'existing.txt' },
+                  agent: { session: { header: { cwd: process.cwd() } } },
+                })
+                if (risk !== 'overwrite') throw new Error(`expected overwrite, got ${'$'}{risk}`)
+                process.stdout.write('relative overwrite gated\n')
+            """.trimIndent(),
+        )
+        try {
+            val process = ProcessBuilder("node", runnerFile.toString())
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            assertEquals(output, 0, process.waitFor())
+            assertTrue(output, output.contains("relative overwrite gated"))
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun riskGateAsksWhenARelativeWriteHasNoTrustworthySessionCwd() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+        val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-unknown-cwd")
+        val gateFile = tempDir.resolve("risk-gate.mjs")
+        val runnerFile = tempDir.resolve("unknown-cwd-test.mjs")
+        Files.writeString(gateFile, gate)
+        Files.writeString(
+            runnerFile,
+            """
+                import { classifyToolCall } from './risk-gate.mjs'
+                const risk = classifyToolCall({
+                  name: 'write',
+                  arguments: { path: 'possibly-existing.txt' },
+                })
+                if (risk !== 'overwrite') throw new Error(`expected fail-closed overwrite, got ${'$'}{risk}`)
+                process.stdout.write('unknown cwd gated\n')
+            """.trimIndent(),
+        )
+        try {
+            val process = ProcessBuilder("node", runnerFile.toString())
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            assertEquals(output, 0, process.waitFor())
+            assertTrue(output, output.contains("unknown cwd gated"))
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun bootstrapExpandsHomeWhenWritingAndMakingScriptsExecutable() {
         val commands = HarnessScripts.bootstrapCommands("/sdcard/result")
         val runScriptWrite = commands.single {
