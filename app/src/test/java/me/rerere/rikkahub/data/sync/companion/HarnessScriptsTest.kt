@@ -31,13 +31,23 @@ class HarnessScriptsTest {
     }
 
     @Test
-    fun installerCreatesNamedDebianContainerWithLegacyCliFallback() {
+    fun installerPlacesProotDistroOptionsBeforeTheImage() {
         val scripts = HarnessScripts.scriptFiles("/sdcard/result").joinToString("\n") { it.body }
 
         assertTrue(scripts.contains("command -v proot-distro"))
         assertTrue(scripts.contains("pkg install -y proot-distro"))
-        assertTrue(scripts.contains("proot-distro install debian:bookworm --name daddy-linux"))
-        assertTrue(scripts.contains("proot-distro install debian --override-alias daddy-linux"))
+        assertTrue(
+            scripts.contains(
+                "proot-distro install --name daddy-linux --architecture aarch64 debian:bookworm"
+            )
+        )
+        assertTrue(
+            scripts.contains(
+                "proot-distro install --override-alias daddy-linux --architecture aarch64 debian"
+            )
+        )
+        assertFalse(scripts.contains("proot-distro install debian:bookworm --name daddy-linux"))
+        assertFalse(scripts.contains("proot-distro install debian --override-alias daddy-linux"))
         assertTrue(scripts.contains("proot-distro login daddy-linux"))
     }
 

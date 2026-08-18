@@ -112,9 +112,9 @@ internal object HarnessScripts {
         fi
 
         if proot-distro install --help 2>&1 | grep -q -- '--name'; then
-          proot-distro install debian:bookworm --name daddy-linux --architecture aarch64
+          proot-distro install --name daddy-linux --architecture aarch64 debian:bookworm
         else
-          proot-distro install debian --override-alias daddy-linux --architecture aarch64
+          proot-distro install --override-alias daddy-linux --architecture aarch64 debian
         fi
         login_check
     """.trimIndent() + "\n"
