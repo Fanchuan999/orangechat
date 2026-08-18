@@ -30,9 +30,11 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import me.rerere.rikkahub.data.datastore.HarnessInstallStage
 import me.rerere.rikkahub.data.datastore.HarnessStatus
 import me.rerere.rikkahub.data.sync.companion.HarnessScripts
 import me.rerere.rikkahub.ui.components.nav.BackButton
@@ -67,7 +69,14 @@ fun HarnessPage(
             if (state.isBusy) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        if (state.displayedInstallProgress > 0) {
+                            LinearProgressIndicator(
+                                progress = { state.displayedInstallProgress / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
                         Text(
                             text = "正在${state.busyAction}…",
                             style = MaterialTheme.typography.bodySmall,
@@ -78,6 +87,16 @@ fun HarnessPage(
 
             item {
                 StatusCard(state)
+            }
+
+            if (
+                (state.isBusy && state.busyAction == "安装或修复") ||
+                state.snapshot.installStage != HarnessInstallStage.UNKNOWN ||
+                state.snapshot.legacyRuntimeFound
+            ) {
+                item {
+                    InstallationProgressCard(state)
+                }
             }
 
             item {
@@ -93,7 +112,7 @@ fun HarnessPage(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("自动复活", style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    "崩溃后约 3 秒拉起，Android 后台每 15 分钟兜底检查。",
+                                    "首次意外退出会尽快拉起；连续失败时逐步延长间隔，Android 后台每 15 分钟兜底检查。",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             }
@@ -108,7 +127,7 @@ fun HarnessPage(
 
                         Button(
                             onClick = onOpenWorkspace,
-                            enabled = !state.isBusy && state.snapshot.status == HarnessStatus.RUNNING,
+                            enabled = !state.isBusy && canOpenHarnessWorkspace(state.snapshot.status),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text("打开 Harness 工作台")
@@ -205,29 +224,20 @@ fun HarnessPage(
 
 @Composable
 private fun StatusCard(state: HarnessUiState) {
-    val statusText = when (state.snapshot.status) {
-        HarnessStatus.NOT_INSTALLED -> "未安装"
-        HarnessStatus.INSTALLING -> "安装中"
-        HarnessStatus.STOPPED -> "已停止"
-        HarnessStatus.STARTING -> "启动中"
-        HarnessStatus.RUNNING -> "运行中"
-        HarnessStatus.MANUALLY_STOPPED -> "主动停止"
-        HarnessStatus.BACKING_OFF -> "等待恢复"
-        HarnessStatus.REPAIRING -> "修复中"
-        HarnessStatus.ERROR -> "异常"
-    }
-    val statusColor = when (state.snapshot.status) {
-        HarnessStatus.RUNNING -> MaterialTheme.colorScheme.primary
-        HarnessStatus.ERROR -> MaterialTheme.colorScheme.error
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val presentation = harnessStatusPresentation(state.snapshot)
+    val statusColor = harnessSeverityColor(presentation.severity)
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(statusText, color = statusColor, style = MaterialTheme.typography.headlineSmall)
+            Text(presentation.label, color = statusColor, style = MaterialTheme.typography.headlineSmall)
+            Text(
+                presentation.explanation,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Text("固定版本：${HarnessScripts.VERSION}")
             Text("已安装版本：${state.snapshot.installedVersion.ifBlank { "—" }}")
             Text("本机端口：127.0.0.1:3080")
@@ -240,4 +250,58 @@ private fun StatusCard(state: HarnessUiState) {
             }
         }
     }
+}
+
+@Composable
+private fun InstallationProgressCard(state: HarnessUiState) {
+    val snapshot = state.snapshot
+    val currentPhase = harnessInstallPhase(snapshot.installStage)
+        ?: failedHarnessInstallPhase(snapshot.detail)
+    val currentIndex = currentPhase?.ordinal ?: -1
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("安装进度", style = MaterialTheme.typography.titleMedium)
+            LinearProgressIndicator(
+                progress = { state.displayedInstallProgress / 100f },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text("${state.displayedInstallProgress}%", style = MaterialTheme.typography.bodySmall)
+            harnessInstallPhases.forEachIndexed { index, phase ->
+                val marker = when {
+                    snapshot.installStage == HarnessInstallStage.READY || index < currentIndex -> "✓"
+                    index == currentIndex -> if (snapshot.installStage == HarnessInstallStage.FAILED) "×" else "●"
+                    else -> "○"
+                }
+                Text(
+                    text = "$marker ${phase.label}",
+                    color = when {
+                        index == currentIndex && snapshot.installStage == HarnessInstallStage.FAILED -> {
+                            MaterialTheme.colorScheme.error
+                        }
+                        index <= currentIndex -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            if (snapshot.installStage == HarnessInstallStage.FAILED) {
+                Text(
+                    text = "失败阶段：${currentPhase?.label ?: "未知阶段"}。点击“安装 / 修复”会保留数据并从可用步骤继续。",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun harnessSeverityColor(severity: HarnessUiSeverity): Color = when (severity) {
+    HarnessUiSeverity.NORMAL -> MaterialTheme.colorScheme.onSurfaceVariant
+    HarnessUiSeverity.SUCCESS -> MaterialTheme.colorScheme.primary
+    HarnessUiSeverity.WARNING -> MaterialTheme.colorScheme.tertiary
+    HarnessUiSeverity.ERROR -> MaterialTheme.colorScheme.error
 }

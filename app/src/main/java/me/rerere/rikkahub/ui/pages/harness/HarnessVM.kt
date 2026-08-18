@@ -11,13 +11,18 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
+import me.rerere.rikkahub.data.datastore.HarnessStatus
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.sync.companion.HarnessManager
 import me.rerere.rikkahub.data.sync.companion.HarnessRecoveryScheduler
@@ -26,6 +31,7 @@ data class HarnessUiState(
     val snapshot: HarnessSnapshot = HarnessSnapshot(),
     val autoKeepRunning: Boolean = true,
     val busyAction: String? = null,
+    val displayedInstallProgress: Int = snapshot.installProgressPercent.coerceIn(0, 100),
     val message: String? = null,
     val error: String? = null,
 ) {
@@ -52,7 +58,7 @@ class HarnessVM(
 
     fun refresh() = operate("刷新状态") { harnessManager.inspect() }
 
-    fun install() = operate("安装或修复") { harnessManager.install() }
+    fun install() = operate(action = "安装或修复", monitorInstall = true) { harnessManager.install() }
 
     fun start() = operate("启动") { harnessManager.start() }
 
@@ -79,25 +85,49 @@ class HarnessVM(
 
     private fun operate(
         action: String,
+        monitorInstall: Boolean = false,
         operation: suspend () -> HarnessSnapshot,
     ) {
         viewModelScope.launch {
             operationMutex.withLock {
-                _state.value = _state.value.copy(busyAction = action, message = null, error = null)
-                runCatching {
-                    val snapshot = operation()
+                val initialProgress = if (monitorInstall) 0 else _state.value.displayedInstallProgress
+                _state.value = _state.value.copy(
+                    busyAction = action,
+                    displayedInstallProgress = initialProgress,
+                    message = null,
+                    error = null,
+                )
+                val operationResult = if (monitorInstall) {
+                    runWithInstallMonitoring(operation)
+                } else {
+                    runCatching { operation() }
+                }
+                operationResult.mapCatching { snapshot ->
                     val logs = runCatching { harnessManager.redactedLogTail() }.getOrDefault(snapshot.logTail)
                     val setting = settingsStore.settingsFlow.value.harnessSetting
                     HarnessRecoveryScheduler.sync(context, setting)
                     snapshot.copy(logTail = logs) to setting.autoKeepRunning
                 }.onSuccess { (snapshot, autoKeepRunning) ->
+                    publishSnapshot(snapshot, installationAttemptActive = monitorInstall)
                     _state.value = _state.value.copy(
                         snapshot = snapshot,
                         autoKeepRunning = autoKeepRunning,
                         busyAction = null,
-                        message = "${action}完成。",
+                        message = if (snapshot.status in setOf(
+                                HarnessStatus.INSTALLING,
+                                HarnessStatus.STARTING,
+                            )
+                        ) {
+                            "安装已在后台继续，可稍后刷新查看阶段。"
+                        } else {
+                            "${action}完成。"
+                        },
                     )
                 }.onFailure { error ->
+                    publishSnapshot(
+                        snapshot = harnessManager.snapshot.value,
+                        installationAttemptActive = monitorInstall,
+                    )
                     _state.value = _state.value.copy(
                         busyAction = null,
                         error = error.message ?: "${action}失败。",
@@ -105,5 +135,41 @@ class HarnessVM(
                 }
             }
         }
+    }
+
+    private suspend fun runWithInstallMonitoring(
+        operation: suspend () -> HarnessSnapshot,
+    ): Result<HarnessSnapshot> = coroutineScope {
+        val monitor = launch {
+            while (isActive) {
+                delay(INSTALL_MONITOR_INTERVAL_MS)
+                runCatching { harnessManager.inspect() }
+                    .onSuccess { snapshot -> publishSnapshot(snapshot, installationAttemptActive = true) }
+            }
+        }
+        try {
+            runCatching { operation() }
+        } finally {
+            monitor.cancelAndJoin()
+        }
+    }
+
+    private fun publishSnapshot(
+        snapshot: HarnessSnapshot,
+        installationAttemptActive: Boolean,
+    ) {
+        val current = _state.value
+        _state.value = current.copy(
+            snapshot = snapshot,
+            displayedInstallProgress = nextHarnessInstallProgress(
+                previous = current.displayedInstallProgress,
+                snapshot = snapshot,
+                installationAttemptActive = installationAttemptActive,
+            ),
+        )
+    }
+
+    private companion object {
+        const val INSTALL_MONITOR_INTERVAL_MS = 2_000L
     }
 }
