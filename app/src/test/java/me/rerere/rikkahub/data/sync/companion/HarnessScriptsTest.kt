@@ -24,7 +24,7 @@ class HarnessScriptsTest {
         assertTrue(scripts.contains("sha256sum -c"))
         assertTrue(scripts.contains("@deepseek-ai/dsh@0.1.0-rc.7"))
         assertFalse(scripts.contains("@deepseek-ai/dsh@0.1.0-rc.5"))
-        assertTrue(scripts.contains("web --port 3080"))
+        assertTrue(scripts.contains("--profile web"))
         assertTrue(scripts.contains("http://127.0.0.1:3080"))
         assertFalse(scripts.contains("@latest"))
         assertFalse(scripts.contains("0.0.0.0"))
@@ -73,6 +73,21 @@ class HarnessScriptsTest {
 
         assertTrue(bootstrap.first().contains("\$HOME/daddy-linux/services/harness/risk-gate"))
         assertTrue(bootstrap.first().contains("\$HOME/daddy-linux/services/harness/config"))
+    }
+
+    @Test
+    fun runnerPassesLauncherPatchBeforeBootingTheWebProfile() {
+        val runner = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/run-harness.sh") }
+            .body
+            .replace("\\\n", " ")
+            .replace(Regex("\\s+"), " ")
+
+        assertTrue(
+            runner.contains(
+                "dsh --patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml --profile web --port 3080"
+            )
+        )
     }
 
     @Test

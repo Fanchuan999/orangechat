@@ -312,7 +312,9 @@ internal object HarnessScripts {
             PATH=/opt/daddy-harness/runtime/node-current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             /opt/daddy-harness/runtime/node-current/bin/node \
             /opt/daddy-harness/runtime/harness/node_modules/.bin/dsh \
-            --patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml web --port 3080
+            --patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml \
+            --profile web \
+            --port 3080
     """.trimIndent() + "\n"
 
     private fun riskGatePackageJson(): String = """
