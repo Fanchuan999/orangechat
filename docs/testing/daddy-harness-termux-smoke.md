@@ -2,7 +2,7 @@
 
 ## 测试目标
 
-确认 Daddy v2.5.32（v218）可在 iQOO Neo 10 上覆盖更新，在 Termux 中幂等安装独立 Debian
+确认 Daddy v2.5.33（v219）可在 iQOO Neo 10 上覆盖更新，在 Termux 中幂等安装独立 Debian
 Bookworm ARM64 运行时，并稳定运行官方 DeepSeek Harness `0.1.0-rc.7`。官方 Docker Hub 在 Termux 中
 出现已识别的网络超时时，才改用明确标识的备用镜像源；桌面无法验证的项目保持“待实测”。
 
@@ -13,7 +13,7 @@ Bookworm ARM64 运行时，并稳定运行官方 DeepSeek Harness `0.1.0-rc.7`�
 | 手机 | iQOO Neo 10 | 待实测 |
 | Android / OriginOS | 以手机当前系统为准 | 待实测 |
 | Daddy 包名 | `me.rerere.orangechat.companion` | 桌面验证通过 |
-| Daddy 版本 | `2.5.32-companion`（218） | 桌面验证通过 |
+| Daddy 版本 | `2.5.33-companion`（219） | 桌面验证通过 |
 | Termux | 保留用户现有安装 | 待实测 |
 | PRoot 容器 | `daddy-linux` | 待实测 |
 | Linux 发行版 | Debian Bookworm ARM64 | 待实测 |
@@ -39,10 +39,10 @@ Bookworm ARM64 运行时，并稳定运行官方 DeepSeek Harness `0.1.0-rc.7`�
 | Harness 聚焦单元测试 | 通过 | 运行时契约、脚本、恢复、Manager、UI 与安全门均通过 |
 | 全仓 JVM 单元测试 | 通过 | 最终 `test + :app:packageCompanion` 共 `302 actionable tasks`，无测试失败 |
 | Companion APK 构建 | 通过 | 最终组合验证中的 `:app:packageCompanion` 成功 |
-| 包名 / 版本 | 通过 | `me.rerere.orangechat.companion` / `2.5.32-companion`（218） |
+| 包名 / 版本 | 通过 | `me.rerere.orangechat.companion` / `2.5.33-companion`（219） |
 | CPU 架构 | 通过 | ARM64 APK 中原生库仅含 `arm64-v8a` |
 | 覆盖更新签名 | 通过 | 与 v215 同为 `ea958214d61fac06047eb4a5316bebf621d7da5a6d21af74768d144cc4217b68` |
-| APK SHA-256 | 通过 | `fde3a3c60552598f45f0185cae4b7ee68bb9395ee58120f4659fc946976ce7be` |
+| APK SHA-256 | 通过 | `dd3c25edc764393f91838828574e13cfa755b69f673bcde9951dfec78d4adbad` |
 
 ## 安装与迁移
 

@@ -68,6 +68,14 @@ class HarnessScriptsTest {
     }
 
     @Test
+    fun bootstrapCreatesRiskGateDirectoriesBeforeWritingSafetyGateFiles() {
+        val bootstrap = HarnessScripts.bootstrapCommands("/sdcard/result")
+
+        assertTrue(bootstrap.first().contains("\$HOME/daddy-linux/services/harness/risk-gate"))
+        assertTrue(bootstrap.first().contains("\$HOME/daddy-linux/services/harness/config"))
+    }
+
+    @Test
     fun guestCommandsUseOnlyApprovedExplicitBindsAndPersistentDshHome() {
         val scripts = HarnessScripts.scriptFiles("/sdcard/result").joinToString("\n") { it.body }
 

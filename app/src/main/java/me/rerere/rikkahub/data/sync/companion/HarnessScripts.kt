@@ -28,7 +28,8 @@ internal object HarnessScripts {
         return buildList {
             add(
                 "mkdir -p \"$SCRIPTS\" \"$SERVICES/runtime\" \"$SERVICES/cache\" " +
-                    "\"$SERVICES/logs\" \"$RUN\" \"$DATA/dsh-home\" \"\$HOME/.termux/boot\"",
+                    "\"$SERVICES/logs\" \"$SERVICES/risk-gate\" \"$SERVICES/config\" " +
+                    "\"$RUN\" \"$DATA/dsh-home\" \"\$HOME/.termux/boot\"",
             )
             files.forEach { script -> add(writeScriptCommand(script)) }
             add(files.joinToString(prefix = "chmod 700 ", separator = " ") { expandableHomePath(it.path) })
