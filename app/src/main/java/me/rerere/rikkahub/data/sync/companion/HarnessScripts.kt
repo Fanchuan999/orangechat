@@ -91,7 +91,8 @@ internal object HarnessScripts {
         base="${'$'}HOME/daddy-linux"
         services="${'$'}base/services/harness"
         data="${'$'}base/data/harness"
-        mkdir -p "${'$'}services" "${'$'}data" "${'$'}HOME"
+        install_log="${'$'}services/logs/debian-install.log"
+        mkdir -p "${'$'}services/logs" "${'$'}data" "${'$'}HOME"
 
         login_check() {
           proot-distro login daddy-linux --isolated \
@@ -111,8 +112,34 @@ internal object HarnessScripts {
           exit 45
         fi
 
+        install_image() {
+          image="${'$'}1"
+          proot-distro install --name daddy-linux --architecture aarch64 "${'$'}image"
+        }
+
+        is_network_failure() {
+          grep -Eqi 'Network error|Network is unreachable|Connection timed out|timed out' "${'$'}1"
+        }
+
         if proot-distro install --help 2>&1 | grep -q -- '--name'; then
-          proot-distro install --name daddy-linux --architecture aarch64 debian:bookworm
+          if install_image "${HarnessRuntimeContract.DEBIAN_IMAGE}" > "${'$'}install_log" 2>&1; then
+            cat "${'$'}install_log"
+          else
+            official_status="${'$'}?"
+            if ! is_network_failure "${'$'}install_log"; then
+              cat "${'$'}install_log"
+              exit "${'$'}official_status"
+            fi
+            printf '%s\n' '[*] Official Docker Hub network failure; trying fallback mirror...' >> "${'$'}install_log"
+            if install_image "${HarnessRuntimeContract.DEBIAN_FALLBACK_IMAGE}" >> "${'$'}install_log" 2>&1; then
+              :
+            else
+              fallback_status="${'$'}?"
+              cat "${'$'}install_log"
+              exit "${'$'}fallback_status"
+            fi
+            cat "${'$'}install_log"
+          fi
         else
           proot-distro install --override-alias daddy-linux --architecture aarch64 debian
         fi

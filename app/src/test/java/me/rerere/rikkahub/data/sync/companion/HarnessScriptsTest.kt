@@ -38,7 +38,7 @@ class HarnessScriptsTest {
         assertTrue(scripts.contains("pkg install -y proot-distro"))
         assertTrue(
             scripts.contains(
-                "proot-distro install --name daddy-linux --architecture aarch64 debian:bookworm"
+                "proot-distro install --name daddy-linux --architecture aarch64 \"\$image\""
             )
         )
         assertTrue(
@@ -49,6 +49,22 @@ class HarnessScriptsTest {
         assertFalse(scripts.contains("proot-distro install debian:bookworm --name daddy-linux"))
         assertFalse(scripts.contains("proot-distro install debian --override-alias daddy-linux"))
         assertTrue(scripts.contains("proot-distro login daddy-linux"))
+    }
+
+    @Test
+    fun installerRetriesTheReachableMirrorOnlyAfterOfficialNetworkFailure() {
+        val debianInstaller = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/install-debian.sh") }
+            .body
+        val official = "debian:bookworm"
+        val fallback = "docker.m.daocloud.io/library/debian:bookworm"
+
+        assertTrue(debianInstaller.contains(official))
+        assertTrue(debianInstaller.contains(fallback))
+        assertTrue(debianInstaller.indexOf(official) < debianInstaller.indexOf(fallback))
+        assertTrue(debianInstaller.contains("is_network_failure"))
+        assertTrue(debianInstaller.contains("Connection timed out"))
+        assertTrue(debianInstaller.contains("Official Docker Hub network failure; trying fallback mirror"))
     }
 
     @Test

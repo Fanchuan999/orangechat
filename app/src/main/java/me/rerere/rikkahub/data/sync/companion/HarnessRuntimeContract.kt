@@ -12,6 +12,7 @@ import me.rerere.rikkahub.data.datastore.HarnessInstallStage
 internal object HarnessRuntimeContract {
     const val CONTAINER_NAME = "daddy-linux"
     const val DEBIAN_IMAGE = "debian:bookworm"
+    const val DEBIAN_FALLBACK_IMAGE = "docker.m.daocloud.io/library/debian:bookworm"
     const val ARCHITECTURE = "aarch64"
     const val NODE_VERSION = "24.19.0"
     const val HARNESS_VERSION = "0.1.0-rc.7"
