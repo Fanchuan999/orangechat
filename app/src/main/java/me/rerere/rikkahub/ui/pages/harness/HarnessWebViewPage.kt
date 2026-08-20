@@ -10,6 +10,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.view.ViewGroup.LayoutParams
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -96,6 +97,10 @@ fun HarnessWebViewPage() {
                 modifier = Modifier.fillMaxSize(),
                 factory = { viewContext ->
                     WebView(viewContext).apply {
+                        layoutParams = LayoutParams(
+                            LayoutParams.MATCH_PARENT,
+                            LayoutParams.MATCH_PARENT,
+                        )
                         configureHarnessSettings()
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -211,5 +216,8 @@ private fun WebView.configureHarnessSettings() {
         allowFileAccess = false
         mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         cacheMode = WebSettings.LOAD_DEFAULT
+        useWideViewPort = harnessWebViewport.useWideViewPort
+        loadWithOverviewMode = harnessWebViewport.loadWithOverviewMode
+        textZoom = harnessWebViewport.textZoomPercent
     }
 }
