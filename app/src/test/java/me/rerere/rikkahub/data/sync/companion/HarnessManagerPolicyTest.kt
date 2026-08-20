@@ -6,14 +6,31 @@
 
 package me.rerere.rikkahub.data.sync.companion
 
+import java.net.InetSocketAddress
+import java.net.Proxy
 import me.rerere.rikkahub.data.datastore.HarnessInstallStage
 import me.rerere.rikkahub.data.datastore.HarnessStatus
+import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HarnessManagerPolicyTest {
+    @Test
+    fun harnessHealthClientBypassesTheSystemProxyForTheLoopbackOnlyWorkspace() {
+        val upstreamClient = OkHttpClient.Builder()
+            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", 8899)))
+            .build()
+
+        val healthClient = buildHarnessHealthClient(upstreamClient)
+
+        assertEquals(Proxy.NO_PROXY, healthClient.proxy)
+        assertEquals(2_000, healthClient.connectTimeoutMillis)
+        assertEquals(2_000, healthClient.readTimeoutMillis)
+        assertEquals(2_000, healthClient.callTimeoutMillis)
+    }
+
     @Test
     fun statusRequiresBothProcessAndHttpHealth() {
         assertEquals(HarnessStatus.RUNNING, classifyHarness(true, true, true, ""))

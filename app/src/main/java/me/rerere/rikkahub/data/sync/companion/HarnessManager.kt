@@ -9,6 +9,7 @@ package me.rerere.rikkahub.data.sync.companion
 import android.content.Context
 import android.os.Environment
 import java.io.File
+import java.net.Proxy
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -143,17 +144,24 @@ internal fun boundedHarnessLog(text: String): String {
     return bounded
 }
 
+/**
+ * Harness is intentionally loopback-only. Do not inherit a system VPN/proxy
+ * here: it can make Daddy report a healthy local 3080 service as unavailable.
+ */
+internal fun buildHarnessHealthClient(sharedHttpClient: OkHttpClient): OkHttpClient = sharedHttpClient.newBuilder()
+    .proxy(Proxy.NO_PROXY)
+    .connectTimeout(2, TimeUnit.SECONDS)
+    .readTimeout(2, TimeUnit.SECONDS)
+    .callTimeout(2, TimeUnit.SECONDS)
+    .build()
+
 class HarnessManager(
     private val context: Context,
     private val settingsStore: SettingsStore,
     private val termuxConfigBridge: TermuxConfigBridge,
     sharedHttpClient: OkHttpClient,
 ) {
-    private val healthClient = sharedHttpClient.newBuilder()
-        .connectTimeout(2, TimeUnit.SECONDS)
-        .readTimeout(2, TimeUnit.SECONDS)
-        .callTimeout(2, TimeUnit.SECONDS)
-        .build()
+    private val healthClient = buildHarnessHealthClient(sharedHttpClient)
     private val initialSetting = settingsStore.settingsFlow.value.harnessSetting
     private val _snapshot = MutableStateFlow(
         HarnessSnapshot(
