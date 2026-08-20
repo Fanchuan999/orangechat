@@ -15,6 +15,7 @@ internal object HarnessRuntimeContract {
     const val DEBIAN_FALLBACK_IMAGE = "docker.m.daocloud.io/library/debian:bookworm"
     const val ARCHITECTURE = "aarch64"
     const val NODE_VERSION = "24.19.0"
+    const val PNPM_VERSION = "10.17.1"
     const val HARNESS_VERSION = "0.1.0-rc.7"
     const val LINUX_RUNTIME_MARKER = "daddy-linux-debian-v1"
 

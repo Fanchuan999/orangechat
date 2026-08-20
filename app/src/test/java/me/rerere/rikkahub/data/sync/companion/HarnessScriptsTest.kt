@@ -76,6 +76,18 @@ class HarnessScriptsTest {
     }
 
     @Test
+    fun installerAddsRiskGateToTheWebProfileDependencyTree() {
+        val installer = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/install-harness.sh") }
+            .body
+
+        assertTrue(installer.contains("DSH_HOME=\"/data/daddy-harness/dsh-home\""))
+        assertTrue(installer.contains("HOME=\"/data/daddy-harness/home\""))
+        assertTrue(installer.contains("pnpm@${HarnessRuntimeContract.PNPM_VERSION}"))
+        assertTrue(installer.contains("\"\$dsh\" plugin --profile web add \"\$risk_source\""))
+    }
+
+    @Test
     fun runnerPassesLauncherPatchBeforeBootingTheWebProfile() {
         val runner = HarnessScripts.scriptFiles("/sdcard/result")
             .single { it.path.endsWith("/run-harness.sh") }

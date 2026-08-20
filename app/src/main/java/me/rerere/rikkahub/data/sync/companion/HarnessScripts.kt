@@ -205,18 +205,20 @@ internal object HarnessScripts {
           --bind "/sdcard:/host/storage" \
           -- /bin/bash -lc '
             set -eu
-            export PATH="/opt/daddy-harness/runtime/node-current/bin:${'$'}PATH"
             prefix="/opt/daddy-harness/runtime/harness"
+            export HOME="/data/daddy-harness/home"
+            export DSH_HOME="/data/daddy-harness/dsh-home"
+            export PATH="/opt/daddy-harness/runtime/node-current/bin:${'$'}prefix/node_modules/.bin:${'$'}PATH"
             dsh="${'$'}prefix/node_modules/.bin/dsh"
             risk_source="/opt/daddy-harness/risk-gate"
-            risk_target="${'$'}prefix/node_modules/@daddy/harness-risk-gate"
             install_risk_gate() {
               test -r "${'$'}risk_source/index.mjs"
               test -r "${'$'}risk_source/package.json"
-              rm -rf "${'$'}risk_target"
-              mkdir -p "${'$'}(dirname "${'$'}risk_target")"
-              cp -a "${'$'}risk_source" "${'$'}risk_target"
-              "${'$'}prefix/../node-current/bin/node" "${'$'}risk_target/index.mjs" --self-test
+              if [ "${'$'}(pnpm --version 2>/dev/null || true)" != "${HarnessRuntimeContract.PNPM_VERSION}" ]; then
+                npm install --prefix "${'$'}prefix" "pnpm@${HarnessRuntimeContract.PNPM_VERSION}"
+              fi
+              "${'$'}dsh" plugin --profile web add "${'$'}risk_source"
+              "${'$'}prefix/../node-current/bin/node" "${'$'}risk_source/index.mjs" --self-test
             }
             installed="${'$'}(cat "${'$'}prefix/VERSION" 2>/dev/null || true)"
             if [ "${'$'}installed" = "${HarnessRuntimeContract.HARNESS_VERSION}" ] && [ -x "${'$'}dsh" ]; then
