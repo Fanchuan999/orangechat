@@ -171,6 +171,9 @@ class SettingsStore(
         // DeepSeek Harness 独立工作台
         val HARNESS_SETTING = stringPreferencesKey("harness_setting")
 
+        // Code Hut stores only work-model references, never API keys.
+        val CODE_HUT_SETTING = stringPreferencesKey("code_hut_setting")
+
         // 主动消息设置
         val PROACTIVE_MESSAGE_SETTING = stringPreferencesKey("proactive_message_setting")
 
@@ -313,6 +316,9 @@ class SettingsStore(
                 harnessSetting = preferences[HARNESS_SETTING]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: HarnessSetting(),
+                codeHutSetting = preferences[CODE_HUT_SETTING]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: CodeHutSetting(),
                 proactiveMessageSetting = preferences[PROACTIVE_MESSAGE_SETTING]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: ProactiveMessageSetting(),
@@ -518,6 +524,7 @@ class SettingsStore(
             preferences[SPONSOR_ALERT_DISMISSED_AT] = settings.sponsorAlertDismissedAt
             preferences[SYSTEM_TOOLS_SETTING] = JsonInstant.encodeToString(settings.systemToolsSetting)
             preferences[HARNESS_SETTING] = JsonInstant.encodeToString(settings.harnessSetting)
+            preferences[CODE_HUT_SETTING] = JsonInstant.encodeToString(settings.codeHutSetting)
             preferences[PROACTIVE_MESSAGE_SETTING] = JsonInstant.encodeToString(settings.proactiveMessageSetting)
             preferences[COMPANION_MOOD_SETTING] = JsonInstant.encodeToString(settings.companionMoodSetting)
             preferences[COMPANION_CONTINUITY_PROFILES] = JsonInstant.encodeToString(settings.companionContinuityProfiles)
@@ -698,6 +705,7 @@ data class Settings(
     val sponsorAlertDismissedAt: Int = 0,
     val systemToolsSetting: SystemToolsSetting = SystemToolsSetting(),
     val harnessSetting: HarnessSetting = HarnessSetting(),
+    val codeHutSetting: CodeHutSetting = CodeHutSetting(),
     val proactiveMessageSetting: ProactiveMessageSetting = ProactiveMessageSetting(),
     val companionMoodSetting: CompanionMoodSetting = CompanionMoodSetting(),
     val companionContinuityProfiles: List<CompanionContinuityProfile> = emptyList(),
