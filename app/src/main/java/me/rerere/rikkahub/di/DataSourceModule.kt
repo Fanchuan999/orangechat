@@ -53,6 +53,9 @@ import me.rerere.rikkahub.data.sync.companion.AmapMcpService
 import me.rerere.rikkahub.data.sync.companion.CompanionBackupService
 import me.rerere.rikkahub.data.sync.companion.HarnessManager
 import me.rerere.rikkahub.data.sync.companion.TermuxConfigBridge
+import me.rerere.rikkahub.data.codehut.CodeHutCredentialBridge
+import me.rerere.rikkahub.data.codehut.CodeHutProviderResolver
+import me.rerere.rikkahub.data.codehut.SettingsCodeHutProviderResolver
 import me.rerere.search.SearchService
 import me.rerere.rikkahub.data.sync.S3Sync
 import okhttp3.Dispatcher
@@ -295,6 +298,16 @@ val dataSourceModule = module {
     single { ChatMediaStorageService(filesManager = get(), conversationRepository = get(), settingsStore = get()) }
 
     single { TermuxConfigBridge(context = get()) }
+
+    single<CodeHutProviderResolver> { SettingsCodeHutProviderResolver(settingsStore = get()) }
+
+    single {
+        val sharedHttpClient: OkHttpClient = get()
+        CodeHutCredentialBridge(
+            providerResolver = get(),
+            upstreamClient = { sharedHttpClient },
+        )
+    }
 
     single {
         HarnessManager(
