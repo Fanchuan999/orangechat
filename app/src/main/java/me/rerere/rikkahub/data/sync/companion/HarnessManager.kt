@@ -12,6 +12,8 @@ import java.io.File
 import java.net.Proxy
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -155,6 +157,10 @@ internal fun buildHarnessHealthClient(sharedHttpClient: OkHttpClient): OkHttpCli
     .callTimeout(2, TimeUnit.SECONDS)
     .build()
 
+internal suspend fun <T> runHarnessHealthCheckOnIo(check: () -> T): T = withContext(Dispatchers.IO) {
+    check()
+}
+
 class HarnessManager(
     private val context: Context,
     private val settingsStore: SettingsStore,
@@ -197,7 +203,7 @@ class HarnessManager(
         }
         resultFile.delete()
 
-        val httpHealthy = isHttpHealthy()
+        val httpHealthy = runHarnessHealthCheckOnIo { isHttpHealthy() }
         val status = if (probeFailure != null && probe.version.isNotBlank()) {
             HarnessStatus.ERROR
         } else {

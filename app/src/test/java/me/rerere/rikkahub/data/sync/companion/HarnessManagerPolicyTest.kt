@@ -13,10 +13,21 @@ import me.rerere.rikkahub.data.datastore.HarnessStatus
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 
 class HarnessManagerPolicyTest {
+    @Test
+    fun harnessHealthCheckRunsOffTheCallingThread() = runBlocking {
+        val callingThreadName = Thread.currentThread().name
+
+        val healthCheckThreadName = runHarnessHealthCheckOnIo { Thread.currentThread().name }
+
+        assertNotEquals(callingThreadName, healthCheckThreadName)
+    }
+
     @Test
     fun harnessHealthClientBypassesTheSystemProxyForTheLoopbackOnlyWorkspace() {
         val upstreamClient = OkHttpClient.Builder()
