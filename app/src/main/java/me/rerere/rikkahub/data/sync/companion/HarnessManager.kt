@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import me.rerere.rikkahub.data.datastore.HarnessInstallStage
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.HarnessStatus
+import me.rerere.rikkahub.data.datastore.CodeHutApprovalMode
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.codehut.CodeHutCredentialBridge
 import me.rerere.rikkahub.data.codehut.HarnessProviderConfigFactory
@@ -284,13 +285,13 @@ class HarnessManager(
         }
     }
 
-    suspend fun syncApprovalMode() {
+    suspend fun syncApprovalMode(mode: CodeHutApprovalMode) {
         val resultFile = resultFile("approval")
         resultFile.delete()
         try {
             termuxConfigBridge.executeCommandsAndWait(
                 commands = buildList {
-                    addAll(HarnessScripts.configureApprovalModeCommands(settingsStore.settingsFlow.value.codeHutSetting.approvalMode))
+                    addAll(HarnessScripts.configureApprovalModeCommands(mode))
                     add("printf '%s' '$READY_MARKER' > ${shellQuote(resultFile.absolutePath)}")
                 },
                 completionFile = resultFile,
@@ -298,6 +299,53 @@ class HarnessManager(
                 waitAttempts = QUICK_WAIT_ATTEMPTS,
             )
             require(resultFile.readText().trim() == READY_MARKER) { "代码小屋审批预设没有成功写入工作台。" }
+        } finally {
+            resultFile.delete()
+        }
+    }
+
+    /**
+     * Used when a requested approval-mode change cannot be acknowledged.  The file write is
+     * atomic; if it still cannot be acknowledged, stop the local Harness rather than leave a
+     * potentially permissive risk gate running.
+     */
+    suspend fun forceConservativeApprovalMode() {
+        try {
+            syncApprovalMode(CodeHutApprovalMode.ASK_EVERY_TIME)
+        } catch (syncFailure: Throwable) {
+            runCatching { stopForApprovalSafety() }
+                .exceptionOrNull()
+                ?.let(syncFailure::addSuppressed)
+            throw syncFailure
+        }
+    }
+
+    private suspend fun stopForApprovalSafety() {
+        codeHutCredentialBridge.revokeLease()
+        val resultFile = resultFile("approval_safety_stop")
+        resultFile.delete()
+        try {
+            termuxConfigBridge.executeCommandsAndWait(
+                commands = buildList {
+                    // Do not write the persisted (possibly permissive) mode again on this path.
+                    add(HarnessScripts.stopCommand(clearCodeHutEnvironment = true))
+                    add("printf '%s' '$READY_MARKER' > ${shellQuote(resultFile.absolutePath)}")
+                },
+                completionFile = resultFile,
+                timeoutMessage = "代码小屋权限预设未同步，且未能安全停止工作台。",
+                waitAttempts = QUICK_WAIT_ATTEMPTS,
+            )
+            require(resultFile.readText().trim() == READY_MARKER) {
+                "代码小屋权限预设未同步，且未能安全停止工作台。"
+            }
+            settingsStore.update { settings ->
+                settings.copy(
+                    harnessSetting = settings.harnessSetting.copy(
+                        autoKeepRunning = false,
+                        manuallyStopped = true,
+                    ),
+                )
+            }
         } finally {
             resultFile.delete()
         }

@@ -78,7 +78,7 @@ internal object HarnessScripts {
     )
 
     fun configureApprovalModeCommands(mode: CodeHutApprovalMode): List<String> = listOf(
-        writeManagedFileCommand(approvalModeEnvironmentFile(mode), APPROVAL_MODE_ENV),
+        writeManagedFileAtomically(approvalModeEnvironmentFile(mode), APPROVAL_MODE_ENV),
         "chmod 600 \"$APPROVAL_MODE_ENV\"",
     )
 
@@ -370,7 +370,8 @@ internal object HarnessScripts {
         import { isAbsolute, resolve } from 'node:path'
 
         export const name = 'daddy-harness-risk-gate'
-        const APPROVAL_MODE_PATH = '/opt/daddy-harness/run/code-hut-approval.env'
+        const APPROVAL_MODE_PATH = process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH ??
+          '/opt/daddy-harness/run/code-hut-approval.env'
         const APPROVAL_MODE_ASK = 'ASK_EVERY_TIME'
         const APPROVAL_MODE_HELP = 'HELP_ME_APPROVE'
 
@@ -418,6 +419,25 @@ internal object HarnessScripts {
           return undefined
         }
 
+        function containsSensitivePath(value) {
+          const normalized = String(value ?? '').replace(/\\/g, '/').toLowerCase()
+          return /(?:^|[\/\s'"])(?:\.env(?:\.[^/\s'"]+)?|\.credentials(?:\.[^/\s'"]+)?|\.git-credentials|\.netrc|\.npmrc|\.pypirc|id_(?:rsa|ecdsa|ed25519)|credentials(?:\.[^/\s'"]+)?)(?:[\/\s'"]|${'$'})|(?:^|[\/\s'"])\.ssh(?:[\/\s'"]|${'$'})|(?:^|[\/\s'"])\.aws(?:[\/\s'"]|${'$'})|(?:^|[\/\s'"])\.kube(?:[\/\s'"]|${'$'})|(?:^|[\/\s'"])\.config\/(?:gcloud|gh|hub)(?:[\/\s'"]|${'$'})/i.test(normalized)
+        }
+
+        function containsCredentialMaterial(value) {
+          if (typeof value === 'string') {
+            return containsSensitivePath(value) ||
+              /(?:authorization\s*[:=]|api[_ -]?key\s*[:=]|(?:access[_ -]?token|refresh[_ -]?token|password|passwd|secret)\s*[:=])/i.test(value)
+          }
+          if (Array.isArray(value)) return value.some(containsCredentialMaterial)
+          if (value !== null && typeof value === 'object') return Object.values(value).some(containsCredentialMaterial)
+          return false
+        }
+
+        function isCredentialTool(name) {
+          return /(?:^|[_-])(?:auth|login|credential|token|secret|api[_-]?key|oauth|vault)(?:[_-]|${'$'})/.test(name)
+        }
+
         function targetExists(exec, args) {
           const path = stringArg(args, 'path', 'file_path', 'target', 'destination', 'dest')
           if (path === undefined) return undefined
@@ -459,11 +479,11 @@ internal object HarnessScripts {
         }
 
         function describeTarget(exec, args, risk) {
+          if (risk === 'credential') return '敏感凭据或配置（内容已隐藏）'
           const path = stringArg(args, 'path', 'file_path', 'target', 'destination', 'dest', 'url', 'uri')
           if (path !== undefined) return redactSensitiveText(path)
           const command = stringArg(args, 'command', 'cmd', 'script')
           if (command !== undefined) {
-            if (risk === 'credential') return '敏感凭据命令（内容已隐藏）'
             if (risk === 'external-submit') return summarizeExternalTarget(command)
             return redactSensitiveText(command)
           }
@@ -497,31 +517,14 @@ internal object HarnessScripts {
 
         function shellRisk(command) {
           const normalized = command.trim().replace(/\s+/g, ' ')
-          if (normalized.length === 0) return null
+          if (normalized.length === 0) return 'high-risk-shell'
           const tokens = tokenize(normalized)
           const first = tokens[0]?.toLowerCase() ?? ''
           const second = tokens[1]?.toLowerCase() ?? ''
-          if (['curl', 'wget', 'http', 'httpie', 'invoke-webrequest', 'iwr'].includes(first) &&
-              /(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request\s+(?:POST|PUT|PATCH|DELETE)\b|--data(?:-raw|-binary)?\b|--form\b|-d\s)/i.test(normalized)) {
-            return 'external-submit'
-          }
-          if (/\b(?:gh\s+auth\s+login|docker\s+login|npm\s+login|pnpm\s+login|yarn\s+login|aws\s+configure|gcloud\s+auth\s+login|az\s+login|op\s+signin|pass\s+insert|vault\s+login|ssh-keygen|api[_ -]?key|token|secret|password|passwd|authorization\s*[:=]\s*(?:bearer\s+)?)\b/i.test(normalized)) {
+          if (containsCredentialMaterial(normalized) ||
+              /\b(?:gh\s+auth\s+login|docker\s+login|npm\s+login|pnpm\s+login|yarn\s+login|aws\s+configure|gcloud\s+auth\s+login|az\s+login|op\s+signin|pass\s+insert|vault\s+login|ssh-keygen|api[_ -]?key|token|secret|password|passwd|authorization\s*[:=]\s*(?:bearer\s+)?)\b/i.test(normalized)) {
             return 'credential'
           }
-          if (['pwd', 'ls', 'dir', 'cat', 'head', 'tail', 'find', 'grep'].includes(first)) return 'low-risk'
-          if (first === 'git' && ['status', 'diff', 'log', 'pull'].includes(second)) return 'low-risk'
-          if (['unzip', 'tar'].includes(first) && /(?:-x|xf|\s+x[fv]?)/i.test(normalized)) return 'low-risk'
-          if (first === 'mkdir') return 'low-risk'
-          if (['./gradlew', 'gradlew', 'gradle', 'mvn', './mvnw', 'npm', 'pnpm', 'yarn', 'bun', 'cargo', 'go'].includes(first) &&
-              /\b(?:test|build|check|lint|assemble|verify)\b/i.test(normalized)) {
-            return 'low-risk'
-          }
-          if (['curl', 'wget', 'http', 'httpie', 'invoke-webrequest', 'iwr'].includes(first) &&
-              !/(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request\s+(?:POST|PUT|PATCH|DELETE)\b|--data(?:-raw|-binary)?\b|--form\b|-d\s)/i.test(normalized)) {
-            return 'low-risk'
-          }
-          if (['ssh', 'scp', 'sftp', 'rsync', 'nc', 'ncat', 'telnet'].includes(first)) return 'external-submit'
-
           if (/(^|[;&|()\s])(?:rm|rmdir|unlink|shred)\s/i.test(normalized)) return 'delete'
           if (/\bfind\b[^\n]*(?:-delete|-exec\s+(?:rm|rmdir|unlink|shred)\b)/i.test(normalized)) return 'delete'
           if (/\brsync\b[^\n]*--delete(?:-|\s|${'$'})/i.test(normalized)) return 'delete'
@@ -545,6 +548,11 @@ internal object HarnessScripts {
           }
           if (/\b(?:npm|pnpm|yarn|cargo)\b[^\n]*\bpublish\b|\btwine\b[^\n]*\bupload\b/i.test(normalized)) return 'external-submit'
           if (/\b(?:git\s+push|gh\s+release|gh\s+pr\s+merge)\b/i.test(normalized)) return 'git-push-or-release'
+          if (/\b(?:sudo|su)\b/i.test(normalized)) return 'privileged'
+          if (/(?:^|\s)(?:curl|wget|http|httpie|invoke-webrequest|iwr)\b[^\n]*(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request\s+(?:POST|PUT|PATCH|DELETE)\b|--data(?:-raw|-binary)?\b|--form\b|-d\s)/i.test(normalized)) {
+            return 'external-submit'
+          }
+          if (/(?:^|\s)(?:ssh|scp|sftp|rsync|nc|ncat|telnet)\b/i.test(normalized)) return 'external-submit'
           if (/\b(?:adb\s+shell\s+)?(?:pm\s+(?:grant|revoke|disable-user|clear|uninstall)|appops|settings\s+put|svc\s+|setprop|cmd\s+package)\b/i.test(normalized)) {
             return 'android-system'
           }
@@ -552,16 +560,25 @@ internal object HarnessScripts {
           if (/\b(?:mkfs(?:\.[a-z0-9]+)?|fdisk|parted|wipefs|mount|umount)\b/i.test(normalized)) return 'privileged'
           if (/\b(?:shutdown|reboot|poweroff|halt)\b/i.test(normalized)) return 'high-risk-shell'
           if (/\b(?:chmod|chown|chgrp)\b[^\n]*(?:-R|--recursive)\b/i.test(normalized)) return 'privileged'
-          if (/\b(?:sudo|su)\b/i.test(normalized)) return 'privileged'
           if (/\beval\b/i.test(normalized)) return 'high-risk-shell'
           if (/\b(?:python(?:3)?\s+-c|node\s+-e|bash\s+-c|sh\s+-c|xargs)\b/i.test(normalized)) return 'high-risk-shell'
-          return null
+
+          // Shell grammar is deliberately not parsed here. Any control operator, pipeline,
+          // command substitution, or subshell requires confirmation even when it starts with a
+          // benign command. This prevents `ls && rm ...` style bypasses.
+          if (/(?:&&|\|\||[;|`]|\${'$'}\(|[()])/.test(normalized)) return 'high-risk-shell'
+
+          // HELP_ME_APPROVE may only continue strict, single-command read-only operations.
+          if (['pwd', 'ls', 'dir', 'cat', 'head', 'tail', 'find', 'grep'].includes(first)) return 'low-risk'
+          if (first === 'git' && ['status', 'diff', 'log'].includes(second)) return 'low-risk'
+          return 'high-risk-shell'
         }
 
         export function classifyToolCall(exec) {
           const tool = String(exec.name ?? '')
           const lower = tool.toLowerCase()
           const args = objectArgs(exec.arguments)
+          if (isCredentialTool(lower) || containsCredentialMaterial(args)) return 'credential'
           if (LOW_RISK_TOOLS.has(lower)) return 'low-risk'
 
           if (lower === 'write' || /(?:^|[_-])write(?:[_-]|${'$'})/.test(lower)) {
@@ -586,13 +603,12 @@ internal object HarnessScripts {
           if (lower === 'bash' || lower === 'pwsh' || lower === 'shell' || lower.endsWith('_shell') || lower.endsWith('_exec')) {
             return shellRisk(stringArg(args, 'command', 'cmd', 'script') ?? '')
           }
-          return null
+          return 'high-risk-shell'
         }
 
         export function apply(ctx) {
           ctx.on('tools/pre-execute', async (exec, next) => {
             const risk = classifyToolCall(exec)
-            if (risk === null) return next()
             if (risk === 'low-risk' && readApprovalMode() === APPROVAL_MODE_HELP) return next()
             return { kind: 'ask', reason: riskReason(exec, risk) }
           })
@@ -606,14 +622,18 @@ internal object HarnessScripts {
             [{ name: 'bash', arguments: { command: 'git clean -fd' } }, 'delete'],
             [{ name: 'bash', arguments: { command: 'git reset --hard HEAD' } }, 'high-risk-shell'],
             [{ name: 'bash', arguments: { command: 'mv a b archive/' } }, 'bulk-move'],
-            [{ name: 'bash', arguments: { command: './gradlew test' } }, 'low-risk'],
-            [{ name: 'bash', arguments: { command: 'git pull --ff-only' } }, 'low-risk'],
+            [{ name: 'bash', arguments: { command: 'ls -la' } }, 'low-risk'],
+            [{ name: 'bash', arguments: { command: 'git status --short' } }, 'low-risk'],
             [{ name: 'bash', arguments: { command: 'npm i eslint' } }, 'package-install'],
             [{ name: 'bash', arguments: { command: 'yarn add react' } }, 'package-install'],
             [{ name: 'bash', arguments: { command: 'npm install vite' } }, 'package-install'],
             [{ name: 'bash', arguments: { command: 'cargo publish' } }, 'external-submit'],
             [{ name: 'bash', arguments: { command: 'gh auth login' } }, 'credential'],
             [{ name: 'bash', arguments: { command: 'git push origin HEAD' } }, 'git-push-or-release'],
+            [{ name: 'bash', arguments: { command: 'ls && rm -rf build' } }, 'delete'],
+            [{ name: 'bash', arguments: { command: 'git status; git push origin HEAD' } }, 'git-push-or-release'],
+            [{ name: 'bash', arguments: { command: 'cat .env' } }, 'credential'],
+            [{ name: 'read', arguments: { path: '.credentials.yaml' } }, 'credential'],
             [{ name: 'bash', arguments: { command: 'curl -X POST https://example.com -d x=1' } }, 'external-submit'],
             [{ name: 'bash', arguments: { command: 'adb shell pm grant app android.permission.POST_NOTIFICATIONS' } }, 'android-system'],
             [{ name: 'bash', arguments: { command: 'sudo systemctl restart ssh' } }, 'privileged'],
@@ -885,6 +905,14 @@ internal object HarnessScripts {
     private fun writeManagedFileCommand(body: String, path: String): String {
         val encoded = Base64.getEncoder().encodeToString(body.toByteArray(Charsets.UTF_8))
         return "printf %s ${shellQuote(encoded)} | base64 -d > ${expandableHomePath(path)}"
+    }
+
+    private fun writeManagedFileAtomically(body: String, path: String): String {
+        val encoded = Base64.getEncoder().encodeToString(body.toByteArray(Charsets.UTF_8))
+        val temporaryPath = "$path.tmp"
+        return "printf %s ${shellQuote(encoded)} | base64 -d > ${expandableHomePath(temporaryPath)} && " +
+            "chmod 600 ${expandableHomePath(temporaryPath)} && " +
+            "mv -f ${expandableHomePath(temporaryPath)} ${expandableHomePath(path)}"
     }
 
     private fun environmentFile(environment: Map<String, String>): String = buildString {

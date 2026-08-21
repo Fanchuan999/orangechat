@@ -276,7 +276,7 @@ class HarnessScriptsTest {
         assertTrue(gate.contains("动作："))
         assertTrue(gate.contains("目标："))
         assertTrue(gate.contains("原因："))
-        assertTrue(gate.contains("敏感凭据命令（内容已隐藏）"))
+        assertTrue(gate.contains("敏感凭据或配置（内容已隐藏）"))
         assertTrue(gate.contains("外部提交命令（内容已隐藏）"))
         assertTrue(gate.contains("runSelfTest"))
         assertTrue(patch.contains("@daddy/harness-risk-gate"))
@@ -299,7 +299,7 @@ class HarnessScriptsTest {
         assertTrue(gate.contains("terminal_send"))
         assertTrue(gate.contains("rm"))
         assertTrue(gate.contains("git clean"))
-        assertTrue(gate.contains("git pull"))
+        assertTrue(gate.contains("git status"))
         assertTrue(gate.contains("git reset --hard"))
         assertTrue(gate.contains("npm i eslint"))
         assertTrue(gate.contains("yarn add react"))
@@ -311,7 +311,7 @@ class HarnessScriptsTest {
     }
 
     @Test
-    fun riskGateKeepsLowRiskBuildAndReadonlyFetchFlowsUngated() {
+    fun riskGateKeepsStrictSingleReadonlyCommandsClassifiedAsLowRisk() {
         val gate = HarnessScripts.scriptFiles("/sdcard/result")
             .single { it.path.endsWith("/risk-gate/index.mjs") }
             .body
@@ -323,20 +323,20 @@ class HarnessScriptsTest {
             runnerFile,
             """
                 import { classifyToolCall } from './risk-gate.mjs'
-                const buildRisk = classifyToolCall({
+                const listRisk = classifyToolCall({
                   name: 'bash',
-                  arguments: { command: './gradlew test' },
+                  arguments: { command: 'ls -la' },
                 })
-                const gitPullRisk = classifyToolCall({
+                const gitStatusRisk = classifyToolCall({
                   name: 'bash',
-                  arguments: { command: 'git pull --ff-only' },
+                  arguments: { command: 'git status --short' },
                 })
                 const readRisk = classifyToolCall({
                   name: 'read',
                   arguments: { path: 'README.md' },
                 })
-                if (buildRisk !== 'low-risk') throw new Error(`expected build to classify low-risk, got ${'$'}{buildRisk}`)
-                if (gitPullRisk !== 'low-risk') throw new Error(`expected git pull to classify low-risk, got ${'$'}{gitPullRisk}`)
+                if (listRisk !== 'low-risk') throw new Error(`expected list to classify low-risk, got ${'$'}{listRisk}`)
+                if (gitStatusRisk !== 'low-risk') throw new Error(`expected git status to classify low-risk, got ${'$'}{gitStatusRisk}`)
                 if (readRisk !== 'low-risk') throw new Error(`expected read to classify low-risk, got ${'$'}{readRisk}`)
                 process.stdout.write('low risk paths stay classified\n')
             """.trimIndent(),
@@ -356,6 +356,70 @@ class HarnessScriptsTest {
     }
 
     @Test
+    fun riskGateFailsClosedForChainedCommandsAndSecretReadsInHelpMode() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+        val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-command-safety")
+        val gateFile = tempDir.resolve("risk-gate.mjs")
+        val runnerFile = tempDir.resolve("command-safety-test.mjs")
+        val approvalModeFile = tempDir.resolve("code-hut-approval.env")
+        Files.writeString(gateFile, gate)
+        Files.writeString(approvalModeFile, "DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'\n")
+        Files.writeString(
+            runnerFile,
+            """
+                import { classifyToolCall, apply } from './risk-gate.mjs'
+
+                const cases = [
+                  [{ name: 'bash', arguments: { command: 'ls && rm -rf data' } }, 'delete'],
+                  [{ name: 'bash', arguments: { command: 'git status; git push origin HEAD' } }, 'git-push-or-release'],
+                  [{ name: 'bash', arguments: { command: 'cat .env' } }, 'credential'],
+                  [{ name: 'read', arguments: { path: '.credentials.yaml' } }, 'credential'],
+                  [{ name: 'bash', arguments: { command: 'ls -la' } }, 'low-risk'],
+                ]
+                for (const [exec, expected] of cases) {
+                  const actual = classifyToolCall(exec)
+                  if (actual !== expected) {
+                    throw new Error(`expected ${'$'}{JSON.stringify(exec)} to be ${'$'}{expected}, got ${'$'}{actual}`)
+                  }
+                }
+
+                const handlers = []
+                apply({ on(name, handler) {
+                  if (name !== 'tools/pre-execute') throw new Error(`unexpected hook ${'$'}{name}`)
+                  handlers.push(handler)
+                } })
+                const handler = handlers[0]
+                const next = () => ({ kind: 'next' })
+                const secretRead = await handler(cases[3][0], next)
+                const dangerousChain = await handler(cases[0][0], next)
+                const safeRead = await handler(cases[4][0], next)
+                if (secretRead.kind !== 'ask') throw new Error('secret read must still ask in HELP_ME_APPROVE')
+                if (dangerousChain.kind !== 'ask') throw new Error('chained destructive command must still ask')
+                if (safeRead.kind !== 'next') throw new Error('strict single read-only command should pass in HELP_ME_APPROVE')
+                if (secretRead.reason.includes('.credentials.yaml')) throw new Error('secret path leaked into confirmation')
+                process.stdout.write('chained command and secret path safety verified\\n')
+            """.trimIndent(),
+        )
+        try {
+            val process = ProcessBuilder("node", runnerFile.toString())
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .also { builder ->
+                    builder.environment()["DADDY_CODE_HUT_APPROVAL_MODE_PATH"] = approvalModeFile.toString()
+                }
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            assertEquals(output, 0, process.waitFor())
+            assertTrue(output, output.contains("chained command and secret path safety verified"))
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun riskGateReadsApprovalPresetFileAndFailsClosedWhenMissing() {
         val gate = HarnessScripts.scriptFiles("/sdcard/result")
             .single { it.path.endsWith("/risk-gate/index.mjs") }
@@ -363,6 +427,7 @@ class HarnessScriptsTest {
         val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-approval-mode")
         val gateFile = tempDir.resolve("risk-gate.mjs")
         val runnerFile = tempDir.resolve("approval-mode-test.mjs")
+        val approvalModeFile = tempDir.resolve("code-hut-approval.env")
         Files.writeString(gateFile, gate)
         Files.writeString(
             runnerFile,
@@ -372,13 +437,13 @@ class HarnessScriptsTest {
 
                 const lowRiskExec = {
                   name: 'bash',
-                  arguments: { command: './gradlew test' },
+                  arguments: { command: 'ls -la' },
                 }
                 const dangerousExec = {
                   name: 'bash',
                   arguments: { command: 'git push origin HEAD' },
                 }
-                if (classifyToolCall(lowRiskExec) !== 'low-risk') throw new Error('expected build command to classify low-risk')
+                if (classifyToolCall(lowRiskExec) !== 'low-risk') throw new Error('expected list command to classify low-risk')
                 if (classifyToolCall(dangerousExec) !== 'git-push-or-release') {
                   throw new Error('expected dangerous command to stay gated')
                 }
@@ -397,15 +462,14 @@ class HarnessScriptsTest {
                 const noPreset = await handler(dangerousExec, next)
                 if (noPreset.kind !== 'ask') throw new Error(`expected fail-closed ask without preset, got ${'$'}{JSON.stringify(noPreset)}`)
 
-                fs.mkdirSync('/opt/daddy-harness/run', { recursive: true })
-                fs.writeFileSync('/opt/daddy-harness/run/code-hut-approval.env', "DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'\n")
+                fs.writeFileSync(process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH, "DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'\n")
 
                 const helpLowRisk = await handler(lowRiskExec, next)
                 const helpDangerous = await handler(dangerousExec, next)
                 if (helpLowRisk.kind !== 'next') throw new Error(`expected low risk to auto-allow in HELP_ME_APPROVE, got ${'$'}{JSON.stringify(helpLowRisk)}`)
                 if (helpDangerous.kind !== 'ask') throw new Error(`expected dangerous command to keep asking, got ${'$'}{JSON.stringify(helpDangerous)}`)
 
-                fs.writeFileSync('/opt/daddy-harness/run/code-hut-approval.env', "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n")
+                fs.writeFileSync(process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH, "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n")
                 const askLowRisk = await handler(lowRiskExec, next)
                 if (askLowRisk.kind !== 'ask') throw new Error(`expected low risk to ask in ASK_EVERY_TIME, got ${'$'}{JSON.stringify(askLowRisk)}`)
 
@@ -416,15 +480,16 @@ class HarnessScriptsTest {
             val process = ProcessBuilder("node", runnerFile.toString())
                 .directory(tempDir.toFile())
                 .redirectErrorStream(true)
+                .also { builder ->
+                    builder.environment()["DADDY_CODE_HUT_APPROVAL_MODE_PATH"] = approvalModeFile.toString()
+                }
                 .start()
             val output = process.inputStream.bufferedReader().use { it.readText() }
 
             assertEquals(output, 0, process.waitFor())
             assertTrue(output, output.contains("approval mode gating verified"))
         } finally {
-            tempDir.resolve("opt").toFile().deleteRecursively()
             tempDir.toFile().deleteRecursively()
-            java.io.File("/opt/daddy-harness/run/code-hut-approval.env").delete()
         }
     }
 
@@ -456,6 +521,7 @@ class HarnessScriptsTest {
         val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-redaction")
         val gateFile = tempDir.resolve("risk-gate.mjs")
         val runnerFile = tempDir.resolve("redaction-test.mjs")
+        val approvalModeFile = tempDir.resolve("code-hut-approval.env")
         Files.writeString(gateFile, gate)
         Files.writeString(
             runnerFile,
@@ -486,8 +552,7 @@ class HarnessScriptsTest {
                 apply({ on(name, handler) { if (name === 'tools/pre-execute') events.push(handler) } })
                 const handler = events[0]
                 const next = () => ({ kind: 'next' })
-                fs.mkdirSync('/opt/daddy-harness/run', { recursive: true })
-                fs.writeFileSync('/opt/daddy-harness/run/code-hut-approval.env', "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n")
+                fs.writeFileSync(process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH, "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n")
 
                 const credentialReason = await handler({
                   name: 'bash',
@@ -502,7 +567,7 @@ class HarnessScriptsTest {
                 if (externalReason.kind !== 'ask') throw new Error('expected external submit to ask')
                 if (credentialReason.reason.includes('top-secret')) throw new Error('credential reason leaked secret token')
                 if (credentialReason.reason.includes('Authorization: Bearer')) throw new Error('credential reason leaked raw authorization header')
-                if (!credentialReason.reason.includes('敏感凭据命令（内容已隐藏）')) throw new Error('credential reason should use safe summary')
+                if (!credentialReason.reason.includes('敏感凭据或配置（内容已隐藏）')) throw new Error('credential reason should use safe summary')
                 if (externalReason.reason.includes('token=top-secret')) throw new Error('external reason leaked token payload')
                 if (!externalReason.reason.includes('https://api.example.com')) throw new Error('external reason should keep safe origin summary')
 
@@ -513,15 +578,16 @@ class HarnessScriptsTest {
             val process = ProcessBuilder("node", runnerFile.toString())
                 .directory(tempDir.toFile())
                 .redirectErrorStream(true)
+                .also { builder ->
+                    builder.environment()["DADDY_CODE_HUT_APPROVAL_MODE_PATH"] = approvalModeFile.toString()
+                }
                 .start()
             val output = process.inputStream.bufferedReader().use { it.readText() }
 
             assertEquals(output, 0, process.waitFor())
             assertTrue(output, output.contains("redaction and variant coverage verified"))
         } finally {
-            tempDir.resolve("opt").toFile().deleteRecursively()
             tempDir.toFile().deleteRecursively()
-            java.io.File("/opt/daddy-harness/run/code-hut-approval.env").delete()
         }
     }
 

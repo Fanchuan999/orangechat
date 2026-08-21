@@ -78,12 +78,14 @@ class HarnessVM(
     fun setApprovalMode(mode: CodeHutApprovalMode) {
         viewModelScope.launch {
             runCatching {
+                // The remote gate is the authority for a running Harness. Do not persist or
+                // display a permissive selection until its atomic write has been acknowledged.
+                harnessManager.syncApprovalMode(mode)
                 settingsStore.update { settings ->
                     settings.copy(
                         codeHutSetting = settings.codeHutSetting.copy(approvalMode = mode),
                     )
                 }
-                harnessManager.syncApprovalMode()
             }.onSuccess {
                 _state.value = _state.value.copy(
                     approvalMode = mode,
@@ -95,9 +97,26 @@ class HarnessVM(
                     error = null,
                 )
             }.onFailure { error ->
+                val conservativeGateRestored = runCatching {
+                    harnessManager.forceConservativeApprovalMode()
+                    true
+                }.getOrDefault(false)
+                runCatching {
+                    settingsStore.update { settings ->
+                        settings.copy(
+                            codeHutSetting = settings.codeHutSetting.copy(
+                                approvalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
+                            ),
+                        )
+                    }
+                }
                 _state.value = _state.value.copy(
-                    approvalMode = mode,
-                    message = "代码小屋权限预设已保存，但当前工作台未接通；风险门会继续按保守策略询问。",
+                    approvalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
+                    message = if (conservativeGateRestored) {
+                        "代码小屋权限预设未切换，已恢复为“每次询问”。"
+                    } else {
+                        "代码小屋权限预设未切换；工作台已停止或不可达，不能确认权限状态。"
+                    },
                     error = error.message,
                 )
             }
