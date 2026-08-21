@@ -102,9 +102,11 @@ import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.ArrowUp02
 import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.FullScreen
+import me.rerere.hugeicons.stroke.Rocket01
 import me.rerere.hugeicons.stroke.Voice
 import me.rerere.hugeicons.stroke.Zap
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
@@ -126,6 +128,7 @@ import me.rerere.rikkahub.ui.context.LocalCurrentChatModel
 import me.rerere.rikkahub.ui.context.LocalDisplaySettings
 import me.rerere.rikkahub.ui.context.LocalProviders
 import me.rerere.rikkahub.ui.context.LocalQuickMessages
+import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.hooks.ChatInputState
@@ -204,6 +207,7 @@ fun ChatInput(
     }
 
     val context = LocalContext.current
+    val navController = LocalNavController.current
     val filesManager: FilesManager = koinInject()
     val asr = LocalASRState.current
     val asrState by asr.state.collectAsState()
@@ -749,26 +753,66 @@ fun ChatInput(
                         tonalElevation = 0.dp,
                         color = if (settings.displaySetting.enableBlurEffect) Color.Transparent else hazeTintColor,
                     ) {
-                        FilesPicker(
-                            conversation = conversation,
-                            state = state,
-                            assistant = assistant,
-                            mcpManager = mcpManager,
-                            onCompressContext = onCompressContext,
-                            onUpdateAssistant = onUpdateAssistant,
-                            showInjectionSheet = showInjectionSheet,
-                            onShowInjectionSheetChange = { showInjectionSheet = it },
-                            showCompressDialog = showCompressDialog,
-                            onShowCompressDialogChange = { showCompressDialog = it },
-                            onDismiss = { dismissExpand() },
-                            onTakePic = onLaunchCamera,
-                            onPickImage = { imagePickerLauncher.launch("image/*") },
-                            onPickVideo = { videoPickerLauncher.launch("video/*") },
-                            onPickAudio = { audioPickerLauncher.launch("audio/*") },
-                            onPickFile = { filePickerLauncher.launch(arrayOf("*/*")) },
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CodeHutEntry(
+                                onClick = {
+                                    dismissExpand()
+                                    navController.navigate(Screen.CodeHut)
+                                },
+                            )
+                            FilesPicker(
+                                conversation = conversation,
+                                state = state,
+                                assistant = assistant,
+                                mcpManager = mcpManager,
+                                onCompressContext = onCompressContext,
+                                onUpdateAssistant = onUpdateAssistant,
+                                showInjectionSheet = showInjectionSheet,
+                                onShowInjectionSheetChange = { showInjectionSheet = it },
+                                showCompressDialog = showCompressDialog,
+                                onShowCompressDialogChange = { showCompressDialog = it },
+                                onDismiss = { dismissExpand() },
+                                onTakePic = onLaunchCamera,
+                                onPickImage = { imagePickerLauncher.launch("image/*") },
+                                onPickVideo = { videoPickerLauncher.launch("video/*") },
+                                onPickAudio = { audioPickerLauncher.launch("audio/*") },
+                                onPickFile = { filePickerLauncher.launch(arrayOf("*/*")) },
+                            )
+                        }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CodeHutEntry(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = HugeIcons.Rocket01,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text("代码小屋", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "新建任务或转到 Harness 工作台",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

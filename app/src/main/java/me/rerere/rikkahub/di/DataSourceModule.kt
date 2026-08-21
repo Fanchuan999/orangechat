@@ -55,6 +55,7 @@ import me.rerere.rikkahub.data.sync.companion.HarnessManager
 import me.rerere.rikkahub.data.sync.companion.TermuxConfigBridge
 import me.rerere.rikkahub.data.codehut.CodeHutCredentialBridge
 import me.rerere.rikkahub.data.codehut.CodeHutProviderResolver
+import me.rerere.rikkahub.data.codehut.HarnessTaskGateway
 import me.rerere.rikkahub.data.codehut.SettingsCodeHutProviderResolver
 import me.rerere.rikkahub.data.codehut.buildCodeHutUpstreamClient
 import me.rerere.search.SearchService
@@ -301,6 +302,7 @@ val dataSourceModule = module {
     single { TermuxConfigBridge(context = get()) }
 
     single<CodeHutProviderResolver> { SettingsCodeHutProviderResolver(settingsStore = get()) }
+    single { HarnessTaskGateway() }
 
     single {
         val sharedHttpClient: OkHttpClient = get()

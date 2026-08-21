@@ -815,9 +815,9 @@ private fun DrawerActions(
             }
         }
 
-        // DeepSeek Harness 固定入口；这里只展示状态，不会静默安装或启动。
+        // 代码小屋固定入口；这里只展示状态，不会静默安装或启动。
         Surface(
-            onClick = { navController.navigate(Screen.Harness) },
+            onClick = { navController.navigate(Screen.CodeHut) },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp),
@@ -838,9 +838,9 @@ private fun DrawerActions(
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("DeepSeek Harness", style = MaterialTheme.typography.bodyMedium)
+                    Text("代码小屋", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        harnessStatus,
+                        "Harness $harnessStatus",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
