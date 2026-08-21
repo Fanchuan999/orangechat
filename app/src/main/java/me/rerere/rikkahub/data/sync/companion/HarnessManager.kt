@@ -17,11 +17,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import me.rerere.rikkahub.data.datastore.CODE_HUT_HELP_APPROVAL_LEASE_MILLIS
+import me.rerere.rikkahub.data.datastore.CodeHutApprovalLease
 import me.rerere.rikkahub.data.datastore.HarnessInstallStage
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.HarnessStatus
 import me.rerere.rikkahub.data.datastore.CodeHutApprovalMode
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.datastore.approvalLease
 import me.rerere.rikkahub.data.codehut.CodeHutCredentialBridge
 import me.rerere.rikkahub.data.codehut.HarnessProviderConfigFactory
 import okhttp3.OkHttpClient
@@ -173,6 +178,8 @@ class HarnessManager(
     sharedHttpClient: OkHttpClient,
 ) {
     private val healthClient = buildHarnessHealthClient(sharedHttpClient)
+    private val approvalModeMutex = Mutex()
+    private var highestIssuedApprovalRevision = settingsStore.settingsFlow.value.codeHutSetting.approvalRevision
     private val initialSetting = settingsStore.settingsFlow.value.harnessSetting
     private val _snapshot = MutableStateFlow(
         HarnessSnapshot(
@@ -239,7 +246,9 @@ class HarnessManager(
             termuxConfigBridge.executeCommandsAndWait(
                 commands = buildList {
                     addAll(HarnessScripts.bootstrapCommands(resultFile.absolutePath))
-                    addAll(HarnessScripts.configureApprovalModeCommands(settingsStore.settingsFlow.value.codeHutSetting.approvalMode))
+                    addAll(HarnessScripts.configureApprovalModeCommands(
+                        settingsStore.settingsFlow.value.codeHutSetting.approvalLease(),
+                    ))
                 },
                 completionFile = resultFile,
                 timeoutMessage = "Harness 在三十分钟内没有准备好，请查看 ~/daddy-linux/services/harness/logs/setup.log。",
@@ -285,14 +294,41 @@ class HarnessManager(
         }
     }
 
-    suspend fun syncApprovalMode(mode: CodeHutApprovalMode) {
+    /**
+     * Serialises app-side switches and gives each remote write a monotonic revision.  The
+     * Termux-side writer rejects lower revisions, so an old delayed command cannot reactivate
+     * HELP after a later ASK selection.
+     */
+    suspend fun applyApprovalMode(mode: CodeHutApprovalMode): CodeHutApprovalLease = approvalModeMutex.withLock {
+        val now = System.currentTimeMillis()
+        val persistedRevision = settingsStore.settingsFlow.value.codeHutSetting.approvalRevision
+        val revision = maxOf(
+            highestIssuedApprovalRevision + 1,
+            persistedRevision + 1,
+            now,
+        )
+        highestIssuedApprovalRevision = revision
+        val lease = CodeHutApprovalLease(
+            mode = mode,
+            revision = revision,
+            expiresAtEpochMillis = if (mode == CodeHutApprovalMode.HELP_ME_APPROVE) {
+                now + CODE_HUT_HELP_APPROVAL_LEASE_MILLIS
+            } else {
+                0
+            },
+        )
+        syncApprovalLease(lease)
+        lease
+    }
+
+    private suspend fun syncApprovalLease(lease: CodeHutApprovalLease) {
         val resultFile = resultFile("approval")
         resultFile.delete()
         try {
             termuxConfigBridge.executeCommandsAndWait(
                 commands = buildList {
-                    addAll(HarnessScripts.configureApprovalModeCommands(mode))
-                    add("printf '%s' '$READY_MARKER' > ${shellQuote(resultFile.absolutePath)}")
+                    addAll(HarnessScripts.configureApprovalModeCommands(lease))
+                    add(HarnessScripts.approvalModeAcknowledgementCommand(lease, resultFile.absolutePath))
                 },
                 completionFile = resultFile,
                 timeoutMessage = "代码小屋审批预设没有在 30 秒内写入工作台。",
@@ -309,15 +345,13 @@ class HarnessManager(
      * atomic; if it still cannot be acknowledged, stop the local Harness rather than leave a
      * potentially permissive risk gate running.
      */
-    suspend fun forceConservativeApprovalMode() {
-        try {
-            syncApprovalMode(CodeHutApprovalMode.ASK_EVERY_TIME)
-        } catch (syncFailure: Throwable) {
-            runCatching { stopForApprovalSafety() }
-                .exceptionOrNull()
-                ?.let(syncFailure::addSuppressed)
-            throw syncFailure
-        }
+    suspend fun forceConservativeApprovalMode(): CodeHutApprovalLease = try {
+        applyApprovalMode(CodeHutApprovalMode.ASK_EVERY_TIME)
+    } catch (syncFailure: Throwable) {
+        runCatching { stopForApprovalSafety() }
+            .exceptionOrNull()
+            ?.let(syncFailure::addSuppressed)
+        throw syncFailure
     }
 
     private suspend fun stopForApprovalSafety() {
@@ -454,7 +488,9 @@ class HarnessManager(
         try {
             termuxConfigBridge.executeCommandsAndWait(
                 commands = buildList {
-                    addAll(HarnessScripts.configureApprovalModeCommands(settingsStore.settingsFlow.value.codeHutSetting.approvalMode))
+                    addAll(HarnessScripts.configureApprovalModeCommands(
+                        settingsStore.settingsFlow.value.codeHutSetting.approvalLease(),
+                    ))
                     add(command)
                     if (waitForHttpHealthy) add(waitForHarnessHealthCommand())
                     add("printf '%s' '$READY_MARKER' > ${shellQuote(resultFile.absolutePath)}")

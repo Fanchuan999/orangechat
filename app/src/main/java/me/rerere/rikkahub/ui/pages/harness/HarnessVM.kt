@@ -11,6 +11,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -25,6 +26,7 @@ import me.rerere.rikkahub.data.datastore.CodeHutApprovalMode
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.HarnessStatus
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.datastore.activeApprovalMode
 import me.rerere.rikkahub.data.sync.companion.HarnessManager
 import me.rerere.rikkahub.data.sync.companion.HarnessRecoveryScheduler
 
@@ -46,16 +48,18 @@ class HarnessVM(
     private val settingsStore: SettingsStore,
 ) : ViewModel() {
     private val operationMutex = Mutex()
+    private var helpLeaseExpiryJob: Job? = null
     private val _state = MutableStateFlow(
         HarnessUiState(
             snapshot = harnessManager.snapshot.value,
             autoKeepRunning = settingsStore.settingsFlow.value.harnessSetting.autoKeepRunning,
-            approvalMode = settingsStore.settingsFlow.value.codeHutSetting.approvalMode,
+            approvalMode = settingsStore.settingsFlow.value.codeHutSetting.activeApprovalMode(),
         )
     )
     val state: StateFlow<HarnessUiState> = _state.asStateFlow()
 
     init {
+        scheduleApprovalLeaseExpiry()
         refresh()
     }
 
@@ -77,48 +81,76 @@ class HarnessVM(
 
     fun setApprovalMode(mode: CodeHutApprovalMode) {
         viewModelScope.launch {
-            runCatching {
-                // The remote gate is the authority for a running Harness. Do not persist or
-                // display a permissive selection until its atomic write has been acknowledged.
-                harnessManager.syncApprovalMode(mode)
-                settingsStore.update { settings ->
-                    settings.copy(
-                        codeHutSetting = settings.codeHutSetting.copy(approvalMode = mode),
-                    )
-                }
-            }.onSuccess {
-                _state.value = _state.value.copy(
-                    approvalMode = mode,
-                    message = if (mode == CodeHutApprovalMode.HELP_ME_APPROVE) {
-                        "代码小屋权限预设已写入工作台：低风险操作会连续放行，危险操作仍会要求确认。"
-                    } else {
-                        "代码小屋权限预设已写入工作台：普通操作也会逐次确认。"
-                    },
-                    error = null,
-                )
-            }.onFailure { error ->
-                val conservativeGateRestored = runCatching {
-                    harnessManager.forceConservativeApprovalMode()
-                    true
-                }.getOrDefault(false)
+            operationMutex.withLock {
+                _state.value = _state.value.copy(busyAction = "同步权限预设", message = null, error = null)
                 runCatching {
+                    // The remote gate is the authority. Persist and display HELP only after it
+                    // acknowledges the exact revisioned lease that was written under its lock.
+                    val lease = harnessManager.applyApprovalMode(mode)
                     settingsStore.update { settings ->
                         settings.copy(
                             codeHutSetting = settings.codeHutSetting.copy(
-                                approvalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
+                                approvalMode = lease.mode,
+                                approvalRevision = lease.revision,
+                                helpApprovalExpiresAtEpochMillis = lease.expiresAtEpochMillis,
                             ),
                         )
                     }
-                }
-                _state.value = _state.value.copy(
-                    approvalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
-                    message = if (conservativeGateRestored) {
-                        "代码小屋权限预设未切换，已恢复为“每次询问”。"
+                    lease
+                }.onSuccess { lease ->
+                    scheduleApprovalLeaseExpiry()
+                    _state.value = _state.value.copy(
+                        approvalMode = lease.mode,
+                        busyAction = null,
+                        message = if (lease.mode == CodeHutApprovalMode.HELP_ME_APPROVE) {
+                            "“帮我批准”已生效 30 分钟；仅严格只读操作会连续放行。"
+                        } else {
+                            "代码小屋权限预设已写入工作台：普通操作也会逐次确认。"
+                        },
+                        error = null,
+                    )
+                }.onFailure { error ->
+                    val conservativeLease = runCatching {
+                        harnessManager.forceConservativeApprovalMode()
+                    }.getOrNull()
+                    if (conservativeLease != null) {
+                        runCatching {
+                            settingsStore.update { settings ->
+                                settings.copy(
+                                    codeHutSetting = settings.codeHutSetting.copy(
+                                        approvalMode = conservativeLease.mode,
+                                        approvalRevision = conservativeLease.revision,
+                                        helpApprovalExpiresAtEpochMillis = conservativeLease.expiresAtEpochMillis,
+                                    ),
+                                )
+                            }
+                        }
                     } else {
-                        "代码小屋权限预设未切换；工作台已停止或不可达，不能确认权限状态。"
-                    },
-                    error = error.message,
-                )
+                        // Do not invent an acknowledged revision.  The remaining remote HELP
+                        // lease expires by itself; the Manager has also attempted to stop it.
+                        runCatching {
+                            settingsStore.update { settings ->
+                                settings.copy(
+                                    codeHutSetting = settings.codeHutSetting.copy(
+                                        approvalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
+                                        helpApprovalExpiresAtEpochMillis = 0,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                    scheduleApprovalLeaseExpiry()
+                    _state.value = _state.value.copy(
+                        approvalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
+                        busyAction = null,
+                        message = if (conservativeLease != null) {
+                            "代码小屋权限预设未切换，已确认恢复为“每次询问”。"
+                        } else {
+                            "权限同步失败；无法确认工作台状态，已请求停止。"
+                        },
+                        error = error.message,
+                    )
+                }
             }
         }
     }
@@ -132,6 +164,24 @@ class HarnessVM(
 
     fun clearNotice() {
         _state.value = _state.value.copy(message = null, error = null)
+    }
+
+    private fun scheduleApprovalLeaseExpiry() {
+        helpLeaseExpiryJob?.cancel()
+        val setting = settingsStore.settingsFlow.value.codeHutSetting
+        val expiresAt = setting.helpApprovalExpiresAtEpochMillis
+        if (setting.activeApprovalMode() != CodeHutApprovalMode.HELP_ME_APPROVE) return
+        helpLeaseExpiryJob = viewModelScope.launch {
+            delay((expiresAt - System.currentTimeMillis()).coerceAtLeast(0))
+            if (settingsStore.settingsFlow.value.codeHutSetting.activeApprovalMode() ==
+                CodeHutApprovalMode.ASK_EVERY_TIME
+            ) {
+                _state.value = _state.value.copy(
+                    approvalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
+                    message = "“帮我批准”已到期，代码小屋已恢复为逐次确认。",
+                )
+            }
+        }
     }
 
     private fun operate(
@@ -163,7 +213,7 @@ class HarnessVM(
                     _state.value = _state.value.copy(
                         snapshot = snapshot,
                         autoKeepRunning = autoKeepRunning,
-                        approvalMode = settingsStore.settingsFlow.value.codeHutSetting.approvalMode,
+                        approvalMode = settingsStore.settingsFlow.value.codeHutSetting.activeApprovalMode(),
                         busyAction = null,
                         message = if (snapshot.status in setOf(
                                 HarnessStatus.INSTALLING,

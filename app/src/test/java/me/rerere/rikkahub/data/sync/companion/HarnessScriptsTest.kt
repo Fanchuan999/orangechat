@@ -79,13 +79,23 @@ class HarnessScriptsTest {
     @Test
     fun approvalModeCommandsWriteOnlyTheDedicatedRuntimePresetFile() {
         val commands = HarnessScripts.configureApprovalModeCommands(
-            me.rerere.rikkahub.data.datastore.CodeHutApprovalMode.HELP_ME_APPROVE,
+            me.rerere.rikkahub.data.datastore.CodeHutApprovalLease(
+                mode = me.rerere.rikkahub.data.datastore.CodeHutApprovalMode.HELP_ME_APPROVE,
+                revision = 42,
+                expiresAtEpochMillis = 1_800_000,
+            ),
         )
 
-        assertEquals(2, commands.size)
+        assertEquals(1, commands.size)
         assertTrue(commands.first().contains("DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'"))
+        assertTrue(commands.first().contains("DADDY_CODE_HUT_APPROVAL_REVISION='42'"))
+        assertTrue(commands.first().contains("DADDY_CODE_HUT_APPROVAL_EXPIRES_AT_EPOCH_MILLIS='1800000'"))
         assertTrue(commands.first().contains("code-hut-approval.env"))
-        assertTrue(commands[1].contains("chmod 600"))
+        assertTrue(commands.first().contains("code-hut-approval.env.lock"))
+        assertTrue(commands.first().contains("requested_revision=42"))
+        assertTrue(commands.first().contains("current_revision"))
+        assertTrue(commands.first().contains("current_revision\" -lt \"${'$'}requested_revision"))
+        assertTrue(commands.first().contains("mv -f"))
         assertFalse(commands.first().contains("OPENAI_API_KEY"))
     }
 
@@ -365,7 +375,12 @@ class HarnessScriptsTest {
         val runnerFile = tempDir.resolve("command-safety-test.mjs")
         val approvalModeFile = tempDir.resolve("code-hut-approval.env")
         Files.writeString(gateFile, gate)
-        Files.writeString(approvalModeFile, "DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'\n")
+        Files.writeString(
+            approvalModeFile,
+            "DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'\n" +
+                "DADDY_CODE_HUT_APPROVAL_REVISION='1'\n" +
+                "DADDY_CODE_HUT_APPROVAL_EXPIRES_AT_EPOCH_MILLIS='4102444800000'\n",
+        )
         Files.writeString(
             runnerFile,
             """
@@ -376,6 +391,12 @@ class HarnessScriptsTest {
                   [{ name: 'bash', arguments: { command: 'git status; git push origin HEAD' } }, 'git-push-or-release'],
                   [{ name: 'bash', arguments: { command: 'cat .env' } }, 'credential'],
                   [{ name: 'read', arguments: { path: '.credentials.yaml' } }, 'credential'],
+                  [{ name: 'bash', arguments: { command: 'cat .envrc' } }, 'credential'],
+                  [{ name: 'bash', arguments: { command: 'cat secrets.json' } }, 'credential'],
+                  [{ name: 'read', arguments: { path: '.envrc' } }, 'credential'],
+                  [{ name: 'read', arguments: { path: 'secrets.json' } }, 'credential'],
+                  [{ name: 'read', arguments: { path: 'token.txt' } }, 'credential'],
+                  [{ name: 'read', arguments: {} }, 'high-risk-shell'],
                   [{ name: 'bash', arguments: { command: 'ls -la' } }, 'low-risk'],
                 ]
                 for (const [exec, expected] of cases) {
@@ -414,6 +435,65 @@ class HarnessScriptsTest {
 
             assertEquals(output, 0, process.waitFor())
             assertTrue(output, output.contains("chained command and secret path safety verified"))
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun riskGateExpiresHelpLeasesAndRejectsARevisionThatMovesBackward() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+        val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-lease")
+        val gateFile = tempDir.resolve("risk-gate.mjs")
+        val runnerFile = tempDir.resolve("lease-test.mjs")
+        val approvalModeFile = tempDir.resolve("code-hut-approval.env")
+        Files.writeString(gateFile, gate)
+        Files.writeString(
+            runnerFile,
+            """
+                import fs from 'node:fs'
+                import { apply } from './risk-gate.mjs'
+
+                const modeFile = process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH
+                const writeLease = (mode, revision, expiresAt) => fs.writeFileSync(modeFile,
+                  `DADDY_CODE_HUT_APPROVAL_MODE='${'$'}{mode}'\n` +
+                  `DADDY_CODE_HUT_APPROVAL_REVISION='${'$'}{revision}'\n` +
+                  `DADDY_CODE_HUT_APPROVAL_EXPIRES_AT_EPOCH_MILLIS='${'$'}{expiresAt}'\n`)
+                const handlers = []
+                apply({ on(name, handler) {
+                  if (name !== 'tools/pre-execute') throw new Error(`unexpected hook ${'$'}{name}`)
+                  handlers.push(handler)
+                } })
+                const handler = handlers[0]
+                const next = () => ({ kind: 'next' })
+                const safeRead = { name: 'bash', arguments: { command: 'ls -la' } }
+
+                writeLease('HELP_ME_APPROVE', 12, Date.now() + 60_000)
+                if ((await handler(safeRead, next)).kind !== 'next') throw new Error('active Help lease should allow a strict read')
+
+                writeLease('HELP_ME_APPROVE', 11, Date.now() + 60_000)
+                if ((await handler(safeRead, next)).kind !== 'ask') throw new Error('stale revision must fail closed')
+
+                writeLease('HELP_ME_APPROVE', 13, Date.now() - 1)
+                if ((await handler(safeRead, next)).kind !== 'ask') throw new Error('expired Help lease must fail closed')
+
+                process.stdout.write('lease expiry and revision ordering verified\\n')
+            """.trimIndent(),
+        )
+        try {
+            val process = ProcessBuilder("node", runnerFile.toString())
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .also { builder ->
+                    builder.environment()["DADDY_CODE_HUT_APPROVAL_MODE_PATH"] = approvalModeFile.toString()
+                }
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            assertEquals(output, 0, process.waitFor())
+            assertTrue(output, output.contains("lease expiry and revision ordering verified"))
         } finally {
             tempDir.toFile().deleteRecursively()
         }
@@ -462,14 +542,20 @@ class HarnessScriptsTest {
                 const noPreset = await handler(dangerousExec, next)
                 if (noPreset.kind !== 'ask') throw new Error(`expected fail-closed ask without preset, got ${'$'}{JSON.stringify(noPreset)}`)
 
-                fs.writeFileSync(process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH, "DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'\n")
+                fs.writeFileSync(process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH,
+                  "DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'\n" +
+                  "DADDY_CODE_HUT_APPROVAL_REVISION='1'\n" +
+                  `DADDY_CODE_HUT_APPROVAL_EXPIRES_AT_EPOCH_MILLIS='${'$'}{Date.now() + 60_000}'\n`)
 
                 const helpLowRisk = await handler(lowRiskExec, next)
                 const helpDangerous = await handler(dangerousExec, next)
                 if (helpLowRisk.kind !== 'next') throw new Error(`expected low risk to auto-allow in HELP_ME_APPROVE, got ${'$'}{JSON.stringify(helpLowRisk)}`)
                 if (helpDangerous.kind !== 'ask') throw new Error(`expected dangerous command to keep asking, got ${'$'}{JSON.stringify(helpDangerous)}`)
 
-                fs.writeFileSync(process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH, "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n")
+                fs.writeFileSync(process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH,
+                  "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n" +
+                  "DADDY_CODE_HUT_APPROVAL_REVISION='2'\n" +
+                  "DADDY_CODE_HUT_APPROVAL_EXPIRES_AT_EPOCH_MILLIS='0'\n")
                 const askLowRisk = await handler(lowRiskExec, next)
                 if (askLowRisk.kind !== 'ask') throw new Error(`expected low risk to ask in ASK_EVERY_TIME, got ${'$'}{JSON.stringify(askLowRisk)}`)
 
@@ -552,7 +638,10 @@ class HarnessScriptsTest {
                 apply({ on(name, handler) { if (name === 'tools/pre-execute') events.push(handler) } })
                 const handler = events[0]
                 const next = () => ({ kind: 'next' })
-                fs.writeFileSync(process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH, "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n")
+                fs.writeFileSync(process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH,
+                  "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n" +
+                  "DADDY_CODE_HUT_APPROVAL_REVISION='1'\n" +
+                  "DADDY_CODE_HUT_APPROVAL_EXPIRES_AT_EPOCH_MILLIS='0'\n")
 
                 const credentialReason = await handler({
                   name: 'bash',

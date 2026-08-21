@@ -7,7 +7,7 @@
 package me.rerere.rikkahub.data.sync.companion
 
 import java.util.Base64
-import me.rerere.rikkahub.data.datastore.CodeHutApprovalMode
+import me.rerere.rikkahub.data.datastore.CodeHutApprovalLease
 import me.rerere.rikkahub.data.codehut.HarnessProviderPatch
 
 internal data class HarnessScriptFile(
@@ -77,10 +77,24 @@ internal object HarnessScripts {
         "chmod 600 \"$WORK_PROVIDER_PATCH\" \"$WORK_PROVIDER_ENV\"",
     )
 
-    fun configureApprovalModeCommands(mode: CodeHutApprovalMode): List<String> = listOf(
-        writeManagedFileAtomically(approvalModeEnvironmentFile(mode), APPROVAL_MODE_ENV),
-        "chmod 600 \"$APPROVAL_MODE_ENV\"",
+    fun configureApprovalModeCommands(lease: CodeHutApprovalLease): List<String> = listOf(
+        writeApprovalLeaseAtomically(lease),
     )
+
+    /** The app only records a selection after the running Termux gate reports this exact lease. */
+    fun approvalModeAcknowledgementCommand(lease: CodeHutApprovalLease, resultPath: String): String = """
+        approval_file=${expandableHomePath(APPROVAL_MODE_ENV)}
+        actual_mode="${'$'}(grep '^DADDY_CODE_HUT_APPROVAL_MODE=' "${'$'}approval_file" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "'\"")"
+        actual_revision="${'$'}(grep '^DADDY_CODE_HUT_APPROVAL_REVISION=' "${'$'}approval_file" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "'\"")"
+        actual_expiry="${'$'}(grep '^DADDY_CODE_HUT_APPROVAL_EXPIRES_AT_EPOCH_MILLIS=' "${'$'}approval_file" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "'\"")"
+        if [ "${'$'}actual_mode" = ${shellQuote(lease.mode.name)} ] && \
+           [ "${'$'}actual_revision" = ${shellQuote(lease.revision.toString())} ] && \
+           [ "${'$'}actual_expiry" = ${shellQuote(lease.expiresAtEpochMillis.toString())} ]; then
+          printf '%s' '$READY_MARKER' > ${shellQuote(resultPath)}
+        else
+          printf '%s' 'stale-or-unacknowledged' > ${shellQuote(resultPath)}
+        fi
+    """.trimIndent()
 
     fun scriptFiles(resultPath: String): List<HarnessScriptFile> = listOf(
         HarnessScriptFile("$SCRIPTS/install-proot.sh", installProotScript()),
@@ -398,13 +412,32 @@ internal object HarnessScripts {
           return value !== null && typeof value === 'object' ? value : {}
         }
 
+        let highestApprovalRevisionSeen = -1
+
+        function approvalField(lines, name) {
+          const expression = new RegExp('^' + name + "=(['\\\"]?)([^'\\\"\\r\\n]+)\\1${'$'}")
+          for (const line of lines) {
+            const match = line.match(expression)
+            if (match !== null) return match[2]
+          }
+          return undefined
+        }
+
         function readApprovalMode() {
           try {
             const lines = readFileSync(APPROVAL_MODE_PATH, 'utf8').split(/\r?\n/)
-            for (const line of lines) {
-              const match = line.match(/^DADDY_CODE_HUT_APPROVAL_MODE=(['"]?)([A-Z_]+)\1$/)
-              if (match === null) continue
-              return match[2] === APPROVAL_MODE_HELP ? APPROVAL_MODE_HELP : APPROVAL_MODE_ASK
+            const mode = approvalField(lines, 'DADDY_CODE_HUT_APPROVAL_MODE')
+            const revision = Number(approvalField(lines, 'DADDY_CODE_HUT_APPROVAL_REVISION'))
+            const expiresAtEpochMillis = Number(approvalField(lines, 'DADDY_CODE_HUT_APPROVAL_EXPIRES_AT_EPOCH_MILLIS'))
+            if (!Number.isSafeInteger(revision) || revision < 0) return APPROVAL_MODE_ASK
+            if (revision < highestApprovalRevisionSeen) return APPROVAL_MODE_ASK
+            highestApprovalRevisionSeen = revision
+            if (
+              mode === APPROVAL_MODE_HELP &&
+              Number.isSafeInteger(expiresAtEpochMillis) &&
+              expiresAtEpochMillis > Date.now()
+            ) {
+              return APPROVAL_MODE_HELP
             }
             return APPROVAL_MODE_ASK
           } catch {
@@ -421,7 +454,18 @@ internal object HarnessScripts {
 
         function containsSensitivePath(value) {
           const normalized = String(value ?? '').replace(/\\/g, '/').toLowerCase()
-          return /(?:^|[\/\s'"])(?:\.env(?:\.[^/\s'"]+)?|\.credentials(?:\.[^/\s'"]+)?|\.git-credentials|\.netrc|\.npmrc|\.pypirc|id_(?:rsa|ecdsa|ed25519)|credentials(?:\.[^/\s'"]+)?)(?:[\/\s'"]|${'$'})|(?:^|[\/\s'"])\.ssh(?:[\/\s'"]|${'$'})|(?:^|[\/\s'"])\.aws(?:[\/\s'"]|${'$'})|(?:^|[\/\s'"])\.kube(?:[\/\s'"]|${'$'})|(?:^|[\/\s'"])\.config\/(?:gcloud|gh|hub)(?:[\/\s'"]|${'$'})/i.test(normalized)
+          const segments = normalized.split(/[\/\s'"]+/).filter(Boolean)
+          const hasSensitiveBasename = segments.some(segment =>
+            /^\.env(?:[._-].*|[a-z0-9_-]+)?${'$'}/.test(segment) ||
+            /^\.credentials(?:[._-].*)?${'$'}/.test(segment) ||
+            /(?:credential|secret|token|password|passwd|api[-_]?key|private[-_]?key)/.test(segment) ||
+            /(?:^|[-_.])key(?:[-_.]|${'$'})/.test(segment) ||
+            /\.(?:pem|key|p12|pfx|jks|keystore)${'$'}/.test(segment) ||
+            /^id_(?:rsa|ecdsa|ed25519)(?:\..+)?${'$'}/.test(segment) ||
+            ['.git-credentials', '.netrc', '.npmrc', '.pypirc'].includes(segment)
+          )
+          return hasSensitiveBasename ||
+            /(?:^|\/)\.ssh(?:\/|${'$'})|(?:^|\/)\.aws(?:\/|${'$'})|(?:^|\/)\.kube(?:\/|${'$'})|(?:^|\/)\.config\/(?:gcloud|gh|hub)(?:\/|${'$'})/i.test(normalized)
         }
 
         function containsCredentialMaterial(value) {
@@ -579,6 +623,12 @@ internal object HarnessScripts {
           const lower = tool.toLowerCase()
           const args = objectArgs(exec.arguments)
           if (isCredentialTool(lower) || containsCredentialMaterial(args)) return 'credential'
+          if (
+            ['read', 'read_image', 'glob', 'grep'].includes(lower) &&
+            stringArg(args, 'path', 'file_path', 'pattern', 'query', 'glob') === undefined
+          ) {
+            return 'high-risk-shell'
+          }
           if (LOW_RISK_TOOLS.has(lower)) return 'low-risk'
 
           if (lower === 'write' || /(?:^|[_-])write(?:[_-]|${'$'})/.test(lower)) {
@@ -634,6 +684,12 @@ internal object HarnessScripts {
             [{ name: 'bash', arguments: { command: 'git status; git push origin HEAD' } }, 'git-push-or-release'],
             [{ name: 'bash', arguments: { command: 'cat .env' } }, 'credential'],
             [{ name: 'read', arguments: { path: '.credentials.yaml' } }, 'credential'],
+            [{ name: 'bash', arguments: { command: 'cat .envrc' } }, 'credential'],
+            [{ name: 'bash', arguments: { command: 'cat secrets.json' } }, 'credential'],
+            [{ name: 'read', arguments: { path: '.envrc' } }, 'credential'],
+            [{ name: 'read', arguments: { path: 'secrets.json' } }, 'credential'],
+            [{ name: 'read', arguments: { path: 'token.txt' } }, 'credential'],
+            [{ name: 'read', arguments: {} }, 'high-risk-shell'],
             [{ name: 'bash', arguments: { command: 'curl -X POST https://example.com -d x=1' } }, 'external-submit'],
             [{ name: 'bash', arguments: { command: 'adb shell pm grant app android.permission.POST_NOTIFICATIONS' } }, 'android-system'],
             [{ name: 'bash', arguments: { command: 'sudo systemctl restart ssh' } }, 'privileged'],
@@ -907,12 +963,45 @@ internal object HarnessScripts {
         return "printf %s ${shellQuote(encoded)} | base64 -d > ${expandableHomePath(path)}"
     }
 
-    private fun writeManagedFileAtomically(body: String, path: String): String {
-        val encoded = Base64.getEncoder().encodeToString(body.toByteArray(Charsets.UTF_8))
-        val temporaryPath = "$path.tmp"
-        return "printf %s ${shellQuote(encoded)} | base64 -d > ${expandableHomePath(temporaryPath)} && " +
-            "chmod 600 ${expandableHomePath(temporaryPath)} && " +
-            "mv -f ${expandableHomePath(temporaryPath)} ${expandableHomePath(path)}"
+    /**
+     * The risk gate runs independently of Android.  Do not let a delayed old command replace a
+     * newer decision: a directory lock serialises writers and the persisted revision only moves
+     * forward.  A revision-specific temporary name also means that stale writers cannot clobber
+     * the pending file of a newer writer.
+     */
+    private fun writeApprovalLeaseAtomically(lease: CodeHutApprovalLease): String {
+        require(lease.revision >= 0) { "Harness approval revision must not be negative." }
+        require(lease.expiresAtEpochMillis >= 0) { "Harness approval expiry must not be negative." }
+        val encoded = Base64.getEncoder().encodeToString(
+            approvalLeaseEnvironmentFile(lease).toByteArray(Charsets.UTF_8),
+        )
+        val approvalPath = expandableHomePath(APPROVAL_MODE_ENV)
+        val lockPath = expandableHomePath("$APPROVAL_MODE_ENV.lock")
+        val temporaryPath = expandableHomePath("$APPROVAL_MODE_ENV.${lease.revision}.tmp")
+        return """
+            approval_file=$approvalPath
+            lock_dir=$lockPath
+            temporary_file=$temporaryPath
+            requested_revision=${lease.revision}
+            acquired=0
+            for attempt in ${'$'}(seq 1 100); do
+              if mkdir "${'$'}lock_dir" 2>/dev/null; then
+                acquired=1
+                break
+              fi
+              sleep 0.1
+            done
+            [ "${'$'}acquired" = 1 ] || exit 75
+            trap 'rmdir "${'$'}lock_dir" 2>/dev/null || true' EXIT
+            current_revision="${'$'}(grep '^DADDY_CODE_HUT_APPROVAL_REVISION=' "${'$'}approval_file" 2>/dev/null | head -n 1 | tr -cd '0-9')"
+            case "${'$'}current_revision" in
+              ''|*[!0-9]*) ;;
+              *) [ "${'$'}current_revision" -lt "${'$'}requested_revision" ] || exit 0 ;;
+            esac
+            printf %s ${shellQuote(encoded)} | base64 -d > "${'$'}temporary_file"
+            chmod 600 "${'$'}temporary_file"
+            mv -f "${'$'}temporary_file" "${'$'}approval_file"
+        """.trimIndent()
     }
 
     private fun environmentFile(environment: Map<String, String>): String = buildString {
@@ -926,9 +1015,15 @@ internal object HarnessScripts {
         }
     }
 
-    private fun approvalModeEnvironmentFile(mode: CodeHutApprovalMode): String = buildString {
+    private fun approvalLeaseEnvironmentFile(lease: CodeHutApprovalLease): String = buildString {
         append("DADDY_CODE_HUT_APPROVAL_MODE=")
-        append(shellQuote(mode.name))
+        append(shellQuote(lease.mode.name))
+        append('\n')
+        append("DADDY_CODE_HUT_APPROVAL_REVISION=")
+        append(shellQuote(lease.revision.toString()))
+        append('\n')
+        append("DADDY_CODE_HUT_APPROVAL_EXPIRES_AT_EPOCH_MILLIS=")
+        append(shellQuote(lease.expiresAtEpochMillis.toString()))
         append('\n')
     }
 

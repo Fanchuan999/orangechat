@@ -46,4 +46,18 @@ class CodeHutSettingTest {
         assertEquals(false, encoded.contains("apiKey", ignoreCase = true))
         assertTrue(encoded.contains("HELP_ME_APPROVE"))
     }
+
+    @Test
+    fun helpApprovalLeaseExpiresAtItsExactDeadline() {
+        val setting = CodeHutSetting(
+            approvalMode = CodeHutApprovalMode.HELP_ME_APPROVE,
+            approvalRevision = 42,
+            helpApprovalExpiresAtEpochMillis = 1_000,
+        )
+
+        assertEquals(CodeHutApprovalMode.HELP_ME_APPROVE, setting.activeApprovalMode(999))
+        assertEquals(CodeHutApprovalMode.ASK_EVERY_TIME, setting.activeApprovalMode(1_000))
+        assertEquals(42, setting.approvalLease().revision)
+        assertEquals(1_000, setting.approvalLease().expiresAtEpochMillis)
+    }
 }

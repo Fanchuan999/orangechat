@@ -19,7 +19,34 @@ data class CodeHutSetting(
     val defaultBindingId: Uuid? = null,
     val bindings: List<WorkModelBinding> = emptyList(),
     val approvalMode: CodeHutApprovalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
+    val approvalRevision: Long = 0,
+    val helpApprovalExpiresAtEpochMillis: Long = 0,
 )
+
+/** A short-lived, revisioned privilege grant for the independently running Harness process. */
+data class CodeHutApprovalLease(
+    val mode: CodeHutApprovalMode,
+    val revision: Long,
+    val expiresAtEpochMillis: Long,
+)
+
+const val CODE_HUT_HELP_APPROVAL_LEASE_MILLIS: Long = 30 * 60 * 1_000L
+
+fun CodeHutSetting.approvalLease(): CodeHutApprovalLease = CodeHutApprovalLease(
+    mode = approvalMode,
+    revision = approvalRevision,
+    expiresAtEpochMillis = helpApprovalExpiresAtEpochMillis,
+)
+
+fun CodeHutSetting.activeApprovalMode(nowEpochMillis: Long = System.currentTimeMillis()): CodeHutApprovalMode =
+    if (
+        approvalMode == CodeHutApprovalMode.HELP_ME_APPROVE &&
+        helpApprovalExpiresAtEpochMillis > nowEpochMillis
+    ) {
+        CodeHutApprovalMode.HELP_ME_APPROVE
+    } else {
+        CodeHutApprovalMode.ASK_EVERY_TIME
+    }
 
 @Serializable
 enum class CodeHutApprovalMode {
