@@ -278,7 +278,7 @@ private fun TaskResultCard(
                 FilledTonalButton(
                     onClick = if (workbench.canOpen) onOpenWorkbench else onOpenHarnessSettings,
                 ) {
-                    Text(if (workbench.canOpen) codeHutTaskActionLabel(task) else workbench.actionLabel)
+                    Text(if (workbench.canOpen) "去工作台粘贴运行" else workbench.actionLabel)
                 }
             }
             TextButton(onClick = onReset) {
