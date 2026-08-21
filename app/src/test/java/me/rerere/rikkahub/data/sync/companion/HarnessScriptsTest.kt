@@ -73,6 +73,20 @@ class HarnessScriptsTest {
 
         assertTrue(bootstrap.first().contains("\$HOME/daddy-linux/services/harness/risk-gate"))
         assertTrue(bootstrap.first().contains("\$HOME/daddy-linux/services/harness/config"))
+        assertTrue(bootstrap.first().contains("\$HOME/daddy-linux/services/harness/run"))
+    }
+
+    @Test
+    fun approvalModeCommandsWriteOnlyTheDedicatedRuntimePresetFile() {
+        val commands = HarnessScripts.configureApprovalModeCommands(
+            me.rerere.rikkahub.data.datastore.CodeHutApprovalMode.HELP_ME_APPROVE,
+        )
+
+        assertEquals(2, commands.size)
+        assertTrue(commands.first().contains("DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'"))
+        assertTrue(commands.first().contains("code-hut-approval.env"))
+        assertTrue(commands[1].contains("chmod 600"))
+        assertFalse(commands.first().contains("OPENAI_API_KEY"))
     }
 
     @Test
@@ -262,6 +276,8 @@ class HarnessScriptsTest {
         assertTrue(gate.contains("动作："))
         assertTrue(gate.contains("目标："))
         assertTrue(gate.contains("原因："))
+        assertTrue(gate.contains("敏感凭据命令（内容已隐藏）"))
+        assertTrue(gate.contains("外部提交命令（内容已隐藏）"))
         assertTrue(gate.contains("runSelfTest"))
         assertTrue(patch.contains("@daddy/harness-risk-gate"))
         assertTrue(runner.contains("--patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml"))
@@ -269,7 +285,7 @@ class HarnessScriptsTest {
     }
 
     @Test
-    fun riskGateAllowsReadOnlyCallsButAsksBeforeMutatingOrAmbiguousCalls() {
+    fun riskGateRecognizesLowRiskAndConservativeDangerousVariants() {
         val gate = HarnessScripts.scriptFiles("/sdcard/result")
             .single { it.path.endsWith("/risk-gate/index.mjs") }
             .body
@@ -285,6 +301,9 @@ class HarnessScriptsTest {
         assertTrue(gate.contains("git clean"))
         assertTrue(gate.contains("git pull"))
         assertTrue(gate.contains("git reset --hard"))
+        assertTrue(gate.contains("npm i eslint"))
+        assertTrue(gate.contains("yarn add react"))
+        assertTrue(gate.contains("cargo publish"))
         assertTrue(gate.contains("npm install"))
         assertTrue(gate.contains("gh auth login"))
         assertTrue(gate.contains("curl -X POST"))
@@ -316,10 +335,10 @@ class HarnessScriptsTest {
                   name: 'read',
                   arguments: { path: 'README.md' },
                 })
-                if (buildRisk !== null) throw new Error(`expected build to stay low-risk, got ${'$'}{buildRisk}`)
-                if (gitPullRisk !== null) throw new Error(`expected git pull to stay low-risk, got ${'$'}{gitPullRisk}`)
-                if (readRisk !== null) throw new Error(`expected read to stay low-risk, got ${'$'}{readRisk}`)
-                process.stdout.write('low risk paths stay ungated\n')
+                if (buildRisk !== 'low-risk') throw new Error(`expected build to classify low-risk, got ${'$'}{buildRisk}`)
+                if (gitPullRisk !== 'low-risk') throw new Error(`expected git pull to classify low-risk, got ${'$'}{gitPullRisk}`)
+                if (readRisk !== 'low-risk') throw new Error(`expected read to classify low-risk, got ${'$'}{readRisk}`)
+                process.stdout.write('low risk paths stay classified\n')
             """.trimIndent(),
         )
         try {
@@ -330,9 +349,82 @@ class HarnessScriptsTest {
             val output = process.inputStream.bufferedReader().use { it.readText() }
 
             assertEquals(output, 0, process.waitFor())
-            assertTrue(output, output.contains("low risk paths stay ungated"))
+            assertTrue(output, output.contains("low risk paths stay classified"))
         } finally {
             tempDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun riskGateReadsApprovalPresetFileAndFailsClosedWhenMissing() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+        val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-approval-mode")
+        val gateFile = tempDir.resolve("risk-gate.mjs")
+        val runnerFile = tempDir.resolve("approval-mode-test.mjs")
+        Files.writeString(gateFile, gate)
+        Files.writeString(
+            runnerFile,
+            """
+                import fs from 'node:fs'
+                import { classifyToolCall, apply } from './risk-gate.mjs'
+
+                const lowRiskExec = {
+                  name: 'bash',
+                  arguments: { command: './gradlew test' },
+                }
+                const dangerousExec = {
+                  name: 'bash',
+                  arguments: { command: 'git push origin HEAD' },
+                }
+                if (classifyToolCall(lowRiskExec) !== 'low-risk') throw new Error('expected build command to classify low-risk')
+                if (classifyToolCall(dangerousExec) !== 'git-push-or-release') {
+                  throw new Error('expected dangerous command to stay gated')
+                }
+
+                const events = []
+                const ctx = {
+                  on(name, handler) {
+                    if (name !== 'tools/pre-execute') throw new Error(`unexpected hook ${'$'}{name}`)
+                    events.push(handler)
+                  },
+                }
+                apply(ctx)
+                const [handler] = events
+                const next = () => ({ kind: 'next' })
+
+                const noPreset = await handler(dangerousExec, next)
+                if (noPreset.kind !== 'ask') throw new Error(`expected fail-closed ask without preset, got ${'$'}{JSON.stringify(noPreset)}`)
+
+                fs.mkdirSync('/opt/daddy-harness/run', { recursive: true })
+                fs.writeFileSync('/opt/daddy-harness/run/code-hut-approval.env', "DADDY_CODE_HUT_APPROVAL_MODE='HELP_ME_APPROVE'\n")
+
+                const helpLowRisk = await handler(lowRiskExec, next)
+                const helpDangerous = await handler(dangerousExec, next)
+                if (helpLowRisk.kind !== 'next') throw new Error(`expected low risk to auto-allow in HELP_ME_APPROVE, got ${'$'}{JSON.stringify(helpLowRisk)}`)
+                if (helpDangerous.kind !== 'ask') throw new Error(`expected dangerous command to keep asking, got ${'$'}{JSON.stringify(helpDangerous)}`)
+
+                fs.writeFileSync('/opt/daddy-harness/run/code-hut-approval.env', "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n")
+                const askLowRisk = await handler(lowRiskExec, next)
+                if (askLowRisk.kind !== 'ask') throw new Error(`expected low risk to ask in ASK_EVERY_TIME, got ${'$'}{JSON.stringify(askLowRisk)}`)
+
+                process.stdout.write('approval mode gating verified\n')
+            """.trimIndent(),
+        )
+        try {
+            val process = ProcessBuilder("node", runnerFile.toString())
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            assertEquals(output, 0, process.waitFor())
+            assertTrue(output, output.contains("approval mode gating verified"))
+        } finally {
+            tempDir.resolve("opt").toFile().deleteRecursively()
+            tempDir.toFile().deleteRecursively()
+            java.io.File("/opt/daddy-harness/run/code-hut-approval.env").delete()
         }
     }
 
@@ -353,6 +445,83 @@ class HarnessScriptsTest {
             assertTrue(output, output.contains("risk gate self-test OK"))
         } finally {
             Files.deleteIfExists(temp)
+        }
+    }
+
+    @Test
+    fun confirmationReasonHidesSensitiveCommandContentAndCoversCommandVariants() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+        val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-redaction")
+        val gateFile = tempDir.resolve("risk-gate.mjs")
+        val runnerFile = tempDir.resolve("redaction-test.mjs")
+        Files.writeString(gateFile, gate)
+        Files.writeString(
+            runnerFile,
+            """
+                import fs from 'node:fs'
+                import { classifyToolCall, apply } from './risk-gate.mjs'
+
+                if (classifyToolCall({ name: 'bash', arguments: { command: 'npm i eslint' } }) !== 'package-install') {
+                  throw new Error('expected npm i to require package-install approval')
+                }
+                if (classifyToolCall({ name: 'bash', arguments: { command: 'pnpm i typescript' } }) !== 'package-install') {
+                  throw new Error('expected pnpm i to require package-install approval')
+                }
+                if (classifyToolCall({ name: 'bash', arguments: { command: 'yarn add react' } }) !== 'package-install') {
+                  throw new Error('expected yarn add to require package-install approval')
+                }
+                if (classifyToolCall({ name: 'bash', arguments: { command: 'cargo publish' } }) !== 'external-submit') {
+                  throw new Error('expected cargo publish to require external-submit approval')
+                }
+                if (classifyToolCall({ name: 'bash', arguments: { command: 'scp file.txt prod:/tmp/' } }) !== 'external-submit') {
+                  throw new Error('expected scp to fail closed as external-submit')
+                }
+                if (classifyToolCall({ name: 'bash', arguments: { command: 'touch existing.txt' } }) !== 'overwrite') {
+                  throw new Error('expected touch to fail closed as overwrite')
+                }
+
+                const events = []
+                apply({ on(name, handler) { if (name === 'tools/pre-execute') events.push(handler) } })
+                const handler = events[0]
+                const next = () => ({ kind: 'next' })
+                fs.mkdirSync('/opt/daddy-harness/run', { recursive: true })
+                fs.writeFileSync('/opt/daddy-harness/run/code-hut-approval.env', "DADDY_CODE_HUT_APPROVAL_MODE='ASK_EVERY_TIME'\n")
+
+                const credentialReason = await handler({
+                  name: 'bash',
+                  arguments: { command: 'curl https://api.example.com -H \"Authorization: Bearer top-secret\"' },
+                }, next)
+                const externalReason = await handler({
+                  name: 'bash',
+                  arguments: { command: 'curl -X POST https://api.example.com/upload -d token=top-secret' },
+                }, next)
+
+                if (credentialReason.kind !== 'ask') throw new Error('expected credential command to ask')
+                if (externalReason.kind !== 'ask') throw new Error('expected external submit to ask')
+                if (credentialReason.reason.includes('top-secret')) throw new Error('credential reason leaked secret token')
+                if (credentialReason.reason.includes('Authorization: Bearer')) throw new Error('credential reason leaked raw authorization header')
+                if (!credentialReason.reason.includes('敏感凭据命令（内容已隐藏）')) throw new Error('credential reason should use safe summary')
+                if (externalReason.reason.includes('token=top-secret')) throw new Error('external reason leaked token payload')
+                if (!externalReason.reason.includes('https://api.example.com')) throw new Error('external reason should keep safe origin summary')
+
+                process.stdout.write('redaction and variant coverage verified\n')
+            """.trimIndent(),
+        )
+        try {
+            val process = ProcessBuilder("node", runnerFile.toString())
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            assertEquals(output, 0, process.waitFor())
+            assertTrue(output, output.contains("redaction and variant coverage verified"))
+        } finally {
+            tempDir.resolve("opt").toFile().deleteRecursively()
+            tempDir.toFile().deleteRecursively()
+            java.io.File("/opt/daddy-harness/run/code-hut-approval.env").delete()
         }
     }
 

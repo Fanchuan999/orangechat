@@ -77,20 +77,30 @@ class HarnessVM(
 
     fun setApprovalMode(mode: CodeHutApprovalMode) {
         viewModelScope.launch {
-            settingsStore.update { settings ->
-                settings.copy(
-                    codeHutSetting = settings.codeHutSetting.copy(approvalMode = mode),
+            runCatching {
+                settingsStore.update { settings ->
+                    settings.copy(
+                        codeHutSetting = settings.codeHutSetting.copy(approvalMode = mode),
+                    )
+                }
+                harnessManager.syncApprovalMode()
+            }.onSuccess {
+                _state.value = _state.value.copy(
+                    approvalMode = mode,
+                    message = if (mode == CodeHutApprovalMode.HELP_ME_APPROVE) {
+                        "代码小屋权限预设已写入工作台：低风险操作会连续放行，危险操作仍会要求确认。"
+                    } else {
+                        "代码小屋权限预设已写入工作台：普通操作也会逐次确认。"
+                    },
+                    error = null,
+                )
+            }.onFailure { error ->
+                _state.value = _state.value.copy(
+                    approvalMode = mode,
+                    message = "代码小屋权限预设已保存，但当前工作台未接通；风险门会继续按保守策略询问。",
+                    error = error.message,
                 )
             }
-            _state.value = _state.value.copy(
-                approvalMode = mode,
-                message = if (mode == CodeHutApprovalMode.HELP_ME_APPROVE) {
-                    "代码小屋已切到“帮我批准”：低风险操作会连续放行，危险操作仍会要求确认。"
-                } else {
-                    "代码小屋已切到“每次询问”。"
-                },
-                error = null,
-            )
         }
     }
 

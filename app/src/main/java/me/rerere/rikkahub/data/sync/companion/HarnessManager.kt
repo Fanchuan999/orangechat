@@ -236,7 +236,10 @@ class HarnessManager(
         resultFile.delete()
         try {
             termuxConfigBridge.executeCommandsAndWait(
-                commands = HarnessScripts.bootstrapCommands(resultFile.absolutePath),
+                commands = buildList {
+                    addAll(HarnessScripts.bootstrapCommands(resultFile.absolutePath))
+                    addAll(HarnessScripts.configureApprovalModeCommands(settingsStore.settingsFlow.value.codeHutSetting.approvalMode))
+                },
                 completionFile = resultFile,
                 timeoutMessage = "Harness 在三十分钟内没有准备好，请查看 ~/daddy-linux/services/harness/logs/setup.log。",
                 waitAttempts = HARNESS_INSTALL_WAIT_ATTEMPTS,
@@ -278,6 +281,25 @@ class HarnessManager(
             actionName = "停止",
         ) { setting ->
             setting.copy(autoKeepRunning = false, manuallyStopped = true)
+        }
+    }
+
+    suspend fun syncApprovalMode() {
+        val resultFile = resultFile("approval")
+        resultFile.delete()
+        try {
+            termuxConfigBridge.executeCommandsAndWait(
+                commands = buildList {
+                    addAll(HarnessScripts.configureApprovalModeCommands(settingsStore.settingsFlow.value.codeHutSetting.approvalMode))
+                    add("printf '%s' '$READY_MARKER' > ${shellQuote(resultFile.absolutePath)}")
+                },
+                completionFile = resultFile,
+                timeoutMessage = "代码小屋审批预设没有在 30 秒内写入工作台。",
+                waitAttempts = QUICK_WAIT_ATTEMPTS,
+            )
+            require(resultFile.readText().trim() == READY_MARKER) { "代码小屋审批预设没有成功写入工作台。" }
+        } finally {
+            resultFile.delete()
         }
     }
 
@@ -384,6 +406,7 @@ class HarnessManager(
         try {
             termuxConfigBridge.executeCommandsAndWait(
                 commands = buildList {
+                    addAll(HarnessScripts.configureApprovalModeCommands(settingsStore.settingsFlow.value.codeHutSetting.approvalMode))
                     add(command)
                     if (waitForHttpHealthy) add(waitForHarnessHealthCommand())
                     add("printf '%s' '$READY_MARKER' > ${shellQuote(resultFile.absolutePath)}")

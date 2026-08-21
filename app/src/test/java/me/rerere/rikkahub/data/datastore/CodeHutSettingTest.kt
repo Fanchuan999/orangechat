@@ -22,8 +22,6 @@ class CodeHutSettingTest {
         assertNull(setting.defaultBindingId)
         assertEquals(emptyList<WorkModelBinding>(), setting.bindings)
         assertEquals(CodeHutApprovalMode.ASK_EVERY_TIME, setting.approvalMode)
-        assertEquals("", setting.taskApproval.taskKey)
-        assertEquals(false, setting.taskApproval.allowLowRiskForTask)
     }
 
     @Test
@@ -31,10 +29,6 @@ class CodeHutSettingTest {
         val expected = CodeHutSetting(
             defaultBindingId = Uuid.parse("cabbb6e9-3f18-4f2c-8bc1-a0a6630323b8"),
             approvalMode = CodeHutApprovalMode.HELP_ME_APPROVE,
-            taskApproval = CodeHutTaskApproval(
-                taskKey = "task-42",
-                allowLowRiskForTask = true,
-            ),
             bindings = listOf(
                 WorkModelBinding(
                     id = Uuid.parse("cabbb6e9-3f18-4f2c-8bc1-a0a6630323b9"),

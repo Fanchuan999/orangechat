@@ -7,6 +7,7 @@
 package me.rerere.rikkahub.data.sync.companion
 
 import java.util.Base64
+import me.rerere.rikkahub.data.datastore.CodeHutApprovalMode
 import me.rerere.rikkahub.data.codehut.HarnessProviderPatch
 
 internal data class HarnessScriptFile(
@@ -25,6 +26,7 @@ internal object HarnessScripts {
     private const val RUN = "$SERVICES/run"
     private const val WORK_PROVIDER_PATCH = "$SERVICES/config/code-hut-provider.patch.yml"
     private const val WORK_PROVIDER_ENV = "$RUN/code-hut.env"
+    private const val APPROVAL_MODE_ENV = "$RUN/code-hut-approval.env"
 
     fun bootstrapCommands(resultPath: String): List<String> {
         val files = scriptFiles(resultPath)
@@ -53,7 +55,7 @@ internal object HarnessScripts {
         (
             "mkdir -p \"$RUN\" && touch \"$RUN/.manual-stop\" && " +
                 "rm -f \"$RUN/.auto-keep-running\" && " +
-                (if (clearCodeHutEnvironment) "rm -f \"$WORK_PROVIDER_ENV\" && " else "") +
+                (if (clearCodeHutEnvironment) "rm -f \"$WORK_PROVIDER_ENV\" \"$APPROVAL_MODE_ENV\" && " else "") +
                 "\"$SCRIPTS/stop-harness.sh\""
         )
 
@@ -73,6 +75,11 @@ internal object HarnessScripts {
         writeManagedFileCommand(patch.yaml, WORK_PROVIDER_PATCH),
         writeManagedFileCommand(environmentFile(patch.environment), WORK_PROVIDER_ENV),
         "chmod 600 \"$WORK_PROVIDER_PATCH\" \"$WORK_PROVIDER_ENV\"",
+    )
+
+    fun configureApprovalModeCommands(mode: CodeHutApprovalMode): List<String> = listOf(
+        writeManagedFileCommand(approvalModeEnvironmentFile(mode), APPROVAL_MODE_ENV),
+        "chmod 600 \"$APPROVAL_MODE_ENV\"",
     )
 
     fun scriptFiles(resultPath: String): List<HarnessScriptFile> = listOf(
@@ -359,17 +366,21 @@ internal object HarnessScripts {
     """.trimIndent() + "\n"
 
     private fun riskGatePluginScript(): String = """
-        import { existsSync } from 'node:fs'
+        import { existsSync, readFileSync } from 'node:fs'
         import { isAbsolute, resolve } from 'node:path'
 
         export const name = 'daddy-harness-risk-gate'
+        const APPROVAL_MODE_PATH = '/opt/daddy-harness/run/code-hut-approval.env'
+        const APPROVAL_MODE_ASK = 'ASK_EVERY_TIME'
+        const APPROVAL_MODE_HELP = 'HELP_ME_APPROVE'
 
-        const READ_ONLY_TOOLS = new Set([
+        const LOW_RISK_TOOLS = new Set([
           'read', 'read_image', 'glob', 'grep',
           'session_event_read', 'session_event_search', 'session_event_trace',
           'session_search', 'session_trace', 'job_list', 'job_output',
         ])
         const REASONS = {
+          'low-risk': '当前策略要求对普通低风险操作逐次确认',
           delete: '涉及删除或清空数据',
           overwrite: '会覆盖或改写已有内容',
           'bulk-move': '会批量移动或重命名文件',
@@ -384,6 +395,20 @@ internal object HarnessScripts {
 
         function objectArgs(value) {
           return value !== null && typeof value === 'object' ? value : {}
+        }
+
+        function readApprovalMode() {
+          try {
+            const lines = readFileSync(APPROVAL_MODE_PATH, 'utf8').split(/\r?\n/)
+            for (const line of lines) {
+              const match = line.match(/^DADDY_CODE_HUT_APPROVAL_MODE=(['"]?)([A-Z_]+)\1$/)
+              if (match === null) continue
+              return match[2] === APPROVAL_MODE_HELP ? APPROVAL_MODE_HELP : APPROVAL_MODE_ASK
+            }
+            return APPROVAL_MODE_ASK
+          } catch {
+            return APPROVAL_MODE_ASK
+          }
         }
 
         function stringArg(args, ...names) {
@@ -416,11 +441,32 @@ internal object HarnessScripts {
           return normalized.slice(0, max - 1) + '…'
         }
 
-        function describeTarget(exec, args) {
+        function redactSensitiveText(value) {
+          return compactSnippet(value)
+            .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?)\S+/gi, '$1[REDACTED]')
+            .replace(/((?:api[_ -]?key|token|access[_ -]?token|refresh[_ -]?token|secret|password|passwd)\s*[:=]\s*)\S+/gi, '$1[REDACTED]')
+        }
+
+        function summarizeExternalTarget(command) {
+          const url = command.match(/https?:\/\/[^\s'"]+/i)?.[0]
+          if (url !== undefined) {
+            try {
+              return '外部目标 ' + new URL(url).origin
+            } catch {
+            }
+          }
+          return '外部提交命令（内容已隐藏）'
+        }
+
+        function describeTarget(exec, args, risk) {
           const path = stringArg(args, 'path', 'file_path', 'target', 'destination', 'dest', 'url', 'uri')
-          if (path !== undefined) return compactSnippet(path)
+          if (path !== undefined) return redactSensitiveText(path)
           const command = stringArg(args, 'command', 'cmd', 'script')
-          if (command !== undefined) return compactSnippet(command)
+          if (command !== undefined) {
+            if (risk === 'credential') return '敏感凭据命令（内容已隐藏）'
+            if (risk === 'external-submit') return summarizeExternalTarget(command)
+            return redactSensitiveText(command)
+          }
           return compactSnippet(exec.name ?? '未知目标')
         }
 
@@ -443,16 +489,38 @@ internal object HarnessScripts {
           const args = objectArgs(exec.arguments)
           return [
             'Daddy 安全确认',
-            `动作：${'$'}{describeAction(exec, risk)}`,
-            `目标：${'$'}{describeTarget(exec, args)}`,
-            `原因：${'$'}{REASONS[risk] ?? REASONS['high-risk-shell']}`,
+            '动作：' + describeAction(exec, risk),
+            '目标：' + describeTarget(exec, args, risk),
+            '原因：' + (REASONS[risk] ?? REASONS['high-risk-shell']),
           ].join('\n')
         }
 
         function shellRisk(command) {
           const normalized = command.trim().replace(/\s+/g, ' ')
           if (normalized.length === 0) return null
-          if (/\bgit\s+pull\b/i.test(normalized)) return null
+          const tokens = tokenize(normalized)
+          const first = tokens[0]?.toLowerCase() ?? ''
+          const second = tokens[1]?.toLowerCase() ?? ''
+          if (['curl', 'wget', 'http', 'httpie', 'invoke-webrequest', 'iwr'].includes(first) &&
+              /(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request\s+(?:POST|PUT|PATCH|DELETE)\b|--data(?:-raw|-binary)?\b|--form\b|-d\s)/i.test(normalized)) {
+            return 'external-submit'
+          }
+          if (/\b(?:gh\s+auth\s+login|docker\s+login|npm\s+login|pnpm\s+login|yarn\s+login|aws\s+configure|gcloud\s+auth\s+login|az\s+login|op\s+signin|pass\s+insert|vault\s+login|ssh-keygen|api[_ -]?key|token|secret|password|passwd|authorization\s*[:=]\s*(?:bearer\s+)?)\b/i.test(normalized)) {
+            return 'credential'
+          }
+          if (['pwd', 'ls', 'dir', 'cat', 'head', 'tail', 'find', 'grep'].includes(first)) return 'low-risk'
+          if (first === 'git' && ['status', 'diff', 'log', 'pull'].includes(second)) return 'low-risk'
+          if (['unzip', 'tar'].includes(first) && /(?:-x|xf|\s+x[fv]?)/i.test(normalized)) return 'low-risk'
+          if (first === 'mkdir') return 'low-risk'
+          if (['./gradlew', 'gradlew', 'gradle', 'mvn', './mvnw', 'npm', 'pnpm', 'yarn', 'bun', 'cargo', 'go'].includes(first) &&
+              /\b(?:test|build|check|lint|assemble|verify)\b/i.test(normalized)) {
+            return 'low-risk'
+          }
+          if (['curl', 'wget', 'http', 'httpie', 'invoke-webrequest', 'iwr'].includes(first) &&
+              !/(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request\s+(?:POST|PUT|PATCH|DELETE)\b|--data(?:-raw|-binary)?\b|--form\b|-d\s)/i.test(normalized)) {
+            return 'low-risk'
+          }
+          if (['ssh', 'scp', 'sftp', 'rsync', 'nc', 'ncat', 'telnet'].includes(first)) return 'external-submit'
 
           if (/(^|[;&|()\s])(?:rm|rmdir|unlink|shred)\s/i.test(normalized)) return 'delete'
           if (/\bfind\b[^\n]*(?:-delete|-exec\s+(?:rm|rmdir|unlink|shred)\b)/i.test(normalized)) return 'delete'
@@ -472,19 +540,15 @@ internal object HarnessScripts {
           if (/\b(?:sed\s+-[^\s]*i|perl\s+-[^\s]*i)\b/i.test(normalized)) return 'overwrite'
           if (/\b(?:cp|install)\b[^\n]*(?:-f|--force)\b/i.test(normalized)) return 'overwrite'
 
-          if (/\b(?:npm|pnpm|yarn|bun|pip(?:3)?|uv|poetry|gem|bundle|cargo|go|brew|apt(?:-get)?|apk|dnf|yum|pacman|pkg)\b[^\n]*(?:install|add|update|upgrade|remove|uninstall)\b/i.test(normalized)) {
+          if (/\b(?:npm|pnpm)\b[^\n]*(?:\bi\b|\binstall\b|\bupdate\b|\bupgrade\b|\bremove\b|\buninstall\b)|\byarn\b[^\n]*(?:\badd\b|\binstall\b|\bremove\b|\bupgrade\b)|\b(?:bun|pip(?:3)?|uv|poetry|gem|bundle|cargo|go|brew|apt(?:-get)?|apk|dnf|yum|pacman|pkg)\b[^\n]*(?:install|add|update|upgrade|remove|uninstall)\b/i.test(normalized)) {
             return 'package-install'
           }
-          if (/\b(?:gh\s+auth\s+login|docker\s+login|npm\s+login|pnpm\s+login|yarn\s+login|aws\s+configure|gcloud\s+auth\s+login|az\s+login|op\s+signin|pass\s+insert|vault\s+login|ssh-keygen|api[_ -]?key|token|secret|password|passwd)\b/i.test(normalized)) {
-            return 'credential'
-          }
+          if (/\b(?:npm|pnpm|yarn|cargo)\b[^\n]*\bpublish\b|\btwine\b[^\n]*\bupload\b/i.test(normalized)) return 'external-submit'
           if (/\b(?:git\s+push|gh\s+release|gh\s+pr\s+merge)\b/i.test(normalized)) return 'git-push-or-release'
-          if (/\b(?:curl|wget|http|httpie|Invoke-WebRequest|iwr)\b[^\n]*(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request\s+(?:POST|PUT|PATCH|DELETE)\b|--data(?:-raw|-binary)?\b|--form\b|-d\s)/i.test(normalized)) {
-            return 'external-submit'
-          }
           if (/\b(?:adb\s+shell\s+)?(?:pm\s+(?:grant|revoke|disable-user|clear|uninstall)|appops|settings\s+put|svc\s+|setprop|cmd\s+package)\b/i.test(normalized)) {
             return 'android-system'
           }
+          if (['touch', 'cp', 'install'].includes(first)) return 'overwrite'
           if (/\b(?:mkfs(?:\.[a-z0-9]+)?|fdisk|parted|wipefs|mount|umount)\b/i.test(normalized)) return 'privileged'
           if (/\b(?:shutdown|reboot|poweroff|halt)\b/i.test(normalized)) return 'high-risk-shell'
           if (/\b(?:chmod|chown|chgrp)\b[^\n]*(?:-R|--recursive)\b/i.test(normalized)) return 'privileged'
@@ -498,18 +562,18 @@ internal object HarnessScripts {
           const tool = String(exec.name ?? '')
           const lower = tool.toLowerCase()
           const args = objectArgs(exec.arguments)
-          if (READ_ONLY_TOOLS.has(lower)) return null
+          if (LOW_RISK_TOOLS.has(lower)) return 'low-risk'
 
           if (lower === 'write' || /(?:^|[_-])write(?:[_-]|${'$'})/.test(lower)) {
-            return targetExists(exec, args) === false ? null : 'overwrite'
+            return targetExists(exec, args) === false ? 'low-risk' : 'overwrite'
           }
           if (lower === 'edit' || lower === 'patch' || /(?:^|[_-])(?:edit|replace|patch)(?:[_-]|${'$'})/.test(lower)) {
             return 'overwrite'
           }
           if (lower === 'str_replace_editor') {
             const command = stringArg(args, 'command')?.toLowerCase()
-            if (command === 'view') return null
-            if (command === 'create' && targetExists(exec, args) === false) return null
+            if (command === 'view') return 'low-risk'
+            if (command === 'create' && targetExists(exec, args) === false) return 'low-risk'
             return 'overwrite'
           }
           if (/(?:^|[_-])(?:delete|remove|unlink|trash)(?:[_-]|${'$'})/.test(lower)) return 'delete'
@@ -529,19 +593,25 @@ internal object HarnessScripts {
           ctx.on('tools/pre-execute', async (exec, next) => {
             const risk = classifyToolCall(exec)
             if (risk === null) return next()
+            if (risk === 'low-risk' && readApprovalMode() === APPROVAL_MODE_HELP) return next()
             return { kind: 'ask', reason: riskReason(exec, risk) }
           })
         }
 
         export function runSelfTest() {
           const cases = [
-            [{ name: 'read', arguments: { path: 'x' } }, null],
-            [{ name: 'bash', arguments: { command: 'ls -la' } }, null],
+            [{ name: 'read', arguments: { path: 'x' } }, 'low-risk'],
+            [{ name: 'bash', arguments: { command: 'ls -la' } }, 'low-risk'],
             [{ name: 'bash', arguments: { command: 'rm -rf build' } }, 'delete'],
             [{ name: 'bash', arguments: { command: 'git clean -fd' } }, 'delete'],
             [{ name: 'bash', arguments: { command: 'git reset --hard HEAD' } }, 'high-risk-shell'],
             [{ name: 'bash', arguments: { command: 'mv a b archive/' } }, 'bulk-move'],
+            [{ name: 'bash', arguments: { command: './gradlew test' } }, 'low-risk'],
+            [{ name: 'bash', arguments: { command: 'git pull --ff-only' } }, 'low-risk'],
+            [{ name: 'bash', arguments: { command: 'npm i eslint' } }, 'package-install'],
+            [{ name: 'bash', arguments: { command: 'yarn add react' } }, 'package-install'],
             [{ name: 'bash', arguments: { command: 'npm install vite' } }, 'package-install'],
+            [{ name: 'bash', arguments: { command: 'cargo publish' } }, 'external-submit'],
             [{ name: 'bash', arguments: { command: 'gh auth login' } }, 'credential'],
             [{ name: 'bash', arguments: { command: 'git push origin HEAD' } }, 'git-push-or-release'],
             [{ name: 'bash', arguments: { command: 'curl -X POST https://example.com -d x=1' } }, 'external-submit'],
@@ -826,6 +896,12 @@ internal object HarnessScripts {
             append(shellQuote(value))
             append('\n')
         }
+    }
+
+    private fun approvalModeEnvironmentFile(mode: CodeHutApprovalMode): String = buildString {
+        append("DADDY_CODE_HUT_APPROVAL_MODE=")
+        append(shellQuote(mode.name))
+        append('\n')
     }
 
     private fun expandableHomePath(path: String): String {
