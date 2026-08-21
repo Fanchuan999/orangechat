@@ -11,10 +11,13 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.data.datastore.WorkModelBinding
 import me.rerere.rikkahub.data.datastore.WorkProtocol
 import kotlinx.coroutines.runBlocking
+import me.rerere.rikkahub.data.ai.RequestLoggingInterceptor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 import kotlin.uuid.Uuid
 
 class CodeHutCredentialBridgeTest {
@@ -24,6 +27,23 @@ class CodeHutCredentialBridgeTest {
         modelId = Uuid.parse("a23b4400-021a-46d6-a20f-3000e8980012"),
         protocol = WorkProtocol.ANTHROPIC_MESSAGES,
     )
+
+    @Test
+    fun upstreamClientFactoryRemovesAllRequestAndNetworkLoggingInterceptors() {
+        val sharedClient = OkHttpClient.Builder()
+            .addInterceptor(HttpLoggingInterceptor())
+            .addNetworkInterceptor(RequestLoggingInterceptor())
+            .build()
+
+        val upstreamClient = buildCodeHutUpstreamClient(sharedClient)
+
+        assertTrue(sharedClient.interceptors.any { it is HttpLoggingInterceptor })
+        assertTrue(sharedClient.networkInterceptors.any { it is RequestLoggingInterceptor })
+        assertFalse(upstreamClient.interceptors.any { it is HttpLoggingInterceptor })
+        assertFalse(upstreamClient.interceptors.any { it is RequestLoggingInterceptor })
+        assertFalse(upstreamClient.networkInterceptors.any { it is HttpLoggingInterceptor })
+        assertFalse(upstreamClient.networkInterceptors.any { it is RequestLoggingInterceptor })
+    }
 
     @Test
     fun missingLeaseTokenIsRejectedBeforeProviderLookup() = runBlocking {

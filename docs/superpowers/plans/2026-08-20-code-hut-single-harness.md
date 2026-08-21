@@ -353,4 +353,3 @@ git commit -m "feat: add native single-Harness Code Hut"
 - Tasks 3–4 cover one stored credential, one Harness executor and every requested protocol.
 - Task 5 prevents daily-context leakage and forbids DOM automation.
 - Task 6 covers the one visible UI, per-task model switch and the requested device matrix.
-

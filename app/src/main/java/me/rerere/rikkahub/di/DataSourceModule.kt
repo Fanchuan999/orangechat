@@ -56,6 +56,7 @@ import me.rerere.rikkahub.data.sync.companion.TermuxConfigBridge
 import me.rerere.rikkahub.data.codehut.CodeHutCredentialBridge
 import me.rerere.rikkahub.data.codehut.CodeHutProviderResolver
 import me.rerere.rikkahub.data.codehut.SettingsCodeHutProviderResolver
+import me.rerere.rikkahub.data.codehut.buildCodeHutUpstreamClient
 import me.rerere.search.SearchService
 import me.rerere.rikkahub.data.sync.S3Sync
 import okhttp3.Dispatcher
@@ -303,9 +304,10 @@ val dataSourceModule = module {
 
     single {
         val sharedHttpClient: OkHttpClient = get()
+        val codeHutUpstreamClient = buildCodeHutUpstreamClient(sharedHttpClient)
         CodeHutCredentialBridge(
             providerResolver = get(),
-            upstreamClient = { sharedHttpClient },
+            upstreamClient = { codeHutUpstreamClient },
         )
     }
 
