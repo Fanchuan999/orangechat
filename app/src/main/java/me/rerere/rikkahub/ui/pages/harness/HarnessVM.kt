@@ -21,6 +21,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import me.rerere.rikkahub.data.datastore.CodeHutApprovalMode
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.HarnessStatus
 import me.rerere.rikkahub.data.datastore.SettingsStore
@@ -30,6 +31,7 @@ import me.rerere.rikkahub.data.sync.companion.HarnessRecoveryScheduler
 data class HarnessUiState(
     val snapshot: HarnessSnapshot = HarnessSnapshot(),
     val autoKeepRunning: Boolean = true,
+    val approvalMode: CodeHutApprovalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
     val busyAction: String? = null,
     val displayedInstallProgress: Int = snapshot.installProgressPercent.coerceIn(0, 100),
     val message: String? = null,
@@ -48,6 +50,7 @@ class HarnessVM(
         HarnessUiState(
             snapshot = harnessManager.snapshot.value,
             autoKeepRunning = settingsStore.settingsFlow.value.harnessSetting.autoKeepRunning,
+            approvalMode = settingsStore.settingsFlow.value.codeHutSetting.approvalMode,
         )
     )
     val state: StateFlow<HarnessUiState> = _state.asStateFlow()
@@ -70,6 +73,25 @@ class HarnessVM(
         action = if (enabled) "开启自动复活" else "关闭自动复活",
     ) {
         harnessManager.setAutoKeepRunning(enabled)
+    }
+
+    fun setApprovalMode(mode: CodeHutApprovalMode) {
+        viewModelScope.launch {
+            settingsStore.update { settings ->
+                settings.copy(
+                    codeHutSetting = settings.codeHutSetting.copy(approvalMode = mode),
+                )
+            }
+            _state.value = _state.value.copy(
+                approvalMode = mode,
+                message = if (mode == CodeHutApprovalMode.HELP_ME_APPROVE) {
+                    "代码小屋已切到“帮我批准”：低风险操作会连续放行，危险操作仍会要求确认。"
+                } else {
+                    "代码小屋已切到“每次询问”。"
+                },
+                error = null,
+            )
+        }
     }
 
     fun copyFallbackCommand() {
@@ -112,6 +134,7 @@ class HarnessVM(
                     _state.value = _state.value.copy(
                         snapshot = snapshot,
                         autoKeepRunning = autoKeepRunning,
+                        approvalMode = settingsStore.settingsFlow.value.codeHutSetting.approvalMode,
                         busyAction = null,
                         message = if (snapshot.status in setOf(
                                 HarnessStatus.INSTALLING,

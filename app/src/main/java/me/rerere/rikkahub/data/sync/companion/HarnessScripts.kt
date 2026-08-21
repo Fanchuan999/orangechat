@@ -370,10 +370,16 @@ internal object HarnessScripts {
           'session_search', 'session_trace', 'job_list', 'job_output',
         ])
         const REASONS = {
-          delete: 'Daddy 安全确认：这一步会删除文件，是否只允许执行这一次？',
-          overwrite: 'Daddy 安全确认：这一步会覆盖或改写已有文件，是否只允许执行这一次？',
-          'bulk-move': 'Daddy 安全确认：这一步会批量移动或重命名文件，是否只允许执行这一次？',
-          'high-risk-shell': 'Daddy 安全确认：这是一条高风险 Shell 操作，是否只允许执行这一次？',
+          delete: '涉及删除或清空数据',
+          overwrite: '会覆盖或改写已有内容',
+          'bulk-move': '会批量移动或重命名文件',
+          'package-install': '会安装、更新或移除第三方包/插件',
+          credential: '涉及登录、令牌、密钥或其他敏感凭据',
+          'external-submit': '会向外部服务提交表单、发送消息或写入远端数据',
+          'git-push-or-release': '会把改动发布到外部 Git 远端或 Release',
+          privileged: '会请求 root、系统级或宿主高权限操作',
+          'android-system': '会修改 Android 系统、应用权限或设备级配置',
+          'high-risk-shell': '这是一条高风险 Shell 操作',
         }
 
         function objectArgs(value) {
@@ -404,9 +410,49 @@ internal object HarnessScripts {
           return command.match(/"[^"\n]*"|'[^'\n]*'|[^\s]+/g)?.map(value => value.replace(/^['"]|['"]${'$'}/g, '')) ?? []
         }
 
+        function compactSnippet(value, max = 96) {
+          const normalized = String(value ?? '').trim().replace(/\s+/g, ' ')
+          if (normalized.length <= max) return normalized || '未提供'
+          return normalized.slice(0, max - 1) + '…'
+        }
+
+        function describeTarget(exec, args) {
+          const path = stringArg(args, 'path', 'file_path', 'target', 'destination', 'dest', 'url', 'uri')
+          if (path !== undefined) return compactSnippet(path)
+          const command = stringArg(args, 'command', 'cmd', 'script')
+          if (command !== undefined) return compactSnippet(command)
+          return compactSnippet(exec.name ?? '未知目标')
+        }
+
+        function describeAction(exec, risk) {
+          switch (risk) {
+            case 'delete': return '删除或清理数据'
+            case 'overwrite': return '覆盖或改写内容'
+            case 'bulk-move': return '批量移动或重命名'
+            case 'package-install': return '安装/更新第三方包'
+            case 'credential': return '登录或处理敏感凭据'
+            case 'external-submit': return '向外部服务提交数据'
+            case 'git-push-or-release': return '推送 Git 或发布 Release'
+            case 'privileged': return '申请系统级高权限'
+            case 'android-system': return '修改 Android 系统配置'
+            default: return compactSnippet(exec.name ?? '高风险操作')
+          }
+        }
+
+        function riskReason(exec, risk) {
+          const args = objectArgs(exec.arguments)
+          return [
+            'Daddy 安全确认',
+            `动作：${'$'}{describeAction(exec, risk)}`,
+            `目标：${'$'}{describeTarget(exec, args)}`,
+            `原因：${'$'}{REASONS[risk] ?? REASONS['high-risk-shell']}`,
+          ].join('\n')
+        }
+
         function shellRisk(command) {
           const normalized = command.trim().replace(/\s+/g, ' ')
           if (normalized.length === 0) return null
+          if (/\bgit\s+pull\b/i.test(normalized)) return null
 
           if (/(^|[;&|()\s])(?:rm|rmdir|unlink|shred)\s/i.test(normalized)) return 'delete'
           if (/\bfind\b[^\n]*(?:-delete|-exec\s+(?:rm|rmdir|unlink|shred)\b)/i.test(normalized)) return 'delete'
@@ -426,10 +472,24 @@ internal object HarnessScripts {
           if (/\b(?:sed\s+-[^\s]*i|perl\s+-[^\s]*i)\b/i.test(normalized)) return 'overwrite'
           if (/\b(?:cp|install)\b[^\n]*(?:-f|--force)\b/i.test(normalized)) return 'overwrite'
 
-          if (/\b(?:mkfs(?:\.[a-z0-9]+)?|fdisk|parted|wipefs|mount|umount)\b/i.test(normalized)) return 'high-risk-shell'
+          if (/\b(?:npm|pnpm|yarn|bun|pip(?:3)?|uv|poetry|gem|bundle|cargo|go|brew|apt(?:-get)?|apk|dnf|yum|pacman|pkg)\b[^\n]*(?:install|add|update|upgrade|remove|uninstall)\b/i.test(normalized)) {
+            return 'package-install'
+          }
+          if (/\b(?:gh\s+auth\s+login|docker\s+login|npm\s+login|pnpm\s+login|yarn\s+login|aws\s+configure|gcloud\s+auth\s+login|az\s+login|op\s+signin|pass\s+insert|vault\s+login|ssh-keygen|api[_ -]?key|token|secret|password|passwd)\b/i.test(normalized)) {
+            return 'credential'
+          }
+          if (/\b(?:git\s+push|gh\s+release|gh\s+pr\s+merge)\b/i.test(normalized)) return 'git-push-or-release'
+          if (/\b(?:curl|wget|http|httpie|Invoke-WebRequest|iwr)\b[^\n]*(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request\s+(?:POST|PUT|PATCH|DELETE)\b|--data(?:-raw|-binary)?\b|--form\b|-d\s)/i.test(normalized)) {
+            return 'external-submit'
+          }
+          if (/\b(?:adb\s+shell\s+)?(?:pm\s+(?:grant|revoke|disable-user|clear|uninstall)|appops|settings\s+put|svc\s+|setprop|cmd\s+package)\b/i.test(normalized)) {
+            return 'android-system'
+          }
+          if (/\b(?:mkfs(?:\.[a-z0-9]+)?|fdisk|parted|wipefs|mount|umount)\b/i.test(normalized)) return 'privileged'
           if (/\b(?:shutdown|reboot|poweroff|halt)\b/i.test(normalized)) return 'high-risk-shell'
-          if (/\b(?:chmod|chown|chgrp)\b[^\n]*(?:-R|--recursive)\b/i.test(normalized)) return 'high-risk-shell'
-          if (/\b(?:sudo|su|eval)\b/i.test(normalized)) return 'high-risk-shell'
+          if (/\b(?:chmod|chown|chgrp)\b[^\n]*(?:-R|--recursive)\b/i.test(normalized)) return 'privileged'
+          if (/\b(?:sudo|su)\b/i.test(normalized)) return 'privileged'
+          if (/\beval\b/i.test(normalized)) return 'high-risk-shell'
           if (/\b(?:python(?:3)?\s+-c|node\s+-e|bash\s+-c|sh\s+-c|xargs)\b/i.test(normalized)) return 'high-risk-shell'
           return null
         }
@@ -469,7 +529,7 @@ internal object HarnessScripts {
           ctx.on('tools/pre-execute', async (exec, next) => {
             const risk = classifyToolCall(exec)
             if (risk === null) return next()
-            return { kind: 'ask', reason: REASONS[risk] ?? REASONS['high-risk-shell'] }
+            return { kind: 'ask', reason: riskReason(exec, risk) }
           })
         }
 
@@ -481,6 +541,12 @@ internal object HarnessScripts {
             [{ name: 'bash', arguments: { command: 'git clean -fd' } }, 'delete'],
             [{ name: 'bash', arguments: { command: 'git reset --hard HEAD' } }, 'high-risk-shell'],
             [{ name: 'bash', arguments: { command: 'mv a b archive/' } }, 'bulk-move'],
+            [{ name: 'bash', arguments: { command: 'npm install vite' } }, 'package-install'],
+            [{ name: 'bash', arguments: { command: 'gh auth login' } }, 'credential'],
+            [{ name: 'bash', arguments: { command: 'git push origin HEAD' } }, 'git-push-or-release'],
+            [{ name: 'bash', arguments: { command: 'curl -X POST https://example.com -d x=1' } }, 'external-submit'],
+            [{ name: 'bash', arguments: { command: 'adb shell pm grant app android.permission.POST_NOTIFICATIONS' } }, 'android-system'],
+            [{ name: 'bash', arguments: { command: 'sudo systemctl restart ssh' } }, 'privileged'],
             [{ name: 'edit', arguments: { path: 'x' } }, 'overwrite'],
             [{ name: 'terminal_send', arguments: { chars: 'x' } }, 'high-risk-shell'],
           ]

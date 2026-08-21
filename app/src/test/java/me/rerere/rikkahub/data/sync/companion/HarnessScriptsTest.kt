@@ -252,7 +252,16 @@ class HarnessScriptsTest {
         assertTrue(gate.contains("delete"))
         assertTrue(gate.contains("overwrite"))
         assertTrue(gate.contains("bulk-move"))
+        assertTrue(gate.contains("package-install"))
+        assertTrue(gate.contains("credential"))
+        assertTrue(gate.contains("external-submit"))
+        assertTrue(gate.contains("git-push-or-release"))
+        assertTrue(gate.contains("privileged"))
+        assertTrue(gate.contains("android-system"))
         assertTrue(gate.contains("high-risk-shell"))
+        assertTrue(gate.contains("动作："))
+        assertTrue(gate.contains("目标："))
+        assertTrue(gate.contains("原因："))
         assertTrue(gate.contains("runSelfTest"))
         assertTrue(patch.contains("@daddy/harness-risk-gate"))
         assertTrue(runner.contains("--patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml"))
@@ -274,7 +283,57 @@ class HarnessScriptsTest {
         assertTrue(gate.contains("terminal_send"))
         assertTrue(gate.contains("rm"))
         assertTrue(gate.contains("git clean"))
+        assertTrue(gate.contains("git pull"))
         assertTrue(gate.contains("git reset --hard"))
+        assertTrue(gate.contains("npm install"))
+        assertTrue(gate.contains("gh auth login"))
+        assertTrue(gate.contains("curl -X POST"))
+        assertTrue(gate.contains("adb shell pm grant"))
+    }
+
+    @Test
+    fun riskGateKeepsLowRiskBuildAndReadonlyFetchFlowsUngated() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+        val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-low-risk")
+        val gateFile = tempDir.resolve("risk-gate.mjs")
+        val runnerFile = tempDir.resolve("low-risk-test.mjs")
+        Files.writeString(gateFile, gate)
+        Files.writeString(
+            runnerFile,
+            """
+                import { classifyToolCall } from './risk-gate.mjs'
+                const buildRisk = classifyToolCall({
+                  name: 'bash',
+                  arguments: { command: './gradlew test' },
+                })
+                const gitPullRisk = classifyToolCall({
+                  name: 'bash',
+                  arguments: { command: 'git pull --ff-only' },
+                })
+                const readRisk = classifyToolCall({
+                  name: 'read',
+                  arguments: { path: 'README.md' },
+                })
+                if (buildRisk !== null) throw new Error(`expected build to stay low-risk, got ${'$'}{buildRisk}`)
+                if (gitPullRisk !== null) throw new Error(`expected git pull to stay low-risk, got ${'$'}{gitPullRisk}`)
+                if (readRisk !== null) throw new Error(`expected read to stay low-risk, got ${'$'}{readRisk}`)
+                process.stdout.write('low risk paths stay ungated\n')
+            """.trimIndent(),
+        )
+        try {
+            val process = ProcessBuilder("node", runnerFile.toString())
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            assertEquals(output, 0, process.waitFor())
+            assertTrue(output, output.contains("low risk paths stay ungated"))
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
     }
 
     @Test

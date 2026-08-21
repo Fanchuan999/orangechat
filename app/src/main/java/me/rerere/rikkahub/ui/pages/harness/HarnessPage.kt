@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import me.rerere.rikkahub.data.datastore.CodeHutApprovalMode
 import me.rerere.rikkahub.data.datastore.HarnessInstallStage
 import me.rerere.rikkahub.data.datastore.HarnessStatus
 import me.rerere.rikkahub.data.sync.companion.HarnessScripts
@@ -122,6 +123,14 @@ fun HarnessPage(
                                 enabled = !state.isBusy,
                             )
                         }
+
+                        HorizontalDivider()
+
+                        ApprovalModeCard(
+                            selectedMode = state.approvalMode,
+                            enabled = !state.isBusy,
+                            onModeSelected = vm::setApprovalMode,
+                        )
 
                         HorizontalDivider()
 
@@ -217,6 +226,55 @@ fun HarnessPage(
                 ) {
                     Text("复制 Termux 备用安装命令")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApprovalModeCard(
+    selectedMode: CodeHutApprovalMode,
+    enabled: Boolean,
+    onModeSelected: (CodeHutApprovalMode) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("权限策略", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "“每次询问”保持最保守默认；“帮我批准”只连续放行低风险操作，删除、安装包、推送、密钥、外部提交和系统级改动仍必须确认。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            val askEveryTimeSelected = selectedMode == CodeHutApprovalMode.ASK_EVERY_TIME
+            val helpMeApproveSelected = selectedMode == CodeHutApprovalMode.HELP_ME_APPROVE
+            if (askEveryTimeSelected) {
+                Button(
+                    onClick = { onModeSelected(CodeHutApprovalMode.ASK_EVERY_TIME) },
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                ) { Text("每次询问") }
+            } else {
+                FilledTonalButton(
+                    onClick = { onModeSelected(CodeHutApprovalMode.ASK_EVERY_TIME) },
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                ) { Text("每次询问") }
+            }
+            if (helpMeApproveSelected) {
+                Button(
+                    onClick = { onModeSelected(CodeHutApprovalMode.HELP_ME_APPROVE) },
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                ) { Text("帮我批准") }
+            } else {
+                FilledTonalButton(
+                    onClick = { onModeSelected(CodeHutApprovalMode.HELP_ME_APPROVE) },
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                ) { Text("帮我批准") }
             }
         }
     }

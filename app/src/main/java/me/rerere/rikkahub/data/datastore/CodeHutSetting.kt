@@ -18,6 +18,20 @@ data class CodeHutSetting(
     val executor: WorkExecutor = WorkExecutor.HARNESS,
     val defaultBindingId: Uuid? = null,
     val bindings: List<WorkModelBinding> = emptyList(),
+    val approvalMode: CodeHutApprovalMode = CodeHutApprovalMode.ASK_EVERY_TIME,
+    val taskApproval: CodeHutTaskApproval = CodeHutTaskApproval(),
+)
+
+@Serializable
+enum class CodeHutApprovalMode {
+    ASK_EVERY_TIME,
+    HELP_ME_APPROVE,
+}
+
+@Serializable
+data class CodeHutTaskApproval(
+    val taskKey: String = "",
+    val allowLowRiskForTask: Boolean = false,
 )
 
 @Serializable
