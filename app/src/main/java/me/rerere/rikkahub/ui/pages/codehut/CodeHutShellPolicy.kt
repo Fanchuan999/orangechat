@@ -13,6 +13,7 @@ import me.rerere.rikkahub.data.codehut.CodeHutTaskStatus
 import me.rerere.rikkahub.data.codehut.HarnessGatewayResult
 import me.rerere.rikkahub.data.codehut.TaskResultSummary
 import me.rerere.rikkahub.data.codehut.TaskTicket
+import me.rerere.rikkahub.data.codehut.redactCodeHutUiText
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.HarnessStatus
 import me.rerere.rikkahub.data.datastore.Settings
@@ -144,12 +145,14 @@ fun codeHutEnvironmentPresentation(
         diagnostics = CodeHutEnvironmentItem(
             title = "诊断",
             status = if (harnessSnapshot.detail.isBlank()) "待检查" else "有状态",
-            detail = harnessSnapshot.detail.ifBlank { "暂无诊断详情，刷新 Harness 后更新" },
+            detail = redactCodeHutUiText(
+                harnessSnapshot.detail.ifBlank { "暂无诊断详情，刷新 Harness 后更新" },
+            ),
         ),
         permissions = CodeHutEnvironmentItem(
             title = "权限",
-            status = "策略接口",
-            detail = "待 1 号窗口合并权限策略",
+            status = "安全确认",
+            detail = "遵循当前 Harness 风险确认策略；高风险操作仍须单独确认。",
         ),
     )
 }
@@ -158,17 +161,12 @@ fun applyGatewayResult(
     task: CodeHutTask,
     result: HarnessGatewayResult,
 ): CodeHutTask = when (result) {
-    is HarnessGatewayResult.Success -> task.copy(
-        status = CodeHutTaskStatus.SUCCEEDED,
-        result = result.summary.redactedForCodeHutShell(),
-    )
-
-    is HarnessGatewayResult.UnsupportedApi -> task.copy(
-        status = CodeHutTaskStatus.UNSUPPORTED,
+    is HarnessGatewayResult.PreparedForWorkbench -> task.copy(
+        status = CodeHutTaskStatus.PREPARED,
         result = TaskResultSummary(
-            summary = "${result.message}。请转到完整工作台继续。",
+            summary = result.message,
             verification = result.workbenchUrl,
-        ),
+        ).redactedForCodeHutShell(),
     )
 
     is HarnessGatewayResult.Failure -> task.copy(
@@ -184,6 +182,7 @@ fun codeHutTaskActionLabel(task: CodeHutTask): String = when (task.status) {
 
     CodeHutTaskStatus.SUCCEEDED -> "查看结果"
     CodeHutTaskStatus.FAILED -> "重新提交"
+    CodeHutTaskStatus.PREPARED -> "复制任务内容"
     CodeHutTaskStatus.UNSUPPORTED -> "转到完整工作台继续"
 }
 
@@ -193,30 +192,12 @@ fun codeHutTaskStopNotice(task: CodeHutTask): String = when (task.status) {
     else -> "当前任务没有可取消的本地请求。"
 }
 
-fun redactCodeHutShellText(value: String): String = secretPatterns.fold(value) { current, pattern ->
-    current.replace(pattern) { match ->
-        val prefix = match.groups[1]?.value.orEmpty()
-        val separator = match.groups[2]?.value.orEmpty()
-        val quote = match.groups[3]?.value.orEmpty()
-        "$prefix$separator$quote[REDACTED]$quote"
-    }
-}
+fun redactCodeHutShellText(value: String): String = redactCodeHutUiText(value)
 
-private fun TaskResultSummary.redactedForCodeHutShell(): TaskResultSummary = copy(
+fun TaskResultSummary.redactedForCodeHutShell(): TaskResultSummary = copy(
     summary = redactCodeHutShellText(summary),
+    changedFiles = changedFiles.map(::redactCodeHutShellText),
     verification = redactCodeHutShellText(verification),
-)
-
-private val secretPatterns = listOf(
-    Regex(
-        pattern = "(?i)\\b(authorization)(\\s*[:=]\\s*)([\"']?)(bearer\\s+[^\"'\\s,;]+)",
-    ),
-    Regex(
-        pattern = "(?i)\\b(bearer)(\\s+)([\"']?)([^\"'\\s,;]+)",
-    ),
-    Regex(
-        pattern = "(?i)\\b(api\\s*key|api[_-]?key|token|password|passwd|secret)(\\s*[:=]\\s*)([\"']?)([^\"'\\s,;]+)",
-    ),
 )
 
 fun harnessStatusLabel(status: HarnessStatus): String = when (status) {

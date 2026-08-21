@@ -30,12 +30,16 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.rikkahub.data.codehut.CodeHutTask
 import me.rerere.rikkahub.data.codehut.CodeHutTaskStatus
+import me.rerere.rikkahub.data.codehut.redactCodeHutUiText
 import me.rerere.rikkahub.ui.components.nav.BackButton
+import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.CustomColors
 import org.koin.androidx.compose.koinViewModel
 
@@ -48,6 +52,8 @@ fun CodeHutPage(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val clipboard = LocalClipboardManager.current
+    val toaster = LocalToaster.current
 
     Scaffold(
         topBar = {
@@ -70,9 +76,12 @@ fun CodeHutPage(
                 TaskCard(
                     state = state,
                     onDraftChange = vm::updateDraft,
-                    onSubmit = vm::submitTask,
-                    onStop = vm::stopTask,
+                    onPrepare = vm::prepareTaskForWorkbench,
                     onReset = vm::resetTask,
+                    onCopyTask = { prompt ->
+                        clipboard.setText(AnnotatedString(prompt))
+                        toaster.show("任务内容已复制；请在完整工作台中手动粘贴运行。")
+                    },
                     onOpenWorkbench = onOpenWorkbench,
                     onOpenHarnessSettings = onOpenHarnessSettings,
                 )
@@ -103,7 +112,7 @@ fun CodeHutPage(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                text = state.error.orEmpty(),
+                                text = redactCodeHutUiText(state.error.orEmpty()),
                                 color = MaterialTheme.colorScheme.error,
                             )
                             TextButton(onClick = vm::clearError) {
@@ -121,9 +130,9 @@ fun CodeHutPage(
 private fun TaskCard(
     state: CodeHutUiState,
     onDraftChange: (CodeHutTaskDraft) -> Unit,
-    onSubmit: () -> Unit,
-    onStop: () -> Unit,
+    onPrepare: () -> Unit,
     onReset: () -> Unit,
+    onCopyTask: (String) -> Unit,
     onOpenWorkbench: () -> Unit,
     onOpenHarnessSettings: () -> Unit,
 ) {
@@ -174,6 +183,7 @@ private fun TaskCard(
                 workbench = state.workbench,
                 onOpenWorkbench = onOpenWorkbench,
                 onOpenHarnessSettings = onOpenHarnessSettings,
+                onCopyTask = onCopyTask,
                 onReset = onReset,
             )
 
@@ -181,21 +191,11 @@ private fun TaskCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (state.isSubmitting) {
-                    FilledTonalButton(
-                        onClick = onStop,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(codeHutTaskActionLabel(state.activeTask!!))
-                    }
-                } else {
-                    Button(
-                        onClick = onSubmit,
-                        enabled = state.workbench.canOpen,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(if (state.workbench.canOpen) "新建任务" else "先启动 Harness")
-                    }
+                Button(
+                    onClick = onPrepare,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("准备任务")
                 }
                 FilledTonalButton(
                     onClick = if (state.workbench.canOpen) onOpenWorkbench else onOpenHarnessSettings,
@@ -221,11 +221,12 @@ private fun TaskResultCard(
     workbench: CodeHutWorkbenchPresentation,
     onOpenWorkbench: () -> Unit,
     onOpenHarnessSettings: () -> Unit,
+    onCopyTask: (String) -> Unit,
     onReset: () -> Unit,
 ) {
     if (task == null) {
         Text(
-            "暂无任务。提交后如果 Harness 没有文档化任务 API，会明确提示转到完整工作台继续。",
+            "暂无任务。准备后不会自动提交；请复制任务内容，再在完整工作台中手动粘贴运行。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -240,6 +241,7 @@ private fun TaskResultCard(
                 CodeHutTaskStatus.RUNNING -> "任务进行中"
                 CodeHutTaskStatus.SUCCEEDED -> "任务结果"
                 CodeHutTaskStatus.FAILED -> "任务失败"
+                CodeHutTaskStatus.PREPARED -> "任务已准备（尚未提交）"
                 CodeHutTaskStatus.UNSUPPORTED -> "需要转到完整工作台"
                 CodeHutTaskStatus.DRAFT -> "草稿"
             },
@@ -247,21 +249,32 @@ private fun TaskResultCard(
         )
         SelectionContainer {
             Text(
-                text = task.result?.summary ?: task.ticket.prompt,
+                text = redactCodeHutUiText(task.result?.summary ?: task.ticket.prompt),
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = if (task.result == null) FontFamily.Monospace else FontFamily.Default,
             )
         }
         val changedFiles = task.result?.changedFiles.orEmpty()
         if (changedFiles.isNotEmpty()) {
-            Text("改动文件：${changedFiles.joinToString()}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "改动文件：${redactCodeHutUiText(changedFiles.joinToString())}",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         val verification = task.result?.verification.orEmpty()
         if (verification.isNotBlank()) {
-            Text("验证：$verification", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "验证：${redactCodeHutUiText(verification)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (task.status == CodeHutTaskStatus.UNSUPPORTED) {
+            if (task.status == CodeHutTaskStatus.PREPARED) {
+                FilledTonalButton(onClick = { onCopyTask(task.ticket.prompt) }) {
+                    Text(codeHutTaskActionLabel(task))
+                }
+            }
+            if (task.status in setOf(CodeHutTaskStatus.PREPARED, CodeHutTaskStatus.UNSUPPORTED)) {
                 FilledTonalButton(
                     onClick = if (workbench.canOpen) onOpenWorkbench else onOpenHarnessSettings,
                 ) {

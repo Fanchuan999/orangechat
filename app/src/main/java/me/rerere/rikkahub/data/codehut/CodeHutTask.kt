@@ -38,6 +38,7 @@ enum class CodeHutTaskStatus {
     RUNNING,
     SUCCEEDED,
     FAILED,
+    PREPARED,
     UNSUPPORTED,
 }
 

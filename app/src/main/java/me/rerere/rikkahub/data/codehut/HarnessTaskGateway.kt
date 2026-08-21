@@ -6,14 +6,11 @@
 
 package me.rerere.rikkahub.data.codehut
 
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
-
 sealed interface HarnessGatewayResult {
-    data class Success(val summary: TaskResultSummary) : HarnessGatewayResult
-
-    data class UnsupportedApi(
+    /**
+     * The ticket is local only. No task has been sent to Harness.
+     */
+    data class PreparedForWorkbench(
         val workbenchUrl: String,
         val message: String,
     ) : HarnessGatewayResult
@@ -21,59 +18,31 @@ sealed interface HarnessGatewayResult {
     data class Failure(val message: String) : HarnessGatewayResult
 }
 
-fun interface HarnessTaskTransport {
-    suspend fun submit(ticket: TaskTicket): HarnessGatewayResult
-}
-
 class HarnessTaskGateway(
-    private val documentedApi: HarnessTaskTransport? = null,
     private val workbenchUrl: String = "http://127.0.0.1:3080",
-    private val timeoutMillis: Long = 5_000L,
-    private val maxSummaryChars: Int = 2_000,
 ) {
     init {
         require(workbenchUrl.startsWith("http://127.0.0.1:") || workbenchUrl.startsWith("http://localhost:")) {
             "workbenchUrl must remain loopback-only"
         }
-        require(timeoutMillis > 0) { "timeoutMillis must be positive" }
-        require(maxSummaryChars > 0) { "maxSummaryChars must be positive" }
     }
 
-    suspend fun submit(ticket: TaskTicket): HarnessGatewayResult {
-        val validatedTicket = try {
+    /**
+     * Validates a local ticket without guessing or probing a private Harness task endpoint.
+     * The user must explicitly copy this prompt and paste it into the verified running workbench.
+     */
+    fun prepareForWorkbench(ticket: TaskTicket): HarnessGatewayResult {
+        try {
             CodeHutTaskPolicy.validate(ticket)
         } catch (error: IllegalArgumentException) {
-            return HarnessGatewayResult.Failure(error.message.orEmpty().take(maxSummaryChars))
-        }
-
-        val api = documentedApi ?: return HarnessGatewayResult.UnsupportedApi(
-            workbenchUrl = workbenchUrl,
-            message = "未发现已验证的 Harness 任务 API，请在工作台中继续操作",
-        )
-
-        return try {
-            withTimeout(timeoutMillis) {
-                api.submit(validatedTicket).capped(maxSummaryChars)
-            }
-        } catch (_: TimeoutCancellationException) {
-            HarnessGatewayResult.Failure("Harness 任务请求超时")
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Throwable) {
-            HarnessGatewayResult.Failure(
-                "Harness 任务请求失败: ${redact(error.message.orEmpty()).take(maxSummaryChars)}",
+            return HarnessGatewayResult.Failure(
+                redactCodeHutUiText(error.message.orEmpty()),
             )
         }
-    }
 
-    private fun HarnessGatewayResult.capped(maxChars: Int): HarnessGatewayResult = when (this) {
-        is HarnessGatewayResult.Success -> copy(summary = summary.capped(maxChars))
-        is HarnessGatewayResult.UnsupportedApi -> copy(message = message.take(maxChars))
-        is HarnessGatewayResult.Failure -> copy(message = redact(message).take(maxChars))
+        return HarnessGatewayResult.PreparedForWorkbench(
+            workbenchUrl = workbenchUrl,
+            message = "任务已准备，尚未提交给 Harness。请复制任务内容，再在完整工作台中手动粘贴运行。",
+        )
     }
-
-    private fun redact(value: String): String = value.replace(
-        Regex("(?i)(api[_ -]?key|authorization|token|secret)\\s*[:=]\\s*[^,;\\s]+"),
-        "$1=[REDACTED]",
-    )
 }

@@ -39,7 +39,7 @@ class CodeHutShellPolicyTest {
         assertEquals("未启用 Skills", environment.skills.detail)
         assertEquals("未配置 MCP", environment.mcp.detail)
         assertEquals("未配置 GitHub", environment.github.detail)
-        assertEquals("待 1 号窗口合并权限策略", environment.permissions.detail)
+        assertEquals("遵循当前 Harness 风险确认策略；高风险操作仍须单独确认。", environment.permissions.detail)
     }
 
     @Test
@@ -123,7 +123,7 @@ class CodeHutShellPolicyTest {
     }
 
     @Test
-    fun unsupportedGatewayResultRequiresWorkbenchContinuation() {
+    fun preparedGatewayResultRequiresExplicitWorkbenchContinuation() {
         val task = CodeHutTaskDraft(
             taskText = "更新 README",
             selectedFilesText = "README.md",
@@ -131,46 +131,67 @@ class CodeHutShellPolicyTest {
 
         val updated = applyGatewayResult(
             task = task,
-            result = HarnessGatewayResult.UnsupportedApi(
+            result = HarnessGatewayResult.PreparedForWorkbench(
                 workbenchUrl = "http://127.0.0.1:3080",
-                message = "未发现已验证的 Harness 任务 API，请在工作台中继续操作",
+                message = "任务已准备，尚未提交给 Harness。请复制任务内容，再在完整工作台中手动粘贴运行。",
             ),
         )
 
-        assertEquals(CodeHutTaskStatus.UNSUPPORTED, updated.status)
-        assertEquals("转到完整工作台继续", codeHutTaskActionLabel(updated))
+        assertEquals(CodeHutTaskStatus.PREPARED, updated.status)
+        assertEquals("复制任务内容", codeHutTaskActionLabel(updated))
         assertTrue(updated.result?.summary.orEmpty().contains("工作台"))
+        assertTrue(updated.result?.summary.orEmpty().contains("尚未提交"))
     }
 
     @Test
-    fun successGatewayResultIsRedactedBeforeNativeShellDisplay() {
-        val task = CodeHutTaskDraft(
-            taskText = "更新 README",
-            selectedFilesText = "README.md",
-        ).toTask()
-
-        val updated = applyGatewayResult(
-            task = task,
-            result = HarnessGatewayResult.Success(
-                TaskResultSummary(
-                    summary = "ok Authorization: Bearer sk-live-secret api key=abc123 token: zzz password=hunter2",
-                    changedFiles = listOf("README.md"),
-                    verification = "curl -H 'Authorization: Bearer ghp_secret' token=plain",
-                ),
-            ),
-        )
+    fun taskResultDisplayIsRedactedBeforeNativeShellDisplay() {
+        val updated = TaskResultSummary(
+            summary = "ok Authorization: Bearer sk-live-secret api key=abc123 token: zzz password=hunter2",
+            changedFiles = listOf("README.md", "build/api_key=leaked-key.txt"),
+            verification = "curl -H 'Authorization: Bearer ghp_secret' token=plain",
+        ).redactedForCodeHutShell()
         val text = listOf(
-            updated.result?.summary.orEmpty(),
-            updated.result?.verification.orEmpty(),
+            updated.summary,
+            updated.verification,
+            updated.changedFiles.joinToString("\n"),
         ).joinToString("\n")
 
-        assertEquals(CodeHutTaskStatus.SUCCEEDED, updated.status)
         assertTrue(text.contains("[REDACTED]"))
         assertFalse(text.contains("sk-live-secret"))
         assertFalse(text.contains("abc123"))
         assertFalse(text.contains("zzz"))
         assertFalse(text.contains("hunter2"))
         assertFalse(text.contains("ghp_secret"))
+        assertFalse(text.contains("leaked-key"))
+    }
+
+    @Test
+    fun environmentDiagnosticsRedactSecretsAndCapOutput() {
+        val rawDetail = "Authorization: Bearer sk-live-secret api_key=abc123 " + "x".repeat(2_500)
+        val environment = codeHutEnvironmentPresentation(
+            settings = Settings(),
+            harnessSnapshot = HarnessSnapshot(
+                status = HarnessStatus.ERROR,
+                detail = rawDetail,
+            ),
+        )
+
+        val diagnostic = environment.diagnostics.detail
+
+        assertFalse(diagnostic.contains("sk-live-secret"))
+        assertFalse(diagnostic.contains("abc123"))
+        assertTrue(diagnostic.length <= 2_000)
+    }
+
+    @Test
+    fun gatewayAndRefreshDiagnosticsUseSharedRedaction() {
+        val raw = "refresh failed: {\"token\":\"token-secret\"} password=hunter2 " + "x".repeat(2_500)
+
+        val displayed = redactCodeHutShellText(raw)
+
+        assertFalse(displayed.contains("token-secret"))
+        assertFalse(displayed.contains("hunter2"))
+        assertTrue(displayed.length <= 2_000)
     }
 
     @Test

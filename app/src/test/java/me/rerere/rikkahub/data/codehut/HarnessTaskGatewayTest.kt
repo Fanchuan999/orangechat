@@ -6,8 +6,7 @@
 
 package me.rerere.rikkahub.data.codehut
 
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,49 +17,22 @@ class HarnessTaskGatewayTest {
     )
 
     @Test
-    fun noDocumentedPublicApiReturnsWorkbenchFallback() = runBlocking {
-        val result = HarnessTaskGateway().submit(ticket)
+    fun prepareForWorkbenchKeepsTicketLocalAndNeverClaimsSubmission() {
+        val result = HarnessTaskGateway().prepareForWorkbench(ticket)
 
-        assertTrue(result is HarnessGatewayResult.UnsupportedApi)
-        assertTrue((result as HarnessGatewayResult.UnsupportedApi).workbenchUrl.contains("127.0.0.1:3080"))
+        assertTrue(result is HarnessGatewayResult.PreparedForWorkbench)
+        result as HarnessGatewayResult.PreparedForWorkbench
+        assertTrue(result.workbenchUrl.contains("127.0.0.1:3080"))
+        assertTrue(result.message.contains("尚未提交"))
     }
 
     @Test
-    fun successfulApiResultIsCappedBeforeReturningToDaddy() = runBlocking {
-        val gateway = HarnessTaskGateway(
-            documentedApi = HarnessTaskTransport {
-                HarnessGatewayResult.Success(
-                    TaskResultSummary(
-                        summary = "x".repeat(4_000),
-                        changedFiles = listOf("src/Parser.kt"),
-                        verification = "y".repeat(4_000),
-                    ),
-                )
-            },
-            maxSummaryChars = 160,
+    fun invalidLocalTicketReturnsFailureWithoutTryingToReachHarness() {
+        val result = HarnessTaskGateway().prepareForWorkbench(
+            ticket.copy(selectedFiles = emptyList()),
         )
-
-        val result = gateway.submit(ticket)
-
-        assertTrue(result is HarnessGatewayResult.Success)
-        val summary = (result as HarnessGatewayResult.Success).summary
-        assertTrue(summary.summary.length <= 160)
-        assertTrue(summary.verification.length <= 160)
-    }
-
-    @Test
-    fun undocumentedApiTimeoutBecomesFailure() = runBlocking {
-        val gateway = HarnessTaskGateway(
-            documentedApi = HarnessTaskTransport {
-                delay(100)
-                HarnessGatewayResult.Success(TaskResultSummary(summary = "late"))
-            },
-            timeoutMillis = 10,
-        )
-
-        val result = gateway.submit(ticket)
 
         assertTrue(result is HarnessGatewayResult.Failure)
-        assertTrue((result as HarnessGatewayResult.Failure).message.contains("超时"))
+        assertEquals("at least one selected file is required", (result as HarnessGatewayResult.Failure).message)
     }
 }

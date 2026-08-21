@@ -8,15 +8,14 @@ package me.rerere.rikkahub.ui.pages.codehut
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.codehut.CodeHutTask
-import me.rerere.rikkahub.data.codehut.CodeHutTaskStatus
 import me.rerere.rikkahub.data.codehut.HarnessTaskGateway
+import me.rerere.rikkahub.data.codehut.redactCodeHutUiText
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
@@ -32,9 +31,6 @@ data class CodeHutUiState(
     val environment: CodeHutEnvironmentPresentation
         get() = codeHutEnvironmentPresentation(settings, harnessSnapshot)
 
-    val isSubmitting: Boolean
-        get() = activeTask?.status == CodeHutTaskStatus.RUNNING
-
     val workbench: CodeHutWorkbenchPresentation
         get() = codeHutWorkbenchPresentation(harnessSnapshot.status)
 }
@@ -44,7 +40,6 @@ class CodeHutVM(
     private val harnessManager: HarnessManager,
     private val taskGateway: HarnessTaskGateway,
 ) : ViewModel() {
-    private var submitJob: Job? = null
     private val _state = MutableStateFlow(
         CodeHutUiState(
             settings = settingsStore.settingsFlow.value,
@@ -67,39 +62,23 @@ class CodeHutVM(
         _state.value = _state.value.copy(draft = draft, error = null)
     }
 
-    fun submitTask() {
-        if (submitJob?.isActive == true) return
-        if (!canOpenCodeHutWorkbench(_state.value.harnessSnapshot.status)) {
+    fun prepareTaskForWorkbench() {
+        val task = try {
+            _state.value.draft.toTask()
+        } catch (error: IllegalArgumentException) {
             _state.value = _state.value.copy(
-                error = codeHutWorkbenchPresentation(_state.value.harnessSnapshot.status).guidance,
+                error = redactCodeHutUiText(error.message ?: "任务票据无效"),
             )
             return
         }
-        val task = try {
-            _state.value.draft.toTask().copy(status = CodeHutTaskStatus.RUNNING)
-        } catch (error: IllegalArgumentException) {
-            _state.value = _state.value.copy(error = error.message ?: "任务票据无效")
-            return
-        }
 
-        _state.value = _state.value.copy(activeTask = task, error = null)
-        submitJob = viewModelScope.launch {
-            val result = taskGateway.submit(task.ticket)
-            _state.value = _state.value.copy(activeTask = applyGatewayResult(task, result))
-        }
-    }
-
-    fun stopTask() {
-        submitJob?.cancel()
-        val current = _state.value.activeTask ?: return
         _state.value = _state.value.copy(
-            activeTask = null,
-            error = codeHutTaskStopNotice(current),
+            activeTask = applyGatewayResult(task, taskGateway.prepareForWorkbench(task.ticket)),
+            error = null,
         )
     }
 
     fun resetTask() {
-        submitJob?.cancel()
         _state.value = _state.value.copy(activeTask = null, error = null)
     }
 
@@ -107,7 +86,9 @@ class CodeHutVM(
         viewModelScope.launch {
             runCatching { harnessManager.inspect() }
                 .onFailure { error ->
-                    _state.value = _state.value.copy(error = error.message ?: "刷新 Harness 状态失败")
+                    _state.value = _state.value.copy(
+                        error = redactCodeHutUiText(error.message ?: "刷新 Harness 状态失败"),
+                    )
                 }
         }
     }
