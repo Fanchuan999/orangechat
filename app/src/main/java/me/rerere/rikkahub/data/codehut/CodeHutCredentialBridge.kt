@@ -129,7 +129,7 @@ class CodeHutCredentialBridge(
             ?: return BridgeForwardDecision.Unauthorized
         val lease = synchronized(lock) { activeLease } ?: return BridgeForwardDecision.Unauthorized
         if (
-            nowMillis() > lease.expiresAtMillis ||
+            nowMillis() >= lease.expiresAtMillis ||
             lease.bindingId != parsedBindingId ||
             leaseToken == null ||
             !sameToken(lease.token, leaseToken)

@@ -67,6 +67,29 @@ class CodeHutCredentialBridgeTest {
     }
 
     @Test
+    fun leaseExpiresAtExactBoundaryBeforeProviderLookup() = runBlocking {
+        var currentMillis = 1_000L
+        val resolver = RecordingResolver(binding)
+        val bridge = newBridge(resolver) { currentMillis }
+        try {
+            val lease = bridge.startLease(binding.id)
+            currentMillis = lease.expiresAtMillis
+
+            val decision = bridge.prepareForward(
+                leaseToken = lease.token,
+                bindingId = binding.id.toString(),
+                route = "messages",
+                requestHeaders = emptyMap(),
+            )
+
+            assertDecision<BridgeForwardDecision.Unauthorized>(decision)
+            assertEquals(0, resolver.resolveCalls)
+        } finally {
+            bridge.close()
+        }
+    }
+
+    @Test
     fun validLeaseForwardsSavedKeyWithoutExposingItInAuditLog() = runBlocking {
         val resolver = RecordingResolver(binding)
         val bridge = newBridge(resolver)
@@ -130,10 +153,14 @@ class CodeHutCredentialBridgeTest {
         }
     }
 
-    private fun newBridge(resolver: CodeHutProviderResolver): CodeHutCredentialBridge =
+    private fun newBridge(
+        resolver: CodeHutProviderResolver,
+        nowMillis: () -> Long = System::currentTimeMillis,
+    ): CodeHutCredentialBridge =
         CodeHutCredentialBridge(
             providerResolver = resolver,
             upstreamClient = { error("Unit tests do not make an upstream request.") },
+            nowMillis = nowMillis,
             serverFactory = { FixedPortServer },
         )
 
