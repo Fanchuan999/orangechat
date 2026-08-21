@@ -3,6 +3,13 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val materialColorUtilitiesKotlinDir = layout.projectDirectory.dir("material-color-utilities/kotlin")
+val dynamicSchemeSource = materialColorUtilitiesKotlinDir.file("dynamiccolor/DynamicScheme.kt")
+
+check(dynamicSchemeSource.asFile.isFile) {
+    "Missing material3/material-color-utilities sources. Run `git submodule update --init --checkout material3/material-color-utilities`."
+}
+
 android {
     namespace = "me.rerere.material3"
     compileSdk = 37
@@ -22,7 +29,7 @@ android {
     }
     sourceSets {
         named("main") {
-            kotlin.srcDir("material-color-utilities/kotlin")
+            kotlin.srcDir(materialColorUtilitiesKotlinDir)
         }
     }
 }
