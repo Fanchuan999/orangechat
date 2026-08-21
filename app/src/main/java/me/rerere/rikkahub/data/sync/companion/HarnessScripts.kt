@@ -19,6 +19,7 @@ internal object HarnessScripts {
     const val VERSION = HarnessRuntimeContract.HARNESS_VERSION
     const val BASE = HarnessRuntimeContract.BASE
     const val WEB_URL = "http://127.0.0.1:3080"
+    private const val APPROVAL_ACKNOWLEDGEMENT_MARKER = "ready"
 
     private const val SCRIPTS = "$BASE/scripts"
     private const val SERVICES = HarnessRuntimeContract.SERVICES
@@ -90,7 +91,7 @@ internal object HarnessScripts {
         if [ "${'$'}actual_mode" = ${shellQuote(lease.mode.name)} ] && \
            [ "${'$'}actual_revision" = ${shellQuote(lease.revision.toString())} ] && \
            [ "${'$'}actual_expiry" = ${shellQuote(lease.expiresAtEpochMillis.toString())} ]; then
-          printf '%s' '$READY_MARKER' > ${shellQuote(resultPath)}
+          printf '%s' '$APPROVAL_ACKNOWLEDGEMENT_MARKER' > ${shellQuote(resultPath)}
         else
           printf '%s' 'stale-or-unacknowledged' > ${shellQuote(resultPath)}
         fi
