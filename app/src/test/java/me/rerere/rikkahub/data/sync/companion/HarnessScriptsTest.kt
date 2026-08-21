@@ -321,7 +321,7 @@ class HarnessScriptsTest {
     }
 
     @Test
-    fun riskGateKeepsStrictSingleReadonlyCommandsClassifiedAsLowRisk() {
+    fun riskGateKeepsOnlyStrictMetadataCommandsClassifiedAsLowRisk() {
         val gate = HarnessScripts.scriptFiles("/sdcard/result")
             .single { it.path.endsWith("/risk-gate/index.mjs") }
             .body
@@ -335,7 +335,7 @@ class HarnessScriptsTest {
                 import { classifyToolCall } from './risk-gate.mjs'
                 const listRisk = classifyToolCall({
                   name: 'bash',
-                  arguments: { command: 'ls -la' },
+                  arguments: { command: 'ls' },
                 })
                 const gitStatusRisk = classifyToolCall({
                   name: 'bash',
@@ -345,10 +345,20 @@ class HarnessScriptsTest {
                   name: 'read',
                   arguments: { path: 'README.md' },
                 })
+                const fileContentRisk = classifyToolCall({
+                  name: 'bash',
+                  arguments: { command: 'cat config.json' },
+                })
+                const procContentRisk = classifyToolCall({
+                  name: 'bash',
+                  arguments: { command: 'cat /proc/self/environ' },
+                })
                 if (listRisk !== 'low-risk') throw new Error(`expected list to classify low-risk, got ${'$'}{listRisk}`)
                 if (gitStatusRisk !== 'low-risk') throw new Error(`expected git status to classify low-risk, got ${'$'}{gitStatusRisk}`)
-                if (readRisk !== 'low-risk') throw new Error(`expected read to classify low-risk, got ${'$'}{readRisk}`)
-                process.stdout.write('low risk paths stay classified\n')
+                if (readRisk !== 'high-risk-shell') throw new Error(`expected generic read to require confirmation, got ${'$'}{readRisk}`)
+                if (fileContentRisk !== 'high-risk-shell') throw new Error(`expected cat to require confirmation, got ${'$'}{fileContentRisk}`)
+                if (procContentRisk !== 'high-risk-shell') throw new Error(`expected proc content to require confirmation, got ${'$'}{procContentRisk}`)
+                process.stdout.write('only metadata commands stay low risk\n')
             """.trimIndent(),
         )
         try {
@@ -359,7 +369,7 @@ class HarnessScriptsTest {
             val output = process.inputStream.bufferedReader().use { it.readText() }
 
             assertEquals(output, 0, process.waitFor())
-            assertTrue(output, output.contains("low risk paths stay classified"))
+            assertTrue(output, output.contains("only metadata commands stay low risk"))
         } finally {
             tempDir.toFile().deleteRecursively()
         }
@@ -397,7 +407,7 @@ class HarnessScriptsTest {
                   [{ name: 'read', arguments: { path: 'secrets.json' } }, 'credential'],
                   [{ name: 'read', arguments: { path: 'token.txt' } }, 'credential'],
                   [{ name: 'read', arguments: {} }, 'high-risk-shell'],
-                  [{ name: 'bash', arguments: { command: 'ls -la' } }, 'low-risk'],
+                  [{ name: 'bash', arguments: { command: 'ls' } }, 'low-risk'],
                 ]
                 for (const [exec, expected] of cases) {
                   const actual = classifyToolCall(exec)
@@ -415,10 +425,16 @@ class HarnessScriptsTest {
                 const next = () => ({ kind: 'next' })
                 const secretRead = await handler(cases[3][0], next)
                 const dangerousChain = await handler(cases[0][0], next)
-                const safeRead = await handler(cases[4][0], next)
+                const safeMetadata = await handler({ name: 'bash', arguments: { command: 'ls' } }, next)
+                const genericRead = await handler({ name: 'read', arguments: { path: 'config.json' } }, next)
+                const contentRead = await handler({ name: 'bash', arguments: { command: 'cat config.json' } }, next)
+                const procRead = await handler({ name: 'bash', arguments: { command: 'cat /proc/self/environ' } }, next)
                 if (secretRead.kind !== 'ask') throw new Error('secret read must still ask in HELP_ME_APPROVE')
                 if (dangerousChain.kind !== 'ask') throw new Error('chained destructive command must still ask')
-                if (safeRead.kind !== 'next') throw new Error('strict single read-only command should pass in HELP_ME_APPROVE')
+                if (safeMetadata.kind !== 'next') throw new Error('bare metadata command should pass in HELP_ME_APPROVE')
+                if (genericRead.kind !== 'ask') throw new Error('generic read must still ask in HELP_ME_APPROVE')
+                if (contentRead.kind !== 'ask') throw new Error('file content read must still ask in HELP_ME_APPROVE')
+                if (procRead.kind !== 'ask') throw new Error('proc environment read must still ask in HELP_ME_APPROVE')
                 if (secretRead.reason.includes('.credentials.yaml')) throw new Error('secret path leaked into confirmation')
                 process.stdout.write('chained command and secret path safety verified\\n')
             """.trimIndent(),
@@ -468,7 +484,7 @@ class HarnessScriptsTest {
                 } })
                 const handler = handlers[0]
                 const next = () => ({ kind: 'next' })
-                const safeRead = { name: 'bash', arguments: { command: 'ls -la' } }
+                const safeRead = { name: 'bash', arguments: { command: 'ls' } }
 
                 writeLease('HELP_ME_APPROVE', 12, Date.now() + 60_000)
                 if ((await handler(safeRead, next)).kind !== 'next') throw new Error('active Help lease should allow a strict read')
@@ -517,7 +533,7 @@ class HarnessScriptsTest {
 
                 const lowRiskExec = {
                   name: 'bash',
-                  arguments: { command: 'ls -la' },
+                  arguments: { command: 'ls' },
                 }
                 const dangerousExec = {
                   name: 'bash',

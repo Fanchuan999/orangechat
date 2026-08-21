@@ -380,8 +380,7 @@ internal object HarnessScripts {
     """.trimIndent() + "\n"
 
     private fun riskGatePluginScript(): String = """
-        import { existsSync, readFileSync } from 'node:fs'
-        import { isAbsolute, resolve } from 'node:path'
+        import { readFileSync } from 'node:fs'
 
         export const name = 'daddy-harness-risk-gate'
         const APPROVAL_MODE_PATH = process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH ??
@@ -389,11 +388,6 @@ internal object HarnessScripts {
         const APPROVAL_MODE_ASK = 'ASK_EVERY_TIME'
         const APPROVAL_MODE_HELP = 'HELP_ME_APPROVE'
 
-        const LOW_RISK_TOOLS = new Set([
-          'read', 'read_image', 'glob', 'grep',
-          'session_event_read', 'session_event_search', 'session_event_trace',
-          'session_search', 'session_trace', 'job_list', 'job_output',
-        ])
         const REASONS = {
           'low-risk': '当前策略要求对普通低风险操作逐次确认',
           delete: '涉及删除或清空数据',
@@ -480,19 +474,6 @@ internal object HarnessScripts {
 
         function isCredentialTool(name) {
           return /(?:^|[_-])(?:auth|login|credential|token|secret|api[_-]?key|oauth|vault)(?:[_-]|${'$'})/.test(name)
-        }
-
-        function targetExists(exec, args) {
-          const path = stringArg(args, 'path', 'file_path', 'target', 'destination', 'dest')
-          if (path === undefined) return undefined
-          const cwd = exec.agent?.session?.header?.cwd
-          if (!isAbsolute(path) && (typeof cwd !== 'string' || !isAbsolute(cwd))) return undefined
-          const absolute = isAbsolute(path) ? path : resolve(cwd, path)
-          try {
-            return existsSync(absolute)
-          } catch {
-            return undefined
-          }
         }
 
         function tokenize(command) {
@@ -612,9 +593,13 @@ internal object HarnessScripts {
           // benign command. This prevents `ls && rm ...` style bypasses.
           if (/(?:&&|\|\||[;|`]|\${'$'}\(|[()])/.test(normalized)) return 'high-risk-shell'
 
-          // HELP_ME_APPROVE may only continue strict, single-command read-only operations.
-          if (['pwd', 'ls', 'dir', 'cat', 'head', 'tail', 'find', 'grep'].includes(first)) return 'low-risk'
-          if (first === 'git' && ['status', 'diff', 'log'].includes(second)) return 'low-risk'
+          // HELP_ME_APPROVE may only continue strict commands that reveal directory/status
+          // metadata, never arbitrary file content. Keep the grammar deliberately tiny.
+          if (tokens.length === 1 && ['pwd', 'ls', 'dir'].includes(first)) return 'low-risk'
+          if (
+            first === 'git' && second === 'status' &&
+            tokens.slice(2).every(flag => ['--short', '-s', '--porcelain', '--branch'].includes(flag))
+          ) return 'low-risk'
           return 'high-risk-shell'
         }
 
@@ -624,23 +609,19 @@ internal object HarnessScripts {
           const args = objectArgs(exec.arguments)
           if (isCredentialTool(lower) || containsCredentialMaterial(args)) return 'credential'
           if (
-            ['read', 'read_image', 'glob', 'grep'].includes(lower) &&
-            stringArg(args, 'path', 'file_path', 'pattern', 'query', 'glob') === undefined
+            /(?:^|[_-])(?:read|image|glob|grep|search|trace)(?:[_-]|${'$'})/.test(lower) ||
+            ['read', 'read_image', 'glob', 'grep', 'session_event_read', 'session_event_search',
+              'session_event_trace', 'session_search', 'session_trace', 'job_output'].includes(lower)
           ) {
             return 'high-risk-shell'
           }
-          if (LOW_RISK_TOOLS.has(lower)) return 'low-risk'
-
           if (lower === 'write' || /(?:^|[_-])write(?:[_-]|${'$'})/.test(lower)) {
-            return targetExists(exec, args) === false ? 'low-risk' : 'overwrite'
+            return 'overwrite'
           }
           if (lower === 'edit' || lower === 'patch' || /(?:^|[_-])(?:edit|replace|patch)(?:[_-]|${'$'})/.test(lower)) {
             return 'overwrite'
           }
           if (lower === 'str_replace_editor') {
-            const command = stringArg(args, 'command')?.toLowerCase()
-            if (command === 'view') return 'low-risk'
-            if (command === 'create' && targetExists(exec, args) === false) return 'low-risk'
             return 'overwrite'
           }
           if (/(?:^|[_-])(?:delete|remove|unlink|trash)(?:[_-]|${'$'})/.test(lower)) return 'delete'
@@ -666,14 +647,16 @@ internal object HarnessScripts {
 
         export function runSelfTest() {
           const cases = [
-            [{ name: 'read', arguments: { path: 'x' } }, 'low-risk'],
-            [{ name: 'bash', arguments: { command: 'ls -la' } }, 'low-risk'],
+            [{ name: 'read', arguments: { path: 'x' } }, 'high-risk-shell'],
+            [{ name: 'bash', arguments: { command: 'ls' } }, 'low-risk'],
             [{ name: 'bash', arguments: { command: 'rm -rf build' } }, 'delete'],
             [{ name: 'bash', arguments: { command: 'git clean -fd' } }, 'delete'],
             [{ name: 'bash', arguments: { command: 'git reset --hard HEAD' } }, 'high-risk-shell'],
             [{ name: 'bash', arguments: { command: 'mv a b archive/' } }, 'bulk-move'],
-            [{ name: 'bash', arguments: { command: 'ls -la' } }, 'low-risk'],
+            [{ name: 'bash', arguments: { command: 'ls' } }, 'low-risk'],
             [{ name: 'bash', arguments: { command: 'git status --short' } }, 'low-risk'],
+            [{ name: 'bash', arguments: { command: 'cat config.json' } }, 'high-risk-shell'],
+            [{ name: 'bash', arguments: { command: 'cat /proc/self/environ' } }, 'high-risk-shell'],
             [{ name: 'bash', arguments: { command: 'npm i eslint' } }, 'package-install'],
             [{ name: 'bash', arguments: { command: 'yarn add react' } }, 'package-install'],
             [{ name: 'bash', arguments: { command: 'npm install vite' } }, 'package-install'],
