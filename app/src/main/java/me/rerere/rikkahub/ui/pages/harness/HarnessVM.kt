@@ -51,7 +51,7 @@ class HarnessVM(
     private var helpLeaseExpiryJob: Job? = null
     private val _state = MutableStateFlow(
         HarnessUiState(
-            snapshot = harnessManager.snapshot.value,
+            snapshot = redactHarnessSnapshot(harnessManager.snapshot.value),
             autoKeepRunning = settingsStore.settingsFlow.value.harnessSetting.autoKeepRunning,
             approvalMode = settingsStore.settingsFlow.value.codeHutSetting.activeApprovalMode(),
         )
@@ -148,7 +148,7 @@ class HarnessVM(
                         } else {
                             "权限同步失败；无法确认工作台状态，已请求停止。"
                         },
-                        error = error.message,
+                        error = redactHarnessUiNotice(error.message ?: "权限同步失败。"),
                     )
                 }
             }
@@ -232,7 +232,7 @@ class HarnessVM(
                     )
                     _state.value = _state.value.copy(
                         busyAction = null,
-                        error = error.message ?: "${action}失败。",
+                        error = redactHarnessUiNotice(error.message ?: "${action}失败。"),
                     )
                 }
             }
@@ -261,15 +261,21 @@ class HarnessVM(
         installationAttemptActive: Boolean,
     ) {
         val current = _state.value
+        val redactedSnapshot = redactHarnessSnapshot(snapshot)
         _state.value = current.copy(
-            snapshot = snapshot,
+            snapshot = redactedSnapshot,
             displayedInstallProgress = nextHarnessInstallProgress(
                 previous = current.displayedInstallProgress,
-                snapshot = snapshot,
+                snapshot = redactedSnapshot,
                 installationAttemptActive = installationAttemptActive,
             ),
         )
     }
+
+    private fun redactHarnessSnapshot(snapshot: HarnessSnapshot): HarnessSnapshot = snapshot.copy(
+        detail = redactHarnessUiNotice(snapshot.detail),
+        logTail = redactHarnessUiNotice(snapshot.logTail),
+    )
 
     private companion object {
         const val INSTALL_MONITOR_INTERVAL_MS = 2_000L

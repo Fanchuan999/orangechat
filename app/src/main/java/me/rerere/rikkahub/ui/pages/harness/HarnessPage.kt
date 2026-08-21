@@ -187,7 +187,7 @@ fun HarnessPage(
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = state.error ?: state.message.orEmpty(),
+                                text = redactHarnessUiNotice(state.error ?: state.message.orEmpty()),
                                 color = if (state.error != null) {
                                     MaterialTheme.colorScheme.error
                                 } else {
@@ -301,7 +301,7 @@ private fun StatusCard(state: HarnessUiState) {
             Text("本机端口：127.0.0.1:3080")
             if (state.snapshot.detail.isNotBlank()) {
                 Text(
-                    state.snapshot.detail,
+                    redactHarnessUiNotice(state.snapshot.detail),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
