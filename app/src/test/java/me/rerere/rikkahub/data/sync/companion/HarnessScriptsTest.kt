@@ -95,11 +95,22 @@ class HarnessScriptsTest {
             .replace("\\\n", " ")
             .replace(Regex("\\s+"), " ")
 
-        assertTrue(
-            runner.contains(
-                "dsh --patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml --profile web --port 3080"
-            )
-        )
+        val riskGatePatch = "--patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml"
+        val workProviderPatch = "--patch /opt/daddy-harness/config/code-hut-provider.patch.yml"
+        val profile = "--profile web --port 3080"
+        assertTrue(runner.contains(riskGatePatch))
+        assertTrue(runner.contains(workProviderPatch))
+        assertTrue(runner.indexOf(riskGatePatch) < runner.indexOf(workProviderPatch))
+        assertTrue(runner.indexOf(workProviderPatch) < runner.indexOf(profile))
+    }
+
+    @Test
+    fun explicitHarnessStopClearsOnlyTheShortLivedCodeHutEnvironment() {
+        val stop = HarnessScripts.stopCommand(clearCodeHutEnvironment = true)
+
+        assertTrue(stop.contains("code-hut.env"))
+        assertTrue(stop.contains("stop-harness.sh"))
+        assertFalse(stop.contains(".credentials.yaml"))
     }
 
     @Test

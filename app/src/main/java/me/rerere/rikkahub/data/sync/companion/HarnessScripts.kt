@@ -7,6 +7,7 @@
 package me.rerere.rikkahub.data.sync.companion
 
 import java.util.Base64
+import me.rerere.rikkahub.data.codehut.HarnessProviderPatch
 
 internal data class HarnessScriptFile(
     val path: String,
@@ -22,6 +23,8 @@ internal object HarnessScripts {
     private const val SERVICES = HarnessRuntimeContract.SERVICES
     private const val DATA = HarnessRuntimeContract.DATA
     private const val RUN = "$SERVICES/run"
+    private const val WORK_PROVIDER_PATCH = "$SERVICES/config/code-hut-provider.patch.yml"
+    private const val WORK_PROVIDER_ENV = "$RUN/code-hut.env"
 
     fun bootstrapCommands(resultPath: String): List<String> {
         val files = scriptFiles(resultPath)
@@ -32,6 +35,10 @@ internal object HarnessScripts {
                     "\"$RUN\" \"$DATA/dsh-home\" \"\$HOME/.termux/boot\"",
             )
             files.forEach { script -> add(writeScriptCommand(script)) }
+            add(
+                "if [ ! -f \"$WORK_PROVIDER_PATCH\" ]; then " +
+                    "printf '%s' '[]' > \"$WORK_PROVIDER_PATCH\"; fi",
+            )
             add(files.joinToString(prefix = "chmod 700 ", separator = " ") { expandableHomePath(it.path) })
             add("nohup \"$SCRIPTS/setup.sh\" ${shellQuote(resultPath)} >/dev/null 2>&1 &")
         }
@@ -42,9 +49,13 @@ internal object HarnessScripts {
             "touch \"$RUN/.auto-keep-running\" && " +
             "nohup \"$SCRIPTS/watchdog-harness.sh\" > \"$SERVICES/logs/watchdog.log\" 2>&1 &"
 
-    fun stopCommand(): String =
-        "mkdir -p \"$RUN\" && touch \"$RUN/.manual-stop\" && " +
-            "rm -f \"$RUN/.auto-keep-running\" && \"$SCRIPTS/stop-harness.sh\""
+    fun stopCommand(clearCodeHutEnvironment: Boolean = false): String =
+        (
+            "mkdir -p \"$RUN\" && touch \"$RUN/.manual-stop\" && " +
+                "rm -f \"$RUN/.auto-keep-running\" && " +
+                (if (clearCodeHutEnvironment) "rm -f \"$WORK_PROVIDER_ENV\" && " else "") +
+                "\"$SCRIPTS/stop-harness.sh\""
+        )
 
     fun restartCommand(): String =
         "mkdir -p \"$RUN\" && touch \"$RUN/.manual-stop\" && " +
@@ -57,6 +68,12 @@ internal object HarnessScripts {
     } else {
         "rm -f \"$RUN/.auto-keep-running\""
     }
+
+    fun configureWorkProviderCommands(patch: HarnessProviderPatch): List<String> = listOf(
+        writeManagedFileCommand(patch.yaml, WORK_PROVIDER_PATCH),
+        writeManagedFileCommand(environmentFile(patch.environment), WORK_PROVIDER_ENV),
+        "chmod 600 \"$WORK_PROVIDER_PATCH\" \"$WORK_PROVIDER_ENV\"",
+    )
 
     fun scriptFiles(resultPath: String): List<HarnessScriptFile> = listOf(
         HarnessScriptFile("$SCRIPTS/install-proot.sh", installProotScript()),
@@ -302,6 +319,12 @@ internal object HarnessScripts {
         services="${'$'}base/services/harness"
         data="${'$'}base/data/harness"
         mkdir -p "${'$'}services/logs" "${'$'}services/run" "${'$'}data/dsh-home" "${'$'}data/home"
+        work_provider_env="${'$'}services/run/code-hut.env"
+        if [ -r "${'$'}work_provider_env" ]; then
+          set -a
+          . "${'$'}work_provider_env"
+          set +a
+        fi
         export PROOT_NO_SECCOMP=1
         exec proot-distro login daddy-linux --isolated \
           --bind "${'$'}services:/opt/daddy-harness" \
@@ -315,6 +338,7 @@ internal object HarnessScripts {
             /opt/daddy-harness/runtime/node-current/bin/node \
             /opt/daddy-harness/runtime/harness/node_modules/.bin/dsh \
             --patch /opt/daddy-harness/config/daddy-risk-gate.patch.yml \
+            --patch /opt/daddy-harness/config/code-hut-provider.patch.yml \
             --profile web \
             --port 3080
     """.trimIndent() + "\n"
@@ -719,8 +743,23 @@ internal object HarnessScripts {
     """.trimIndent() + "\n"
 
     private fun writeScriptCommand(script: HarnessScriptFile): String {
-        val encoded = Base64.getEncoder().encodeToString(script.body.toByteArray(Charsets.UTF_8))
-        return "printf %s ${shellQuote(encoded)} | base64 -d > ${expandableHomePath(script.path)}"
+        return writeManagedFileCommand(script.body, script.path)
+    }
+
+    private fun writeManagedFileCommand(body: String, path: String): String {
+        val encoded = Base64.getEncoder().encodeToString(body.toByteArray(Charsets.UTF_8))
+        return "printf %s ${shellQuote(encoded)} | base64 -d > ${expandableHomePath(path)}"
+    }
+
+    private fun environmentFile(environment: Map<String, String>): String = buildString {
+        environment.forEach { (name, value) ->
+            require(name.matches(Regex("^[A-Z0-9_]+$"))) { "Harness 环境变量名不安全。" }
+            require(value.isNotBlank()) { "Harness 环境变量值不能为空。" }
+            append(name)
+            append("=")
+            append(shellQuote(value))
+            append('\n')
+        }
     }
 
     private fun expandableHomePath(path: String): String {

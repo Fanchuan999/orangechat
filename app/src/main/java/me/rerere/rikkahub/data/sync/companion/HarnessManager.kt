@@ -21,8 +21,11 @@ import me.rerere.rikkahub.data.datastore.HarnessInstallStage
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.HarnessStatus
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.codehut.CodeHutCredentialBridge
+import me.rerere.rikkahub.data.codehut.HarnessProviderConfigFactory
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import kotlin.uuid.Uuid
 
 internal fun classifyHarness(
     installed: Boolean,
@@ -165,6 +168,7 @@ class HarnessManager(
     private val context: Context,
     private val settingsStore: SettingsStore,
     private val termuxConfigBridge: TermuxConfigBridge,
+    private val codeHutCredentialBridge: CodeHutCredentialBridge,
     sharedHttpClient: OkHttpClient,
 ) {
     private val healthClient = buildHarnessHealthClient(sharedHttpClient)
@@ -267,11 +271,51 @@ class HarnessManager(
         setting.copy(autoKeepRunning = true, manuallyStopped = false)
     }
 
-    suspend fun stop(): HarnessSnapshot = runLifecycle(
-        command = HarnessScripts.stopCommand(),
-        actionName = "停止",
-    ) { setting ->
-        setting.copy(autoKeepRunning = false, manuallyStopped = true)
+    suspend fun stop(): HarnessSnapshot {
+        codeHutCredentialBridge.revokeLease()
+        return runLifecycle(
+            command = HarnessScripts.stopCommand(clearCodeHutEnvironment = true),
+            actionName = "停止",
+        ) { setting ->
+            setting.copy(autoKeepRunning = false, manuallyStopped = true)
+        }
+    }
+
+    suspend fun configureWorkProvider(bindingId: Uuid): HarnessSnapshot {
+        val before = inspect()
+        require(before.status == HarnessStatus.RUNNING) {
+            "Harness 当前不可配置工作模型，请先启动代码小屋工作台。"
+        }
+
+        val binding = settingsStore.settingsFlow.value.codeHutSetting.bindings
+            .firstOrNull { it.id == bindingId }
+            ?: error("找不到代码小屋工作模型。")
+        val lease = codeHutCredentialBridge.startLease(bindingId)
+        val resultFile = resultFile("provider")
+        resultFile.delete()
+        try {
+            val patch = HarnessProviderConfigFactory.create(binding, lease)
+            termuxConfigBridge.executeCommandsAndWait(
+                commands = buildList {
+                    addAll(HarnessScripts.configureWorkProviderCommands(patch))
+                    add(HarnessScripts.restartCommand())
+                    add(waitForHarnessHealthCommand())
+                    add("printf '%s' '$READY_MARKER' > ${shellQuote(resultFile.absolutePath)}")
+                },
+                completionFile = resultFile,
+                timeoutMessage = "Harness 工作模型没有在 90 秒内完成配置。",
+                waitAttempts = ACTION_WAIT_ATTEMPTS,
+            )
+            require(resultFile.readText().trim() == READY_MARKER) {
+                "Harness 工作模型没有成功配置。"
+            }
+            return inspect()
+        } catch (failure: Throwable) {
+            codeHutCredentialBridge.revokeLease()
+            throw failure
+        } finally {
+            resultFile.delete()
+        }
     }
 
     suspend fun restart(): HarnessSnapshot = runLifecycle(

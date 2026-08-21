@@ -314,6 +314,7 @@ val dataSourceModule = module {
             context = get(),
             settingsStore = get(),
             termuxConfigBridge = get(),
+            codeHutCredentialBridge = get(),
             sharedHttpClient = get(),
         )
     }
