@@ -74,13 +74,13 @@ fun CodeHutPage(
                     onStop = vm::stopTask,
                     onReset = vm::resetTask,
                     onOpenWorkbench = onOpenWorkbench,
+                    onOpenHarnessSettings = onOpenHarnessSettings,
                 )
             }
 
             item {
                 WorkbenchCard(
-                    canOpen = state.harnessSnapshot.status == me.rerere.rikkahub.data.datastore.HarnessStatus.RUNNING,
-                    status = harnessStatusLabel(state.harnessSnapshot.status),
+                    presentation = state.workbench,
                     onOpenWorkbench = onOpenWorkbench,
                     onOpenHarnessSettings = onOpenHarnessSettings,
                     onRefresh = vm::refreshHarness,
@@ -125,6 +125,7 @@ private fun TaskCard(
     onStop: () -> Unit,
     onReset: () -> Unit,
     onOpenWorkbench: () -> Unit,
+    onOpenHarnessSettings: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -170,7 +171,9 @@ private fun TaskCard(
 
             TaskResultCard(
                 task = state.activeTask,
+                workbench = state.workbench,
                 onOpenWorkbench = onOpenWorkbench,
+                onOpenHarnessSettings = onOpenHarnessSettings,
                 onReset = onReset,
             )
 
@@ -183,22 +186,30 @@ private fun TaskCard(
                         onClick = onStop,
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("停止")
+                        Text(codeHutTaskActionLabel(state.activeTask!!))
                     }
                 } else {
                     Button(
                         onClick = onSubmit,
+                        enabled = state.workbench.canOpen,
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("新建任务")
+                        Text(if (state.workbench.canOpen) "新建任务" else "先启动 Harness")
                     }
                 }
                 FilledTonalButton(
-                    onClick = onOpenWorkbench,
+                    onClick = if (state.workbench.canOpen) onOpenWorkbench else onOpenHarnessSettings,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("去工作台继续")
+                    Text(if (state.workbench.canOpen) "去工作台继续" else "安装 / 启动 Harness")
                 }
+            }
+            if (!state.workbench.canOpen) {
+                Text(
+                    state.workbench.guidance,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -207,7 +218,9 @@ private fun TaskCard(
 @Composable
 private fun TaskResultCard(
     task: CodeHutTask?,
+    workbench: CodeHutWorkbenchPresentation,
     onOpenWorkbench: () -> Unit,
+    onOpenHarnessSettings: () -> Unit,
     onReset: () -> Unit,
 ) {
     if (task == null) {
@@ -249,8 +262,10 @@ private fun TaskResultCard(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (task.status == CodeHutTaskStatus.UNSUPPORTED) {
-                FilledTonalButton(onClick = onOpenWorkbench) {
-                    Text(codeHutTaskActionLabel(task))
+                FilledTonalButton(
+                    onClick = if (workbench.canOpen) onOpenWorkbench else onOpenHarnessSettings,
+                ) {
+                    Text(if (workbench.canOpen) codeHutTaskActionLabel(task) else workbench.actionLabel)
                 }
             }
             TextButton(onClick = onReset) {
@@ -262,8 +277,7 @@ private fun TaskResultCard(
 
 @Composable
 private fun WorkbenchCard(
-    canOpen: Boolean,
-    status: String,
+    presentation: CodeHutWorkbenchPresentation,
     onOpenWorkbench: () -> Unit,
     onOpenHarnessSettings: () -> Unit,
     onRefresh: () -> Unit,
@@ -279,17 +293,24 @@ private fun WorkbenchCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text("当前服务：$status", style = MaterialTheme.typography.bodyMedium)
+            Text("当前服务：${presentation.status}", style = MaterialTheme.typography.bodyMedium)
+            if (!presentation.canOpen) {
+                Text(
+                    presentation.guidance,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
                     onClick = onOpenWorkbench,
-                    enabled = canOpen,
+                    enabled = presentation.canOpen,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("打开工作台")
+                    Text(presentation.actionLabel)
                 }
                 FilledTonalButton(
                     onClick = onOpenHarnessSettings,

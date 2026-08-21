@@ -11,6 +11,7 @@ import me.rerere.rikkahub.data.ai.mcp.McpOAuthState
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.codehut.CodeHutTaskStatus
 import me.rerere.rikkahub.data.codehut.HarnessGatewayResult
+import me.rerere.rikkahub.data.codehut.TaskResultSummary
 import me.rerere.rikkahub.data.datastore.CodeHutSetting
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.HarnessStatus
@@ -76,6 +77,19 @@ class CodeHutShellPolicyTest {
     }
 
     @Test
+    fun workbenchAvailabilityMatchesHarnessRunningState() {
+        HarnessStatus.entries.forEach { status ->
+            val presentation = codeHutWorkbenchPresentation(status)
+
+            assertEquals(status.name, status == HarnessStatus.RUNNING, presentation.canOpen)
+        }
+
+        val stopped = codeHutWorkbenchPresentation(HarnessStatus.STOPPED)
+        assertEquals("安装 / 启动 Harness", stopped.actionLabel)
+        assertTrue(stopped.guidance.contains("Harness 设置"))
+    }
+
+    @Test
     fun taskDraftCreatesTicketFromOnlyExplicitTaskFilesDirectoryAndConstraints() {
         val ticket = CodeHutTaskDraft(
             taskText = "修复解析器空输入崩溃",
@@ -97,6 +111,18 @@ class CodeHutShellPolicyTest {
     }
 
     @Test
+    fun taskDraftAllowsOrdinaryWordsWithoutTreatingThemAsInjectedContext() {
+        val ticket = CodeHutTaskDraft(
+            taskText = "review assistant conversation export docs",
+            selectedFilesText = "docs/conversation-export.md",
+            constraintsText = "document memory layout only, do not include chat logs",
+        ).toTicket()
+
+        assertEquals("review assistant conversation export docs", ticket.taskText)
+        assertEquals(listOf("document memory layout only, do not include chat logs"), ticket.constraints)
+    }
+
+    @Test
     fun unsupportedGatewayResultRequiresWorkbenchContinuation() {
         val task = CodeHutTaskDraft(
             taskText = "更新 README",
@@ -114,6 +140,48 @@ class CodeHutShellPolicyTest {
         assertEquals(CodeHutTaskStatus.UNSUPPORTED, updated.status)
         assertEquals("转到完整工作台继续", codeHutTaskActionLabel(updated))
         assertTrue(updated.result?.summary.orEmpty().contains("工作台"))
+    }
+
+    @Test
+    fun successGatewayResultIsRedactedBeforeNativeShellDisplay() {
+        val task = CodeHutTaskDraft(
+            taskText = "更新 README",
+            selectedFilesText = "README.md",
+        ).toTask()
+
+        val updated = applyGatewayResult(
+            task = task,
+            result = HarnessGatewayResult.Success(
+                TaskResultSummary(
+                    summary = "ok Authorization: Bearer sk-live-secret api key=abc123 token: zzz password=hunter2",
+                    changedFiles = listOf("README.md"),
+                    verification = "curl -H 'Authorization: Bearer ghp_secret' token=plain",
+                ),
+            ),
+        )
+        val text = listOf(
+            updated.result?.summary.orEmpty(),
+            updated.result?.verification.orEmpty(),
+        ).joinToString("\n")
+
+        assertEquals(CodeHutTaskStatus.SUCCEEDED, updated.status)
+        assertTrue(text.contains("[REDACTED]"))
+        assertFalse(text.contains("sk-live-secret"))
+        assertFalse(text.contains("abc123"))
+        assertFalse(text.contains("zzz"))
+        assertFalse(text.contains("hunter2"))
+        assertFalse(text.contains("ghp_secret"))
+    }
+
+    @Test
+    fun runningTaskActionDoesNotClaimRemoteStopWithoutDocumentedApi() {
+        val running = CodeHutTaskDraft(
+            taskText = "更新 README",
+            selectedFilesText = "README.md",
+        ).toTask().copy(status = CodeHutTaskStatus.RUNNING)
+
+        assertEquals("隐藏本地请求", codeHutTaskActionLabel(running))
+        assertTrue(codeHutTaskStopNotice(running).contains("不能保证停止"))
     }
 
     @Test

@@ -10,11 +10,6 @@ object CodeHutTaskPolicy {
     private const val MAX_TASK_CHARS = 8_000
     private const val MAX_PATH_CHARS = 512
     private const val MAX_CONSTRAINT_CHARS = 2_000
-    private val forbiddenDaddyContext = Regex(
-        "(?i)(ombre|conversation|assistant|lorebook|prompt\\s+injection|" +
-            "external\\s+memory|full\\s+chat\\s+history|" +
-            "(?:mood|desire|proactive)\\s+(?:state|context|message))",
-    )
 
     fun createTicket(
         taskText: String,
@@ -25,9 +20,6 @@ object CodeHutTaskPolicy {
         val normalizedTask = taskText.trim()
         require(normalizedTask.isNotEmpty()) { "taskText must not be blank" }
         require(normalizedTask.length <= MAX_TASK_CHARS) { "taskText is too long" }
-        require(!forbiddenDaddyContext.containsMatchIn(normalizedTask)) {
-            "taskText contains Daddy conversation context"
-        }
 
         val normalizedFiles = selectedFiles.map(::normalizeRelativePath).distinct()
         require(normalizedFiles.isNotEmpty()) { "at least one selected file is required" }
@@ -37,9 +29,6 @@ object CodeHutTaskPolicy {
             val value = constraint.trim()
             require(value.isNotEmpty()) { "constraints must not contain blank values" }
             require(value.length <= MAX_CONSTRAINT_CHARS) { "constraint is too long" }
-            require(!forbiddenDaddyContext.containsMatchIn(value)) {
-                "constraint contains Daddy conversation context"
-            }
             value
         }.distinct()
 

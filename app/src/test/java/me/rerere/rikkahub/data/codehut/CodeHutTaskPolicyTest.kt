@@ -24,12 +24,16 @@ class CodeHutTaskPolicyTest {
         assertFalse(ticket.prompt.contains("Assistant"))
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun ticketRejectsSerializedDaddyContext() {
-        CodeHutTaskPolicy.createTicket(
-            taskText = "repair parser {\"conversation\": \"full history\"}",
+    @Test
+    fun ticketAllowsOrdinaryContextWordsBecauseIsolationIsStructural() {
+        val ticket = CodeHutTaskPolicy.createTicket(
+            taskText = "repair assistant conversation export",
             selectedFiles = listOf("src/Parser.kt"),
+            constraints = listOf("document memory format only"),
         )
+
+        assertEquals("repair assistant conversation export", ticket.taskText)
+        assertEquals(listOf("document memory format only"), ticket.constraints)
     }
 
     @Test

@@ -17,7 +17,6 @@ import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.codehut.CodeHutTask
 import me.rerere.rikkahub.data.codehut.CodeHutTaskStatus
 import me.rerere.rikkahub.data.codehut.HarnessTaskGateway
-import me.rerere.rikkahub.data.codehut.TaskResultSummary
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
@@ -35,6 +34,9 @@ data class CodeHutUiState(
 
     val isSubmitting: Boolean
         get() = activeTask?.status == CodeHutTaskStatus.RUNNING
+
+    val workbench: CodeHutWorkbenchPresentation
+        get() = codeHutWorkbenchPresentation(harnessSnapshot.status)
 }
 
 class CodeHutVM(
@@ -67,6 +69,12 @@ class CodeHutVM(
 
     fun submitTask() {
         if (submitJob?.isActive == true) return
+        if (!canOpenCodeHutWorkbench(_state.value.harnessSnapshot.status)) {
+            _state.value = _state.value.copy(
+                error = codeHutWorkbenchPresentation(_state.value.harnessSnapshot.status).guidance,
+            )
+            return
+        }
         val task = try {
             _state.value.draft.toTask().copy(status = CodeHutTaskStatus.RUNNING)
         } catch (error: IllegalArgumentException) {
@@ -85,12 +93,8 @@ class CodeHutVM(
         submitJob?.cancel()
         val current = _state.value.activeTask ?: return
         _state.value = _state.value.copy(
-            activeTask = current.copy(
-                status = CodeHutTaskStatus.FAILED,
-                result = TaskResultSummary(
-                    summary = "已停止本机外壳中的任务请求。若任务已经转入完整工作台，请在工作台内继续管理。",
-                ),
-            ),
+            activeTask = null,
+            error = codeHutTaskStopNotice(current),
         )
     }
 

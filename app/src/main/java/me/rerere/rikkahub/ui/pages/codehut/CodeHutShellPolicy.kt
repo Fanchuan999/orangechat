@@ -41,6 +41,13 @@ data class CodeHutEnvironmentPresentation(
     fun flattenText(): String = items.joinToString("\n") { "${it.title} ${it.status} ${it.detail}" }
 }
 
+data class CodeHutWorkbenchPresentation(
+    val canOpen: Boolean,
+    val status: String,
+    val actionLabel: String,
+    val guidance: String,
+)
+
 data class CodeHutTaskDraft(
     val taskText: String = "",
     val selectedFilesText: String = "",
@@ -56,6 +63,22 @@ data class CodeHutTaskDraft(
 
     fun toTask(): CodeHutTask = CodeHutTask(ticket = toTicket(), status = CodeHutTaskStatus.QUEUED)
 }
+
+fun codeHutWorkbenchPresentation(status: HarnessStatus): CodeHutWorkbenchPresentation {
+    val canOpen = canOpenCodeHutWorkbench(status)
+    return CodeHutWorkbenchPresentation(
+        canOpen = canOpen,
+        status = harnessStatusLabel(status),
+        actionLabel = if (canOpen) "打开工作台" else "安装 / 启动 Harness",
+        guidance = if (canOpen) {
+            "Harness 工作台已在 127.0.0.1:3080 运行。"
+        } else {
+            "Harness 当前${harnessStatusLabel(status)}，请先进入 Harness 设置安装或启动。"
+        },
+    )
+}
+
+fun canOpenCodeHutWorkbench(status: HarnessStatus): Boolean = status == HarnessStatus.RUNNING
 
 fun codeHutEnvironmentPresentation(
     settings: Settings,
@@ -137,7 +160,7 @@ fun applyGatewayResult(
 ): CodeHutTask = when (result) {
     is HarnessGatewayResult.Success -> task.copy(
         status = CodeHutTaskStatus.SUCCEEDED,
-        result = result.summary,
+        result = result.summary.redactedForCodeHutShell(),
     )
 
     is HarnessGatewayResult.UnsupportedApi -> task.copy(
@@ -150,20 +173,51 @@ fun applyGatewayResult(
 
     is HarnessGatewayResult.Failure -> task.copy(
         status = CodeHutTaskStatus.FAILED,
-        result = TaskResultSummary(summary = result.message),
+        result = TaskResultSummary(summary = redactCodeHutShellText(result.message)),
     )
 }
 
 fun codeHutTaskActionLabel(task: CodeHutTask): String = when (task.status) {
     CodeHutTaskStatus.DRAFT -> "新建任务"
-    CodeHutTaskStatus.QUEUED,
-    CodeHutTaskStatus.RUNNING,
-    -> "停止"
+    CodeHutTaskStatus.QUEUED -> "取消本地请求"
+    CodeHutTaskStatus.RUNNING -> "隐藏本地请求"
 
     CodeHutTaskStatus.SUCCEEDED -> "查看结果"
     CodeHutTaskStatus.FAILED -> "重新提交"
     CodeHutTaskStatus.UNSUPPORTED -> "转到完整工作台继续"
 }
+
+fun codeHutTaskStopNotice(task: CodeHutTask): String = when (task.status) {
+    CodeHutTaskStatus.QUEUED -> "已取消尚未提交的本地请求。"
+    CodeHutTaskStatus.RUNNING -> "已隐藏本机外壳中的请求；当前没有文档化远端取消 API，不能保证停止工作台中的任务。"
+    else -> "当前任务没有可取消的本地请求。"
+}
+
+fun redactCodeHutShellText(value: String): String = secretPatterns.fold(value) { current, pattern ->
+    current.replace(pattern) { match ->
+        val prefix = match.groups[1]?.value.orEmpty()
+        val separator = match.groups[2]?.value.orEmpty()
+        val quote = match.groups[3]?.value.orEmpty()
+        "$prefix$separator$quote[REDACTED]$quote"
+    }
+}
+
+private fun TaskResultSummary.redactedForCodeHutShell(): TaskResultSummary = copy(
+    summary = redactCodeHutShellText(summary),
+    verification = redactCodeHutShellText(verification),
+)
+
+private val secretPatterns = listOf(
+    Regex(
+        pattern = "(?i)\\b(authorization)(\\s*[:=]\\s*)([\"']?)(bearer\\s+[^\"'\\s,;]+)",
+    ),
+    Regex(
+        pattern = "(?i)\\b(bearer)(\\s+)([\"']?)([^\"'\\s,;]+)",
+    ),
+    Regex(
+        pattern = "(?i)\\b(api\\s*key|api[_-]?key|token|password|passwd|secret)(\\s*[:=]\\s*)([\"']?)([^\"'\\s,;]+)",
+    ),
+)
 
 fun harnessStatusLabel(status: HarnessStatus): String = when (status) {
     HarnessStatus.NOT_INSTALLED -> "未安装"
