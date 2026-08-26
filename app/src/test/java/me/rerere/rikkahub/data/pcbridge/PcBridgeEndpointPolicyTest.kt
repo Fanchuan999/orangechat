@@ -1,8 +1,8 @@
 package me.rerere.rikkahub.data.pcbridge
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
-import kotlin.test.assertFailsWith
 
 class PcBridgeEndpointPolicyTest {
     @Test
@@ -33,7 +33,7 @@ class PcBridgeEndpointPolicyTest {
         )
 
         unsafeUrls.forEach {
-            assertFailsWith<IllegalArgumentException> { PcBridgeEndpointPolicy.requireExactRelayEndpoint(it) }
+            assertThrows(IllegalArgumentException::class.java) { PcBridgeEndpointPolicy.requireExactRelayEndpoint(it) }
         }
     }
 }

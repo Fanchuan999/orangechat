@@ -2,8 +2,8 @@ package me.rerere.rikkahub.data.pcbridge
 
 import java.util.Base64
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
-import kotlin.test.assertFailsWith
 
 class PcBridgeInvitationTest {
     private val nowMillis = 1_800_000_000_000L
@@ -15,7 +15,7 @@ class PcBridgeInvitationTest {
     @Test
     fun `decoder accepts valid v2 code and rejects expiry`() {
         assertEquals(2, PcBridgeInvitationCodec.decode(validCode, nowMillis).version)
-        assertFailsWith<IllegalArgumentException> {
+        assertThrows(IllegalArgumentException::class.java) {
             PcBridgeInvitationCodec.decode(validCode, expiresAt + 1)
         }
     }
@@ -29,8 +29,8 @@ class PcBridgeInvitationTest {
             """{"version":2,"endpoint":"https://project.supabase.co/functions/v1/daddy-pc-bridge","bridgeId":"bridge_123","pcDeviceId":"pc_456","pcPublicKey":"key","pairingSecret":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}""",
         )
 
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(unknown, nowMillis) }
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(missing, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(unknown, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(missing, nowMillis) }
     }
 
     @Test
@@ -45,9 +45,9 @@ class PcBridgeInvitationTest {
             """{"version":2,"version":2,"endpoint":"https://project.supabase.co/functions/v1/daddy-pc-bridge","bridgeId":"bridge_123","pcDeviceId":"pc_456","pcPublicKey":"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE-ISiHsBNFE6rfX6KQSfgXEoY5av4bK-yxm2ZWT8yNBnDttb6YxL997EOi7l8TydqBHJ6T-KNQ4V2pRtKjQY3mQ","pairingSecret":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","expiresAt":$expiresAt}""",
         )
 
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(reordered, nowMillis) }
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(whitespace, nowMillis) }
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(duplicate, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(reordered, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(whitespace, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(duplicate, nowMillis) }
     }
 
     @Test
@@ -62,9 +62,9 @@ class PcBridgeInvitationTest {
             """{"version":2,"endpoint":"https://project.supabase.co/functions/v1/daddy-pc-bridge","bridgeId":"bridge_123","pcDeviceId":"pc_456","pcPublicKey":"","pairingSecret":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","expiresAt":$expiresAt}""",
         )
 
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(invalidBridgeId, nowMillis) }
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(invalidSecret, nowMillis) }
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(blankPublicKey, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(invalidBridgeId, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(invalidSecret, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(blankPublicKey, nowMillis) }
     }
 
     @Test
@@ -73,15 +73,19 @@ class PcBridgeInvitationTest {
             """{"version":2,"endpoint":"https://project.supabase.co/functions/v1/daddy-pc-bridge","bridgeId":"bridge_123","pcDeviceId":"pc_456","pcPublicKey":"a2V5","pairingSecret":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","expiresAt":$expiresAt}""",
         )
 
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(malformedSpki, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(malformedSpki, nowMillis) }
     }
 
     @Test
     fun `decoder rejects non PC2 and invitations beyond five minute lifetime`() {
-        val tooFar = validCode.replace(expiresAt.toString(), (nowMillis + 300_001L).toString())
+        val tooFar = invitationCode(
+            """{"version":2,"endpoint":"https://project.supabase.co/functions/v1/daddy-pc-bridge","bridgeId":"bridge_123","pcDeviceId":"pc_456","pcPublicKey":"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE-ISiHsBNFE6rfX6KQSfgXEoY5av4bK-yxm2ZWT8yNBnDttb6YxL997EOi7l8TydqBHJ6T-KNQ4V2pRtKjQY3mQ","pairingSecret":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","expiresAt":${nowMillis + 300_001L}}""",
+        )
 
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(validCode.removePrefix("DADDY-PC2:"), nowMillis) }
-        assertFailsWith<IllegalArgumentException> { PcBridgeInvitationCodec.decode(tooFar, nowMillis) }
+        assertThrows(IllegalArgumentException::class.java) {
+            PcBridgeInvitationCodec.decode(validCode.removePrefix("DADDY-PC2:"), nowMillis)
+        }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeInvitationCodec.decode(tooFar, nowMillis) }
     }
 
     private fun invitationCode(json: String): String =

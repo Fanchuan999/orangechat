@@ -8,8 +8,8 @@ import java.security.PrivateKey
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.ECPrivateKeySpec
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
-import kotlin.test.assertFailsWith
 
 class PcBridgeCryptoTest {
     @Test
@@ -40,8 +40,8 @@ class PcBridgeCryptoTest {
 
     @Test
     fun `base64url helpers reject noncanonical input`() {
-        assertFailsWith<IllegalArgumentException> { PcBridgeCrypto.decodeBase64Url("abc=") }
-        assertFailsWith<IllegalArgumentException> { PcBridgeCrypto.decodeBase64Url("not/base64") }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeCrypto.decodeBase64Url("abc=") }
+        assertThrows(IllegalArgumentException::class.java) { PcBridgeCrypto.decodeBase64Url("not/base64") }
     }
 
     private fun privateKeyFixture(): PrivateKey {
