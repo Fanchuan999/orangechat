@@ -12,6 +12,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.security.KeyStore
+import java.util.concurrent.CancellationException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -70,6 +71,8 @@ class PcBridgeSecretStore(
         PcBridgeEndpointPolicy.requireExactRelayEndpoint(credentials.endpoint)
         val serialized = json.encodeToString(
             PcBridgePrivateRecord(
+                phoneDeviceId = credentials.phoneDeviceId,
+                pcDeviceId = credentials.pcDeviceId,
                 relayToken = credentials.relayToken,
                 envelopeKey = PcBridgeCrypto.encodeBase64Url(credentials.envelopeKey),
             ),
@@ -113,18 +116,27 @@ class PcBridgeSecretStore(
             try {
                 val privateRecord = json.decodeFromString<PcBridgePrivateRecord>(plaintext.toString(Charsets.UTF_8))
                 val envelopeKey = PcBridgeCrypto.decodeBase64Url(privateRecord.envelopeKey)
-                require(envelopeKey.size == 32) { "Invalid PC bridge envelope key" }
-                PcBridgeCredentials(
-                    endpoint = record.endpoint,
-                    bridgeId = record.bridgeId,
-                    phoneDeviceId = record.phoneDeviceId,
-                    pcDeviceId = record.pcDeviceId,
-                    relayToken = privateRecord.relayToken,
-                    envelopeKey = envelopeKey,
-                )
+                try {
+                    require(envelopeKey.size == 32) { "Invalid PC bridge envelope key" }
+                    require(privateRecord.phoneDeviceId == record.phoneDeviceId) { "Invalid PC bridge credential record" }
+                    require(privateRecord.pcDeviceId == record.pcDeviceId) { "Invalid PC bridge credential record" }
+                    PcBridgeCredentials(
+                        endpoint = record.endpoint,
+                        bridgeId = record.bridgeId,
+                        phoneDeviceId = record.phoneDeviceId,
+                        pcDeviceId = record.pcDeviceId,
+                        relayToken = privateRecord.relayToken,
+                        envelopeKey = envelopeKey,
+                    )
+                } catch (error: Exception) {
+                    envelopeKey.fill(0)
+                    throw error
+                }
             } finally {
                 plaintext.fill(0)
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (_: Exception) {
             null
         }
@@ -189,6 +201,8 @@ private class AndroidKeystorePcBridgeWrappingCipher : PcBridgeWrappingCipher {
 
 @Serializable
 private data class PcBridgePrivateRecord(
+    val phoneDeviceId: String,
+    val pcDeviceId: String,
     val relayToken: String,
     val envelopeKey: String,
 )

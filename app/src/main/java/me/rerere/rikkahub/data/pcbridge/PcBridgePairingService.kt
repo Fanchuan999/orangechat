@@ -3,10 +3,11 @@ package me.rerere.rikkahub.data.pcbridge
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.CancellationException
 
 sealed interface PcBridgeUiState {
     data object Unpaired : PcBridgeUiState
-    data class InvitationDraft(val code: String, val preview: String?, val error: String?) : PcBridgeUiState
+    data class InvitationDraft(val preview: String?, val error: String?) : PcBridgeUiState
     data object Pairing : PcBridgeUiState
     data class Paired(
         val deviceLabel: String,
@@ -36,13 +37,12 @@ class PcBridgePairingService(
         mutableState.value = draft.fold(
             onSuccess = { invitation ->
                 PcBridgeUiState.InvitationDraft(
-                    code = value,
                     preview = "${PcBridgeEndpointPolicy.requireExactRelayEndpoint(invitation.endpoint).host} · " +
                         invitation.expiresAt,
                     error = null,
                 )
             },
-            onFailure = { PcBridgeUiState.InvitationDraft(value, preview = null, error = "邀请码无效或已过期。") },
+            onFailure = { PcBridgeUiState.InvitationDraft(preview = null, error = "邀请码无效或已过期。") },
         )
     }
 
@@ -54,7 +54,7 @@ class PcBridgePairingService(
         val invitation = try {
             PcBridgeInvitationCodec.decode(code, nowMillis())
         } catch (_: Exception) {
-            mutableState.value = PcBridgeUiState.InvitationDraft(code, null, "邀请码无效或已过期。")
+            mutableState.value = PcBridgeUiState.InvitationDraft(null, "邀请码无效或已过期。")
             return
         }
         mutableState.value = PcBridgeUiState.Pairing
@@ -85,6 +85,8 @@ class PcBridgePairingService(
             )
             invitationCode = null
             mutableState.value = pairedState(invitation.pcDeviceId, "中继已连接")
+        } catch (error: CancellationException) {
+            throw error
         } catch (_: Exception) {
             mutableState.value = PcBridgeUiState.Unavailable("安全连接电脑失败，请重试。")
         } finally {
@@ -110,6 +112,8 @@ class PcBridgePairingService(
             } else {
                 mutableState.value = pairedState(credentials.pcDeviceId, status)
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (_: Exception) {
             mutableState.value = PcBridgeUiState.Unavailable("无法刷新电脑状态，请重试。")
         } finally {
@@ -129,6 +133,8 @@ class PcBridgePairingService(
             } else {
                 mutableState.value = PcBridgeUiState.Unavailable("无法解除电脑配对，请重试。")
             }
+        } catch (error: CancellationException) {
+            throw error
         } catch (_: Exception) {
             mutableState.value = PcBridgeUiState.Unavailable("无法解除电脑配对，请重试。")
         } finally {

@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl
@@ -14,6 +15,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.CancellationException
 
 interface PcBridgeRelayTransport {
     suspend fun post(endpoint: HttpUrl, body: String, headers: Map<String, String>): String
@@ -47,7 +49,7 @@ class PcBridgeRelayClient(
                 ),
             ),
         )
-        return parseObject(post(endpoint, body, emptyMap()))["paired"]?.jsonPrimitive?.content == "true"
+        return parseObject(post(endpoint, body, emptyMap()))["paired"]?.jsonPrimitive?.booleanOrNull == true
     }
 
     suspend fun refreshStatus(credentials: PcBridgeCredentials): String? =
@@ -57,7 +59,7 @@ class PcBridgeRelayClient(
 
     suspend fun revokeBridge(credentials: PcBridgeCredentials): Boolean =
         authenticated(credentials, "{\"operation\":\"revokeBridge\"}").let { response ->
-            parseObject(response)["revoked"]?.jsonPrimitive?.content == "true"
+            parseObject(response)["revoked"]?.jsonPrimitive?.booleanOrNull == true
         }
 
     private suspend fun authenticated(credentials: PcBridgeCredentials, body: String): String {
@@ -69,7 +71,12 @@ class PcBridgeRelayClient(
             nonce = nonceFactory(),
             path = endpoint.encodedPath,
         )
-        val proofHeader = PcBridgeCrypto.encodeBase64Url(Json.encodeToString(proof).toByteArray(Charsets.UTF_8))
+        val proofBytes = Json.encodeToString(proof).toByteArray(Charsets.UTF_8)
+        val proofHeader = try {
+            PcBridgeCrypto.encodeBase64Url(proofBytes)
+        } finally {
+            proofBytes.fill(0)
+        }
         return post(
             endpoint,
             body,
@@ -83,6 +90,8 @@ class PcBridgeRelayClient(
 
     private suspend fun post(endpoint: HttpUrl, body: String, headers: Map<String, String>): String = try {
         transport.post(endpoint, body, headers)
+    } catch (error: CancellationException) {
+        throw error
     } catch (_: Exception) {
         throw PcBridgeRelayException()
     }
@@ -100,10 +109,14 @@ class PcBridgeRelayClient(
             .also(SecureRandom()::nextBytes)
             .let(PcBridgeCrypto::encodeBase64Url)
 
-        private fun relayTokenHash(relayToken: String): String =
-            PcBridgeCrypto.encodeBase64Url(
-                MessageDigest.getInstance("SHA-256").digest(relayToken.toByteArray(Charsets.UTF_8)),
-            )
+        private fun relayTokenHash(relayToken: String): String {
+            val tokenBytes = relayToken.toByteArray(Charsets.UTF_8)
+            return try {
+                PcBridgeCrypto.encodeBase64Url(MessageDigest.getInstance("SHA-256").digest(tokenBytes))
+            } finally {
+                tokenBytes.fill(0)
+            }
+        }
     }
 }
 

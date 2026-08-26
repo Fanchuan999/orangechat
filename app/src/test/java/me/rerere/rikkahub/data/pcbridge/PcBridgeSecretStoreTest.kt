@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.pcbridge
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PcBridgeSecretStoreTest {
@@ -15,6 +16,16 @@ class PcBridgeSecretStoreTest {
 
         assertFalse(storage.rawValue().contains("relay-token-value"))
         assertEquals("phone-main", store.load()!!.phoneDeviceId)
+    }
+
+    @Test
+    fun `load rejects public device IDs that do not match wrapped credentials`() = runBlocking {
+        val storage = FakePcBridgeSecureRecordStorage()
+        val store = PcBridgeSecretStore(storage, FakeWrappingCipher())
+        store.save(credentialsWithToken("relay-token-value"))
+        storage.replacePhoneDeviceId("phone-tampered")
+
+        assertNull(store.load())
     }
 
     private fun credentialsWithToken(relayToken: String) = PcBridgeCredentials(
@@ -38,6 +49,10 @@ private class FakePcBridgeSecureRecordStorage : PcBridgeSecureRecordStorage {
 
     override suspend fun clear() {
         record = null
+    }
+
+    fun replacePhoneDeviceId(value: String) {
+        record = requireNotNull(record).copy(phoneDeviceId = value)
     }
 
     fun rawValue(): String = record?.let {

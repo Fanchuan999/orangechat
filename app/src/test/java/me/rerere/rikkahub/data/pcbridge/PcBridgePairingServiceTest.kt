@@ -2,10 +2,14 @@ package me.rerere.rikkahub.data.pcbridge
 
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.util.Base64
+import java.util.concurrent.CancellationException
 
 class PcBridgePairingServiceTest {
     private val nowMillis = 1_800_000_000_000L
@@ -30,6 +34,30 @@ class PcBridgePairingServiceTest {
     }
 
     @Test
+    fun `invitation state never exposes invitation or pairing secret`() {
+        val service = service(ServiceRecordStorage(), RecordingTransport("""{"paired":true}"""))
+
+        service.updateInvitationCode(validCode)
+
+        val renderedState = service.state.value.toString()
+        assertTrue(service.state.value is PcBridgeUiState.InvitationDraft)
+        assertFalse(renderedState.contains("DADDY-PC2:"))
+        assertFalse(renderedState.contains("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"))
+    }
+
+    @Test
+    fun `quoted paired result does not persist credentials`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val service = service(storage, RecordingTransport("""{"paired":"true"}"""))
+
+        service.updateInvitationCode(validCode)
+        service.confirmPairing()
+
+        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+        assertNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+    }
+
+    @Test
     fun `unlink retains credentials when relay call fails`() = runBlocking {
         val storage = ServiceRecordStorage()
         val transport = RecordingTransport("""{"paired":true}""")
@@ -42,6 +70,38 @@ class PcBridgePairingServiceTest {
 
         assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
         assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+    }
+
+    @Test
+    fun `quoted revocation result retains credentials`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val transport = RecordingTransport("""{"paired":true}""")
+        val service = service(storage, transport)
+        service.updateInvitationCode(validCode)
+        service.confirmPairing()
+        transport.response = """{"revoked":"true"}"""
+
+        service.unlink()
+
+        assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+    }
+
+    @Test
+    fun `service rethrows coroutine cancellation`() {
+        val storage = ServiceRecordStorage()
+        val transport = RecordingTransport("""{"paired":true}""")
+        val service = service(storage, transport)
+        runBlocking {
+            service.updateInvitationCode(validCode)
+            service.confirmPairing()
+        }
+        transport.cancel = true
+
+        assertThrows(CancellationException::class.java) {
+            runBlocking { service.unlink() }
+        }
+        assertNotNull(runBlocking { PcBridgeSecretStore(storage, ServiceWrappingCipher()).load() })
     }
 
     private fun service(storage: ServiceRecordStorage, transport: RecordingTransport) = PcBridgePairingService(
@@ -73,11 +133,13 @@ private class ServiceWrappingCipher : PcBridgeWrappingCipher {
 }
 
 private class RecordingTransport(
-    private val response: String,
+    var response: String,
 ) : PcBridgeRelayTransport {
     var failure = false
+    var cancel = false
 
     override suspend fun post(endpoint: HttpUrl, body: String, headers: Map<String, String>): String {
+        if (cancel) throw CancellationException("cancelled")
         if (failure) error("network unavailable")
         return response
     }
