@@ -2,6 +2,7 @@ package me.rerere.rikkahub.data.pcbridge
 
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -22,7 +23,7 @@ class PcBridgePairingServiceTest {
     )
 
     @Test
-    fun `service persists only confirmed pair join`() = runBlocking {
+    fun `successful pair join keeps persisted credentials`() = runBlocking {
         val storage = ServiceRecordStorage()
         val service = service(storage, RecordingTransport("""{"paired":true}"""))
 
@@ -31,6 +32,47 @@ class PcBridgePairingServiceTest {
 
         assertTrue(service.state.value is PcBridgeUiState.Paired)
         assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+    }
+
+    @Test
+    fun `local save failure prevents pair join`() = runBlocking {
+        val storage = ServiceRecordStorage(failWrite = true)
+        val transport = RecordingTransport("""{"paired":true}""")
+        val service = service(storage, transport)
+
+        service.updateInvitationCode(validCode)
+        service.confirmPairing()
+
+        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+        assertEquals(0, transport.callCount)
+        assertNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+    }
+
+    @Test
+    fun `explicit rejected pair join clears pending credentials`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val service = service(storage, RecordingTransport("""{"paired":false}"""))
+
+        service.updateInvitationCode(validCode)
+        service.confirmPairing()
+
+        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+        assertNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+        assertEquals(1, storage.clearCount)
+    }
+
+    @Test
+    fun `transport failure after persistence retains credentials for recovery`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val transport = RecordingTransport("""{"paired":true}""").apply { failure = true }
+        val service = service(storage, transport)
+
+        service.updateInvitationCode(validCode)
+        service.confirmPairing()
+
+        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+        assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+        assertEquals(0, storage.clearCount)
     }
 
     @Test
@@ -115,11 +157,21 @@ class PcBridgePairingServiceTest {
         "DADDY-PC2:" + Base64.getUrlEncoder().withoutPadding().encodeToString(json.toByteArray())
 }
 
-private class ServiceRecordStorage : PcBridgeSecureRecordStorage {
+private class ServiceRecordStorage(
+    private val failWrite: Boolean = false,
+) : PcBridgeSecureRecordStorage {
     private var record: PcBridgeEncryptedRecord? = null
+    var clearCount = 0
+        private set
     override suspend fun read() = record
-    override suspend fun write(record: PcBridgeEncryptedRecord) { this.record = record }
-    override suspend fun clear() { record = null }
+    override suspend fun write(record: PcBridgeEncryptedRecord) {
+        if (failWrite) error("local save failed")
+        this.record = record
+    }
+    override suspend fun clear() {
+        clearCount += 1
+        record = null
+    }
 }
 
 private class ServiceWrappingCipher : PcBridgeWrappingCipher {
@@ -137,8 +189,11 @@ private class RecordingTransport(
 ) : PcBridgeRelayTransport {
     var failure = false
     var cancel = false
+    var callCount = 0
+        private set
 
     override suspend fun post(endpoint: HttpUrl, body: String, headers: Map<String, String>): String {
+        callCount += 1
         if (cancel) throw CancellationException("cancelled")
         if (failure) error("network unavailable")
         return response

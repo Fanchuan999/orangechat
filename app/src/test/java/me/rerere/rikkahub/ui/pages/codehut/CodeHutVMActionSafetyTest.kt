@@ -42,6 +42,17 @@ class CodeHutVMActionSafetyTest {
         assertEquals(null, vm.state.value.error)
     }
 
+    @Test
+    fun `startup refresh restores persisted pairing exactly once after state collection starts`() {
+        val actions = StartupPcActions()
+
+        val vm = testVm(actions)
+
+        assertEquals(1, actions.refreshCount)
+        assertTrue(vm.state.value.pcBridge is PcBridgeUiState.Paired)
+        assertEquals(null, vm.state.value.error)
+    }
+
     private fun testVm(actions: PcBridgeUiActions) = CodeHutVM(
         initialHarnessSnapshot = HarnessSnapshot(),
         harnessSnapshots = emptyFlow(),
@@ -70,5 +81,23 @@ class CodeHutVMActionSafetyTest {
             error("token=relay-secret")
         }
         override suspend fun unlink() = error("token=relay-secret")
+    }
+
+    private class StartupPcActions : PcBridgeUiActions {
+        override val state = MutableStateFlow<PcBridgeUiState>(PcBridgeUiState.Unpaired)
+        var refreshCount = 0
+            private set
+
+        override fun updateInvitationCode(value: String) = Unit
+        override suspend fun confirmPairing() = Unit
+        override suspend fun refreshStatus() {
+            refreshCount += 1
+            state.value = PcBridgeUiState.Paired(
+                deviceLabel = "电脑 pc-test",
+                statusText = "中继已连接",
+                refreshedAtEpochMillis = 1L,
+            )
+        }
+        override suspend fun unlink() = Unit
     }
 }

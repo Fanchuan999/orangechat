@@ -22,12 +22,12 @@ class PcBridgePairingService(
     private val relayClient: PcBridgeRelayClient,
     private val phoneDeviceIdFactory: () -> String = ::newPhoneDeviceId,
     private val nowMillis: () -> Long = System::currentTimeMillis,
-) {
+) : PcBridgeUiActions {
     private val mutableState = MutableStateFlow<PcBridgeUiState>(PcBridgeUiState.Unpaired)
-    val state: StateFlow<PcBridgeUiState> = mutableState.asStateFlow()
+    override val state: StateFlow<PcBridgeUiState> = mutableState.asStateFlow()
     private var invitationCode: String? = null
 
-    fun updateInvitationCode(value: String) {
+    override fun updateInvitationCode(value: String) {
         invitationCode = value.takeIf { it.isNotBlank() }
         if (invitationCode == null) {
             mutableState.value = PcBridgeUiState.Unpaired
@@ -46,7 +46,7 @@ class PcBridgePairingService(
         )
     }
 
-    suspend fun confirmPairing() {
+    override suspend fun confirmPairing() {
         val code = invitationCode ?: run {
             mutableState.value = PcBridgeUiState.Unavailable("请先粘贴电脑邀请码。")
             return
@@ -68,11 +68,6 @@ class PcBridgePairingService(
             )
             val phoneDeviceId = phoneDeviceIdFactory()
             val relayToken = PcBridgeRelayClient.newRelayToken()
-            val paired = relayClient.pairJoin(invitation, phoneDeviceId, phone.publicKeySpki, relayToken)
-            if (!paired) {
-                mutableState.value = PcBridgeUiState.Unavailable("电脑尚未确认配对，请重试。")
-                return
-            }
             secretStore.save(
                 PcBridgeCredentials(
                     endpoint = invitation.endpoint,
@@ -83,6 +78,12 @@ class PcBridgePairingService(
                     envelopeKey = requireNotNull(envelopeKey),
                 ),
             )
+            val paired = relayClient.pairJoin(invitation, phoneDeviceId, phone.publicKeySpki, relayToken)
+            if (!paired) {
+                secretStore.clear()
+                mutableState.value = PcBridgeUiState.Unavailable("电脑尚未确认配对，请重试。")
+                return
+            }
             invitationCode = null
             mutableState.value = pairedState(invitation.pcDeviceId, "中继已连接")
         } catch (error: CancellationException) {
@@ -94,7 +95,7 @@ class PcBridgePairingService(
         }
     }
 
-    suspend fun refreshStatus() {
+    override suspend fun refreshStatus() {
         val credentials = secretStore.load() ?: run {
             mutableState.value = PcBridgeUiState.Unpaired
             return
@@ -121,7 +122,7 @@ class PcBridgePairingService(
         }
     }
 
-    suspend fun unlink() {
+    override suspend fun unlink() {
         val credentials = secretStore.load() ?: run {
             mutableState.value = PcBridgeUiState.Unpaired
             return

@@ -23,5 +23,7 @@ class PcBridgeHttpClientPolicyTest {
         assertTrue(sharedClient.networkInterceptors.any { it is RequestLoggingInterceptor })
         assertFalse(relayClient.interceptors.any { it is HttpLoggingInterceptor || it is RequestLoggingInterceptor })
         assertFalse(relayClient.networkInterceptors.any { it is HttpLoggingInterceptor || it is RequestLoggingInterceptor })
+        assertFalse(relayClient.followRedirects)
+        assertFalse(relayClient.followSslRedirects)
     }
 }

@@ -10,5 +10,7 @@ internal fun buildPcBridgeRelayHttpClient(source: OkHttpClient): OkHttpClient = 
     .apply {
         interceptors().clear()
         networkInterceptors().clear()
+        followRedirects(false)
+        followSslRedirects(false)
     }
     .build()
