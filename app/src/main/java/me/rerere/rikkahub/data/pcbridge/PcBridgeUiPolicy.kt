@@ -35,7 +35,7 @@ data class PcBridgeUiPolicy(
 
             PcBridgeUiState.Pairing -> PcBridgeUiPolicy(
                 title = "电脑命令",
-                status = "连接中",
+                status = "正在安全连接电脑…",
                 detail = "正在建立安全连接，请稍候。",
                 primaryAction = null,
                 dangerAction = null,
