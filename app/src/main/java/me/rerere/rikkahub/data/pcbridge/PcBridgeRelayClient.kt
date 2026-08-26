@@ -5,6 +5,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -49,7 +51,7 @@ class PcBridgeRelayClient(
                 ),
             ),
         )
-        return parseObject(post(endpoint, body, emptyMap()))["paired"]?.jsonPrimitive?.booleanOrNull == true
+        return parseObject(post(endpoint, body, emptyMap())).isStrictBooleanTrue("paired")
     }
 
     suspend fun refreshStatus(credentials: PcBridgeCredentials): String? =
@@ -59,7 +61,7 @@ class PcBridgeRelayClient(
 
     suspend fun revokeBridge(credentials: PcBridgeCredentials): Boolean =
         authenticated(credentials, "{\"operation\":\"revokeBridge\"}").let { response ->
-            parseObject(response)["revoked"]?.jsonPrimitive?.booleanOrNull == true
+            parseObject(response).isStrictBooleanTrue("revoked")
         }
 
     private suspend fun authenticated(credentials: PcBridgeCredentials, body: String): String {
@@ -100,6 +102,11 @@ class PcBridgeRelayClient(
         Json.parseToJsonElement(value).jsonObject
     } catch (_: Exception) {
         throw PcBridgeRelayException()
+    }
+
+    private fun JsonObject.isStrictBooleanTrue(field: String): Boolean {
+        val value = this[field] as? JsonPrimitive ?: return false
+        return !value.isString && value.booleanOrNull == true
     }
 
     companion object {
