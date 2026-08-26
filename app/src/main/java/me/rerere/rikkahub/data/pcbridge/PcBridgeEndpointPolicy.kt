@@ -22,6 +22,8 @@ object PcBridgeEndpointPolicy {
         require(endpoint.query == null && endpoint.fragment == null) {
             "PC bridge endpoint must not contain a query or fragment"
         }
+        val canonicalEndpoint = "https://${endpoint.host}$RELAY_PATH"
+        require(value == canonicalEndpoint) { "PC bridge endpoint must be canonical" }
 
         return endpoint
     }

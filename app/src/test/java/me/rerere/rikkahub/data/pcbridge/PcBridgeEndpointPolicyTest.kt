@@ -24,7 +24,11 @@ class PcBridgeEndpointPolicyTest {
             "https://user:pass@project.supabase.co/functions/v1/daddy-pc-bridge",
             "https://project.supabase.co/functions/v1/daddy-pc-bridge#fragment",
             "https://project.supabase.co:444/functions/v1/daddy-pc-bridge",
+            "https://project.supabase.co:443/functions/v1/daddy-pc-bridge",
             "https://project.supabase.co/functions/v1/%64addy-pc-bridge",
+            "https://project.supabase.co/functions/v1/other/../daddy-pc-bridge",
+            "https://project.supabase.co/functions/v1\\daddy-pc-bridge",
+            "HTTPS://project.supabase.co/functions/v1/daddy-pc-bridge",
             "https://project.supabase.co.evil.example/functions/v1/daddy-pc-bridge",
         )
 

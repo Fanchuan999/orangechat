@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.pcbridge
 
 import java.security.AlgorithmParameters
+import java.security.GeneralSecurityException
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
@@ -58,6 +59,10 @@ object PcBridgeCrypto {
 
     fun encodeBase64Url(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
+    fun requireP256Spki(peerSpki: String) {
+        importP256PublicKey(peerSpki)
+    }
+
     fun decodeBase64Url(value: String): ByteArray {
         require(value.isNotEmpty() && base64UrlPattern.matches(value)) { "Invalid base64url value" }
         val decoded = try {
@@ -78,6 +83,8 @@ object PcBridgeCrypto {
             val peer = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(encoded))
             require(peer is ECPublicKey && sameCurve(peer.params, p256Parameters())) { "Peer key must use P-256" }
             return peer
+        } catch (error: GeneralSecurityException) {
+            throw IllegalArgumentException("Invalid P-256 SPKI public key", error)
         } finally {
             encoded.fill(0)
         }

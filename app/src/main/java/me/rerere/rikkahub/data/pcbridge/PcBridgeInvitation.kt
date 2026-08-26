@@ -2,6 +2,7 @@ package me.rerere.rikkahub.data.pcbridge
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 
@@ -63,12 +64,11 @@ object PcBridgeInvitationCodec {
         require(invitation.pcPublicKey.isNotEmpty() && invitation.pcPublicKey.length <= 512) {
             "Invalid PC bridge public key"
         }
-        val publicKey = try {
-            PcBridgeCrypto.decodeBase64Url(invitation.pcPublicKey)
+        try {
+            PcBridgeCrypto.requireP256Spki(invitation.pcPublicKey)
         } catch (error: IllegalArgumentException) {
             throw IllegalArgumentException("Invalid PC bridge public key", error)
         }
-        publicKey.fill(0)
         require(invitation.pairingSecret.length in 32..128 && base64UrlPattern.matches(invitation.pairingSecret)) {
             "Invalid PC bridge pairing secret"
         }
@@ -81,7 +81,29 @@ object PcBridgeInvitationCodec {
         require(invitation.expiresAt > nowMillis && invitation.expiresAt <= nowMillis + MAX_LIFETIME_MILLIS) {
             "PC bridge invitation has expired or is not valid yet"
         }
+        require(code == encodeCanonical(invitation)) { "Noncanonical PC bridge invitation" }
 
         return invitation
+    }
+
+    private fun encodeCanonical(invitation: PcBridgeInvitation): String {
+        val payload = buildString {
+            append("{\"version\":")
+            append(invitation.version)
+            append(",\"endpoint\":")
+            append(json.encodeToString(invitation.endpoint))
+            append(",\"bridgeId\":")
+            append(json.encodeToString(invitation.bridgeId))
+            append(",\"pcDeviceId\":")
+            append(json.encodeToString(invitation.pcDeviceId))
+            append(",\"pcPublicKey\":")
+            append(json.encodeToString(invitation.pcPublicKey))
+            append(",\"pairingSecret\":")
+            append(json.encodeToString(invitation.pairingSecret))
+            append(",\"expiresAt\":")
+            append(invitation.expiresAt)
+            append('}')
+        }
+        return PREFIX + PcBridgeCrypto.encodeBase64Url(payload.toByteArray(Charsets.UTF_8))
     }
 }
