@@ -4,7 +4,7 @@
 
 ## 使用前确认
 
-- 仅使用已审阅的 PC Bridge 配套源码/发行包，以及其公开的 Supabase Edge Function 地址。本 Android 工作树不携带 PC Companion 源码；对应的 SQL 和 Edge 源文件位于独立版本化工件 `D:\small progect\ai_chat\orangechat-minimal\.worktrees\daddy-pc-bridge-core` 的已审阅提交 `f3977b0`：`docs/supabase/daddy_pc_bridge_v2.sql` 与 `supabase/functions/daddy-pc-bridge/dashboard-index.ts`。部署时必须从同一已审阅工件取这两份文件，不能从 Android 分支猜测或补写。
+- 仅使用已审阅的 PC Bridge 配套源码/发行包，以及其公开的 Supabase Edge Function 地址。本 Android 工作树不携带 PC Companion 源码；对应的 SQL、Edge 源文件和 P-256 v2 `DADDY-PC2:` 协议位于独立版本化工件 `D:\small progect\ai_chat\orangechat-minimal\.worktrees\daddy-pc-bridge-core` 的已审阅提交 `8102fe5`：`docs/supabase/daddy_pc_bridge_v2.sql` 与 `supabase/functions/daddy-pc-bridge/dashboard-index.ts`。部署时必须从同一已审阅工件取这两份文件，不能从 Android 分支猜测或补写。
 - 电脑端 Bridge 的工作根目录应位于 **D 盘**。手机不会复制电脑工作区文件。
 - PC 只需要在 `pair-pc` 的五分钟轮询期间、或以后实际处理电脑任务时保持唤醒；不需要为了保留配对而持续运行。
 - 高风险文件操作、批量覆盖、删除、外网访问、推送等，仍应在执行器的确认界面中由你手动确认。
@@ -27,7 +27,7 @@
    ```
 
    - `prepare` 只创建默认 D 盘 Bridge 布局；`configure-relay` 只保存公开 HTTPS 端点；`pair-pc` 才会打开临时配对。
-   - 成功开始配对时，终端会显示状态 `pairing_open` 和一条临时的 `DADDY-PC2:` 邀请码。只复制这一行到手机；它仅五分钟有效、只能使用一次。
+   - 成功开始配对时，终端会输出一行 JSON，状态为 `pairing_open`，其中的 `invitationCode` 字段值以 `DADDY-PC2:` 开头。**只复制该字段的值**到手机，不要复制 JSON 花括号、字段名或 `expiresAt`；它仅五分钟有效、只能使用一次。
 5. 在手机打开 Daddy → **代码小屋** → **电脑协作** → **连接电脑**，粘贴邀请码，再点“确认连接”。
    - Daddy 只会展示经过校验的临时预览、电脑标签和连接状态；不会显示 relay token、AES 信封密钥或电脑路径。
 6. 看到“已配对”后，先点“刷新状态”确认服务端状态正常；再作为验收的一部分选择“解除配对”，并在确认弹窗中确认。
