@@ -184,6 +184,33 @@ class PcBridgePairingServiceTest {
     }
 
     @Test
+    fun `older pending refresh cannot overwrite a newer active refresh`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+        store.save(testCredentials(pendingConfirmation = true))
+        val transport = OrderedDelayedTransport(
+            responses = listOf(
+                """{"status":{"state":"active"}}""",
+                """{"status":{"state":"unknown"}}""",
+            ),
+        )
+        val service = service(storage, transport)
+
+        val firstRefresh = async { service.refreshStatus() }
+        transport.started[0].await()
+        val secondRefresh = async { service.refreshStatus() }
+        transport.started[1].await()
+        transport.release[0].complete(Unit)
+        firstRefresh.await()
+        transport.release[1].complete(Unit)
+        secondRefresh.await()
+
+        assertTrue(service.state.value is PcBridgeUiState.Paired)
+        assertFalse(store.load()!!.pendingConfirmation)
+        assertFalse(PcBridgeUiPolicy.from(service.state.value).dangerAction == "放弃本机待恢复配对")
+    }
+
+    @Test
     fun `invitation state never exposes invitation or pairing secret`() {
         val service = service(ServiceRecordStorage(), RecordingTransport("""{"paired":true}"""))
 
@@ -305,6 +332,21 @@ private class DelayedRecordingTransport(
         started.complete(Unit)
         release.await()
         return response
+    }
+}
+
+private class OrderedDelayedTransport(
+    private val responses: List<String>,
+) : PcBridgeRelayTransport {
+    val started = List(responses.size) { CompletableDeferred<Unit>() }
+    val release = List(responses.size) { CompletableDeferred<Unit>() }
+    private var nextRequestIndex = 0
+
+    override suspend fun post(endpoint: HttpUrl, body: String, headers: Map<String, String>): String {
+        val requestIndex = nextRequestIndex++
+        started[requestIndex].complete(Unit)
+        release[requestIndex].await()
+        return responses[requestIndex]
     }
 }
 

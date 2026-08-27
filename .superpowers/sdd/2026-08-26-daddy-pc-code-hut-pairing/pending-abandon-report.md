@@ -76,3 +76,27 @@ Result: successful, with 28 focused JVM tests and no failures or errors:
 - `CodeHutVMActionSafetyTest`: 5
 
 Android test sources compiled successfully; no device install or deployment was performed.
+
+## Review hardening — overlapping refreshes
+
+### Added behavior
+
+An `active` or `revoked` relay result is authoritative for the local pairing record. After either result is applied, the recovery operation generation advances. Any older refresh snapshot that completes later is ignored, so it cannot replace `Paired` or `Unpaired` with `PendingRecovery`.
+
+### RED evidence
+
+Before the generation advance was added, the following focused service test reliably failed: the first pending refresh returned `active`, then the older second snapshot returned `unknown` and overwrote the card state. The failure was at `PcBridgePairingServiceTest.kt:187`.
+
+```powershell
+$env:GRADLE_USER_HOME='D:\Daddy-Gradle'
+& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' --console=plain :app:testDebugUnitTest --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgePairingServiceTest'
+```
+
+### GREEN evidence
+
+```powershell
+$env:GRADLE_USER_HOME='D:\Daddy-Gradle'
+& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' --console=plain --quiet :app:testDebugUnitTest --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgePairingServiceTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgeSecretStoreTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgeUiPolicyTest' --tests 'me.rerere.rikkahub.ui.pages.codehut.CodeHutVMActionSafetyTest' :app:compileDebugAndroidTestKotlin
+```
+
+Result: successful, 29 focused JVM tests with zero failures or errors (17 service, 3 secret-store, 4 policy, 5 VM). Android test sources also compiled successfully.

@@ -140,11 +140,13 @@ class PcBridgePairingService(
                                 // The active relay is authoritative. A later refresh will retry persisting confirmation.
                             }
                         }
+                        recoveryOperationGeneration += 1
                         mutableState.value = pairedState(credentials.pcDeviceId, "中继已连接")
                     }
 
                     "revoked" -> {
                         secretStore.clear()
+                        recoveryOperationGeneration += 1
                         mutableState.value = PcBridgeUiState.Unpaired
                     }
 
