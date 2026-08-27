@@ -28,6 +28,16 @@ class PcBridgeSecretStoreTest {
         assertNull(store.load())
     }
 
+    @Test
+    fun `credential records without a pending marker are confirmed by default`() = runBlocking {
+        val storage = FakePcBridgeSecureRecordStorage()
+        val store = PcBridgeSecretStore(storage, FakeWrappingCipher())
+
+        store.save(credentialsWithToken("relay-token-value"))
+
+        assertFalse(store.load()!!.pendingConfirmation)
+    }
+
     private fun credentialsWithToken(relayToken: String) = PcBridgeCredentials(
         endpoint = "https://project.supabase.co/functions/v1/daddy-pc-bridge",
         bridgeId = "bridge-main",

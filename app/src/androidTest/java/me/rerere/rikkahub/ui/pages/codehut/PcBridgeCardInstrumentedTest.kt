@@ -37,6 +37,7 @@ class PcBridgeCardInstrumentedTest {
                     onConfirmPairing = {},
                     onRefresh = {},
                     onUnlink = {},
+                    onAbandonPendingPairing = {},
                 )
             }
         }
@@ -64,6 +65,7 @@ class PcBridgeCardInstrumentedTest {
                     onConfirmPairing = {},
                     onRefresh = {},
                     onUnlink = { unlinkCalls++ },
+                    onAbandonPendingPairing = {},
                 )
             }
         }
@@ -74,5 +76,34 @@ class PcBridgeCardInstrumentedTest {
 
         assertTrue(composeRule.onAllNodesWithText("确认解除配对").fetchSemanticsNodes().isEmpty())
         assertEquals(0, unlinkCalls)
+    }
+
+    @Test
+    fun abandoningPendingRecoveryRequiresAnExplicitConfirmation() {
+        var bridgeState by mutableStateOf<PcBridgeUiState>(PcBridgeUiState.PendingRecovery)
+        var abandonCalls = 0
+
+        composeRule.setContent {
+            MaterialTheme {
+                PcBridgeCard(
+                    state = bridgeState,
+                    policy = PcBridgeUiPolicy.from(bridgeState),
+                    onInvitationChange = {},
+                    onConfirmPairing = {},
+                    onRefresh = {},
+                    onUnlink = {},
+                    onAbandonPendingPairing = { abandonCalls++ },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("放弃本机待恢复配对").performClick()
+        composeRule.onNodeWithText("确认放弃本机配对").assertExists()
+        assertEquals(0, abandonCalls)
+        composeRule.onNodeWithText("确认放弃本机配对").performClick()
+
+        assertEquals(1, abandonCalls)
+        composeRule.runOnIdle { bridgeState = PcBridgeUiState.Unpaired }
+        assertTrue(composeRule.onAllNodesWithText("确认放弃本机配对").fetchSemanticsNodes().isEmpty())
     }
 }

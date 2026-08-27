@@ -28,6 +28,7 @@ data class PcBridgeCredentials(
     val pcDeviceId: String,
     val relayToken: String,
     val envelopeKey: ByteArray,
+    val pendingConfirmation: Boolean = false,
 )
 
 data class PcBridgeEncryptedRecord(
@@ -38,6 +39,7 @@ data class PcBridgeEncryptedRecord(
     val pcDeviceId: String,
     val iv: String,
     val ciphertext: String,
+    val pendingConfirmation: Boolean = false,
 )
 
 data class PcBridgeWrappedBytes(
@@ -92,6 +94,7 @@ class PcBridgeSecretStore(
                     pcDeviceId = credentials.pcDeviceId,
                     iv = PcBridgeCrypto.encodeBase64Url(wrapped.iv),
                     ciphertext = PcBridgeCrypto.encodeBase64Url(wrapped.ciphertext),
+                    pendingConfirmation = credentials.pendingConfirmation,
                 ),
             )
         } finally {
@@ -127,6 +130,7 @@ class PcBridgeSecretStore(
                         pcDeviceId = record.pcDeviceId,
                         relayToken = privateRecord.relayToken,
                         envelopeKey = envelopeKey,
+                        pendingConfirmation = record.pendingConfirmation,
                     )
                 } catch (error: Exception) {
                     envelopeKey.fill(0)
@@ -216,6 +220,7 @@ private data class PcBridgeStoredRecord(
     val pcDeviceId: String,
     val iv: String,
     val ciphertext: String,
+    val pendingConfirmation: Boolean = false,
 ) {
     fun toPublicRecord() = PcBridgeEncryptedRecord(
         version,
@@ -225,6 +230,7 @@ private data class PcBridgeStoredRecord(
         pcDeviceId,
         iv,
         ciphertext,
+        pendingConfirmation,
     )
 
     companion object {
@@ -236,6 +242,7 @@ private data class PcBridgeStoredRecord(
             value.pcDeviceId,
             value.iv,
             value.ciphertext,
+            value.pendingConfirmation,
         )
     }
 }

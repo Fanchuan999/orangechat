@@ -53,6 +53,19 @@ class CodeHutVMActionSafetyTest {
         assertEquals(null, vm.state.value.error)
     }
 
+    @Test
+    fun `abandon pending pairing delegates only to the explicit local action`() {
+        val actions = PendingRecoveryPcActions()
+        val vm = testVm(actions)
+        val refreshCountBeforeAbandon = actions.refreshCount
+
+        vm.abandonPendingPcBridge()
+
+        assertEquals(1, actions.abandonCount)
+        assertEquals(refreshCountBeforeAbandon, actions.refreshCount)
+        assertTrue(vm.state.value.pcBridge is PcBridgeUiState.Unpaired)
+    }
+
     private fun testVm(actions: PcBridgeUiActions) = CodeHutVM(
         initialHarnessSnapshot = HarnessSnapshot(),
         harnessSnapshots = emptyFlow(),
@@ -81,6 +94,7 @@ class CodeHutVMActionSafetyTest {
             error("token=relay-secret")
         }
         override suspend fun unlink() = error("token=relay-secret")
+        override suspend fun abandonPendingPairing() = error("token=relay-secret")
     }
 
     private class StartupPcActions : PcBridgeUiActions {
@@ -99,5 +113,25 @@ class CodeHutVMActionSafetyTest {
             )
         }
         override suspend fun unlink() = Unit
+        override suspend fun abandonPendingPairing() = Unit
+    }
+
+    private class PendingRecoveryPcActions : PcBridgeUiActions {
+        override val state = MutableStateFlow<PcBridgeUiState>(PcBridgeUiState.PendingRecovery)
+        var abandonCount = 0
+            private set
+        var refreshCount = 0
+            private set
+
+        override fun updateInvitationCode(value: String) = Unit
+        override suspend fun confirmPairing() = Unit
+        override suspend fun refreshStatus() {
+            refreshCount += 1
+        }
+        override suspend fun unlink() = Unit
+        override suspend fun abandonPendingPairing() {
+            abandonCount += 1
+            state.value = PcBridgeUiState.Unpaired
+        }
     }
 }

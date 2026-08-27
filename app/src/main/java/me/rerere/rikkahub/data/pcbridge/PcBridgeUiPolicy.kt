@@ -49,6 +49,14 @@ data class PcBridgeUiPolicy(
                 dangerAction = "解除配对",
             )
 
+            PcBridgeUiState.PendingRecovery -> PcBridgeUiPolicy(
+                title = "电脑命令",
+                status = "配对尚未确认",
+                detail = "可先刷新状态；若电脑端确认未配对，可只清理本机待恢复配对后重新连接。",
+                primaryAction = "刷新状态",
+                dangerAction = "放弃本机待恢复配对",
+            )
+
             is PcBridgeUiState.Unavailable -> PcBridgeUiPolicy(
                 title = "电脑命令",
                 status = "暂不可用",

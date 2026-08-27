@@ -14,6 +14,7 @@ sealed interface PcBridgeUiState {
         val statusText: String,
         val refreshedAtEpochMillis: Long,
     ) : PcBridgeUiState
+    data object PendingRecovery : PcBridgeUiState
     data class Unavailable(val message: String) : PcBridgeUiState
 }
 
@@ -59,6 +60,7 @@ class PcBridgePairingService(
         }
         mutableState.value = PcBridgeUiState.Pairing
         var envelopeKey: ByteArray? = null
+        var pendingCredentialsSaved = false
         try {
             val phone = PcBridgeCrypto.generateEphemeralKeyPair()
             envelopeKey = PcBridgeCrypto.deriveAesBytes(
@@ -76,20 +78,36 @@ class PcBridgePairingService(
                     pcDeviceId = invitation.pcDeviceId,
                     relayToken = relayToken,
                     envelopeKey = requireNotNull(envelopeKey),
+                    pendingConfirmation = true,
                 ),
             )
+            pendingCredentialsSaved = true
             val paired = relayClient.pairJoin(invitation, phoneDeviceId, phone.publicKeySpki, relayToken)
             if (!paired) {
                 secretStore.clear()
                 mutableState.value = PcBridgeUiState.Unavailable("电脑尚未确认配对，请重试。")
                 return
             }
+            secretStore.save(
+                PcBridgeCredentials(
+                    endpoint = invitation.endpoint,
+                    bridgeId = invitation.bridgeId,
+                    phoneDeviceId = phoneDeviceId,
+                    pcDeviceId = invitation.pcDeviceId,
+                    relayToken = relayToken,
+                    envelopeKey = requireNotNull(envelopeKey),
+                ),
+            )
             invitationCode = null
             mutableState.value = pairedState(invitation.pcDeviceId, "中继已连接")
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            mutableState.value = PcBridgeUiState.Unavailable("安全连接电脑失败，请重试。")
+            mutableState.value = if (pendingCredentialsSaved) {
+                PcBridgeUiState.PendingRecovery
+            } else {
+                PcBridgeUiState.Unavailable("安全连接电脑失败，请重试。")
+            }
         } finally {
             envelopeKey?.fill(0)
         }
@@ -111,12 +129,25 @@ class PcBridgePairingService(
                 secretStore.clear()
                 mutableState.value = PcBridgeUiState.Unpaired
             } else {
+                if (credentials.pendingConfirmation && relayState == "active") {
+                    try {
+                        secretStore.save(credentials.copy(pendingConfirmation = false))
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        // The active relay is authoritative. A later refresh will retry persisting confirmation.
+                    }
+                }
                 mutableState.value = pairedState(credentials.pcDeviceId, status)
             }
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            mutableState.value = PcBridgeUiState.Unavailable("无法刷新电脑状态，请重试。")
+            mutableState.value = if (credentials.pendingConfirmation) {
+                PcBridgeUiState.PendingRecovery
+            } else {
+                PcBridgeUiState.Unavailable("无法刷新电脑状态，请重试。")
+            }
         } finally {
             credentials.envelopeKey.fill(0)
         }
@@ -138,6 +169,20 @@ class PcBridgePairingService(
             throw error
         } catch (_: Exception) {
             mutableState.value = PcBridgeUiState.Unavailable("无法解除电脑配对，请重试。")
+        } finally {
+            credentials.envelopeKey.fill(0)
+        }
+    }
+
+    override suspend fun abandonPendingPairing() {
+        val credentials = secretStore.load() ?: run {
+            mutableState.value = PcBridgeUiState.Unpaired
+            return
+        }
+        try {
+            if (!credentials.pendingConfirmation) return
+            secretStore.clear()
+            mutableState.value = PcBridgeUiState.Unpaired
         } finally {
             credentials.envelopeKey.fill(0)
         }

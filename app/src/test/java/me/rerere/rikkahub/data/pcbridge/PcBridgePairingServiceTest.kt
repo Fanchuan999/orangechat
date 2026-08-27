@@ -31,7 +31,7 @@ class PcBridgePairingServiceTest {
         service.confirmPairing()
 
         assertTrue(service.state.value is PcBridgeUiState.Paired)
-        assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+        assertFalse(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load()!!.pendingConfirmation)
     }
 
     @Test
@@ -70,9 +70,64 @@ class PcBridgePairingServiceTest {
         service.updateInvitationCode(validCode)
         service.confirmPairing()
 
-        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+        assertTrue(service.state.value is PcBridgeUiState.PendingRecovery)
         assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
         assertEquals(0, storage.clearCount)
+    }
+
+    @Test
+    fun `stored pending credential whose refresh fails enters pending recovery`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+        store.save(testCredentials(pendingConfirmation = true))
+        val transport = RecordingTransport("""{"status":{"state":"active"}}""").apply { failure = true }
+        val service = service(storage, transport)
+
+        service.refreshStatus()
+
+        assertTrue(service.state.value is PcBridgeUiState.PendingRecovery)
+    }
+
+    @Test
+    fun `abandon pending pairing clears only local pending record without relay request`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        PcBridgeSecretStore(storage, ServiceWrappingCipher()).save(testCredentials(pendingConfirmation = true))
+        val transport = RecordingTransport("""{"status":{"state":"active"}}""")
+        val service = service(storage, transport)
+
+        service.abandonPendingPairing()
+
+        assertTrue(service.state.value is PcBridgeUiState.Unpaired)
+        assertNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+        assertEquals(1, storage.clearCount)
+        assertEquals(0, transport.callCount)
+    }
+
+    @Test
+    fun `abandon pending pairing never clears a confirmed credential`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        PcBridgeSecretStore(storage, ServiceWrappingCipher()).save(testCredentials(pendingConfirmation = false))
+        val transport = RecordingTransport("""{"status":{"state":"active"}}""")
+        val service = service(storage, transport)
+
+        service.abandonPendingPairing()
+
+        assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+        assertEquals(0, storage.clearCount)
+        assertEquals(0, transport.callCount)
+    }
+
+    @Test
+    fun `active refresh confirms a pending credential`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+        store.save(testCredentials(pendingConfirmation = true))
+        val service = service(storage, RecordingTransport("""{"status":{"state":"active"}}"""))
+
+        service.refreshStatus()
+
+        assertTrue(service.state.value is PcBridgeUiState.Paired)
+        assertFalse(store.load()!!.pendingConfirmation)
     }
 
     @Test
@@ -155,6 +210,16 @@ class PcBridgePairingServiceTest {
 
     private fun invitationCode(json: String): String =
         "DADDY-PC2:" + Base64.getUrlEncoder().withoutPadding().encodeToString(json.toByteArray())
+
+    private fun testCredentials(pendingConfirmation: Boolean) = PcBridgeCredentials(
+        endpoint = "https://project.supabase.co/functions/v1/daddy-pc-bridge",
+        bridgeId = "bridge-main",
+        phoneDeviceId = "phone-main",
+        pcDeviceId = "pc-main",
+        relayToken = "relay-token-main",
+        envelopeKey = ByteArray(32) { 7 },
+        pendingConfirmation = pendingConfirmation,
+    )
 }
 
 private class ServiceRecordStorage(

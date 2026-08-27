@@ -28,4 +28,16 @@ class PcBridgeUiPolicyTest {
         assertFalse(policy.flattenText().contains("/private/computer/path"))
         assertFalse(policy.flattenText().contains("ciphertext=abc"))
     }
+
+    @Test
+    fun `only pending recovery offers local abandon action`() {
+        val pending = PcBridgeUiPolicy.from(PcBridgeUiState.PendingRecovery)
+
+        assertEquals("放弃本机待恢复配对", pending.dangerAction)
+        assertEquals("刷新状态", pending.primaryAction)
+        assertEquals(null, PcBridgeUiPolicy.from(PcBridgeUiState.Unavailable("offline")).dangerAction)
+        assertFalse(
+            PcBridgeUiPolicy.from(PcBridgeUiState.Paired("电脑", "已连接", 1L)).dangerAction == "放弃本机待恢复配对",
+        )
+    }
 }
