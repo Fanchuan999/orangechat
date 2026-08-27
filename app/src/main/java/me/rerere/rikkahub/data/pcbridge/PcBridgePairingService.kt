@@ -29,8 +29,7 @@ class PcBridgePairingService(
     private val mutableState = MutableStateFlow<PcBridgeUiState>(PcBridgeUiState.Unpaired)
     override val state: StateFlow<PcBridgeUiState> = mutableState.asStateFlow()
     private var invitationCode: String? = null
-    private val recoveryOperationMutex = Mutex()
-    private var recoveryOperationGeneration = 0L
+    private val pairingOperationMutex = Mutex()
 
     override fun updateInvitationCode(value: String) {
         invitationCode = value.takeIf { it.isNotBlank() }
@@ -51,16 +50,17 @@ class PcBridgePairingService(
         )
     }
 
-    override suspend fun confirmPairing() {
-        val code = invitationCode ?: run {
+    override suspend fun confirmPairing() = pairingOperationMutex.withLock {
+        val code = invitationCode
+        if (code == null) {
             mutableState.value = PcBridgeUiState.Unavailable("请先粘贴电脑邀请码。")
-            return
+            return@withLock
         }
         val invitation = try {
             PcBridgeInvitationCodec.decode(code, nowMillis())
         } catch (_: Exception) {
             mutableState.value = PcBridgeUiState.InvitationDraft(null, "邀请码无效或已过期。")
-            return
+            return@withLock
         }
         mutableState.value = PcBridgeUiState.Pairing
         var envelopeKey: ByteArray? = null
@@ -117,53 +117,34 @@ class PcBridgePairingService(
         }
     }
 
-    override suspend fun refreshStatus() {
-        val snapshot = recoveryOperationMutex.withLock {
-            secretStore.load()?.let { credentials -> credentials to recoveryOperationGeneration }
-        } ?: run {
+    override suspend fun refreshStatus() = pairingOperationMutex.withLock {
+        val credentials = secretStore.load()
+        if (credentials == null) {
             mutableState.value = PcBridgeUiState.Unpaired
-            return
+            return@withLock
         }
-        val (credentials, operationGeneration) = snapshot
         try {
             val relayState = relayClient.refreshStatus(credentials)
-            recoveryOperationMutex.withLock {
-                if (operationGeneration != recoveryOperationGeneration) return@withLock
-                when (relayState) {
-                    "active" -> {
-                        if (credentials.pendingConfirmation) {
-                            try {
-                                secretStore.save(credentials.copy(pendingConfirmation = false))
-                            } catch (error: CancellationException) {
-                                throw error
-                            } catch (_: Exception) {
-                                // The active relay is authoritative. A later refresh will retry persisting confirmation.
-                            }
-                        }
-                        recoveryOperationGeneration += 1
-                        mutableState.value = pairedState(credentials.pcDeviceId, "中继已连接")
-                    }
-
-                    "revoked" -> {
-                        secretStore.clear()
-                        recoveryOperationGeneration += 1
-                        mutableState.value = PcBridgeUiState.Unpaired
-                    }
-
-                    else -> {
-                        mutableState.value = if (credentials.pendingConfirmation) {
-                            PcBridgeUiState.PendingRecovery
-                        } else {
-                            PcBridgeUiState.Unavailable("无法刷新电脑状态，请重试。")
+            when (relayState) {
+                "active" -> {
+                    if (credentials.pendingConfirmation) {
+                        try {
+                            secretStore.save(credentials.copy(pendingConfirmation = false))
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: Exception) {
+                            // The active relay is authoritative. A later refresh will retry persisting confirmation.
                         }
                     }
+                    mutableState.value = pairedState(credentials.pcDeviceId, "中继已连接")
                 }
-            }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            recoveryOperationMutex.withLock {
-                if (operationGeneration == recoveryOperationGeneration) {
+
+                "revoked" -> {
+                    secretStore.clear()
+                    mutableState.value = PcBridgeUiState.Unpaired
+                }
+
+                else -> {
                     mutableState.value = if (credentials.pendingConfirmation) {
                         PcBridgeUiState.PendingRecovery
                     } else {
@@ -171,15 +152,24 @@ class PcBridgePairingService(
                     }
                 }
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            mutableState.value = if (credentials.pendingConfirmation) {
+                PcBridgeUiState.PendingRecovery
+            } else {
+                PcBridgeUiState.Unavailable("无法刷新电脑状态，请重试。")
+            }
         } finally {
             credentials.envelopeKey.fill(0)
         }
     }
 
-    override suspend fun unlink() {
-        val credentials = secretStore.load() ?: run {
+    override suspend fun unlink() = pairingOperationMutex.withLock {
+        val credentials = secretStore.load()
+        if (credentials == null) {
             mutableState.value = PcBridgeUiState.Unpaired
-            return
+            return@withLock
         }
         try {
             if (relayClient.revokeBridge(credentials)) {
@@ -197,20 +187,18 @@ class PcBridgePairingService(
         }
     }
 
-    override suspend fun abandonPendingPairing() {
-        recoveryOperationMutex.withLock {
-            recoveryOperationGeneration += 1
-            val credentials = secretStore.load() ?: run {
-                mutableState.value = PcBridgeUiState.Unpaired
-                return@withLock
-            }
-            try {
-                if (!credentials.pendingConfirmation) return@withLock
-                secretStore.clear()
-                mutableState.value = PcBridgeUiState.Unpaired
-            } finally {
-                credentials.envelopeKey.fill(0)
-            }
+    override suspend fun abandonPendingPairing() = pairingOperationMutex.withLock {
+        val credentials = secretStore.load()
+        if (credentials == null) {
+            mutableState.value = PcBridgeUiState.Unpaired
+            return@withLock
+        }
+        try {
+            if (!credentials.pendingConfirmation) return@withLock
+            secretStore.clear()
+            mutableState.value = PcBridgeUiState.Unpaired
+        } finally {
+            credentials.envelopeKey.fill(0)
         }
     }
 

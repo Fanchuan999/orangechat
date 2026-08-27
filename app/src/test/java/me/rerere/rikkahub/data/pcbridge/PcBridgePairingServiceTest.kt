@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.pcbridge
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl
@@ -163,7 +164,7 @@ class PcBridgePairingServiceTest {
     }
 
     @Test
-    fun `abandon wins over an in flight refresh without restoring local pairing`() = runBlocking {
+    fun `abandon queued after an active refresh cannot clear confirmed pairing`() = runBlocking {
         val storage = ServiceRecordStorage()
         val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
         store.save(testCredentials(pendingConfirmation = true))
@@ -172,19 +173,20 @@ class PcBridgePairingServiceTest {
 
         val refresh = async { service.refreshStatus() }
         transport.started.await()
-        service.abandonPendingPairing()
+        val abandon = async { service.abandonPendingPairing() }
         transport.release.complete(Unit)
         refresh.await()
+        abandon.await()
 
-        assertTrue(service.state.value is PcBridgeUiState.Unpaired)
-        assertNull(store.load())
-        assertEquals(1, storage.clearCount)
-        assertEquals(1, storage.writeCount)
-        assertEquals(null, PcBridgeUiPolicy.from(service.state.value).dangerAction)
+        assertTrue(service.state.value is PcBridgeUiState.Paired)
+        assertFalse(store.load()!!.pendingConfirmation)
+        assertEquals(0, storage.clearCount)
+        assertEquals(2, storage.writeCount)
+        assertFalse(PcBridgeUiPolicy.from(service.state.value).dangerAction == "放弃本机待恢复配对")
     }
 
     @Test
-    fun `older pending refresh cannot overwrite a newer active refresh`() = runBlocking {
+    fun `later unknown refresh makes a confirmed pairing unavailable`() = runBlocking {
         val storage = ServiceRecordStorage()
         val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
         store.save(testCredentials(pendingConfirmation = true))
@@ -198,16 +200,43 @@ class PcBridgePairingServiceTest {
 
         val firstRefresh = async { service.refreshStatus() }
         transport.started[0].await()
-        val secondRefresh = async { service.refreshStatus() }
-        transport.started[1].await()
+        val secondRefresh = async(start = CoroutineStart.UNDISPATCHED) { service.refreshStatus() }
         transport.release[0].complete(Unit)
         firstRefresh.await()
+        transport.started[1].await()
         transport.release[1].complete(Unit)
         secondRefresh.await()
 
-        assertTrue(service.state.value is PcBridgeUiState.Paired)
+        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
         assertFalse(store.load()!!.pendingConfirmation)
         assertFalse(PcBridgeUiPolicy.from(service.state.value).dangerAction == "放弃本机待恢复配对")
+    }
+
+    @Test
+    fun `later revoked refresh clears pairing after an earlier active refresh`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+        store.save(testCredentials(pendingConfirmation = true))
+        val transport = OrderedDelayedTransport(
+            responses = listOf(
+                """{"status":{"state":"active"}}""",
+                """{"status":{"state":"revoked"}}""",
+            ),
+        )
+        val service = service(storage, transport)
+
+        val firstRefresh = async { service.refreshStatus() }
+        transport.started[0].await()
+        val secondRefresh = async(start = CoroutineStart.UNDISPATCHED) { service.refreshStatus() }
+        transport.release[0].complete(Unit)
+        transport.release[1].complete(Unit)
+        firstRefresh.await()
+        secondRefresh.await()
+
+        assertTrue(service.state.value is PcBridgeUiState.Unpaired)
+        assertNull(store.load())
+        assertEquals(1, storage.clearCount)
+        assertEquals(null, PcBridgeUiPolicy.from(service.state.value).dangerAction)
     }
 
     @Test

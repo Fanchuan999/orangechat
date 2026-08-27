@@ -27,7 +27,9 @@ It failed as expected at `:app:compileDebugUnitTestKotlin` because `PendingRecov
 
 ```powershell
 $env:GRADLE_USER_HOME='D:\Daddy-Gradle'
-& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' --console=plain --quiet :app:testDebugUnitTest --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgePairingServiceTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgeSecretStoreTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgeUiPolicyTest' --tests 'me.rerere.rikkahub.ui.pages.codehut.CodeHutVMActionSafetyTest' :app:compileDebugAndroidTestKotlin
+& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' --console=plain :app:testDebugUnitTest --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgePairingServiceTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgeSecretStoreTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgeUiPolicyTest' --tests 'me.rerere.rikkahub.ui.pages.codehut.CodeHutVMActionSafetyTest'
+
+& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' --console=plain :app:compileDebugAndroidTestKotlin
 ```
 
 Result: `BUILD SUCCESSFUL` (quiet Gradle output). The XML reports show 24 focused JVM tests total, all with `failures="0"` and `errors="0"`:
@@ -100,3 +102,32 @@ $env:GRADLE_USER_HOME='D:\Daddy-Gradle'
 ```
 
 Result: successful, 29 focused JVM tests with zero failures or errors (17 service, 3 secret-store, 4 policy, 5 VM). Android test sources also compiled successfully.
+
+## Review hardening — serialized pairing operations
+
+### Added behavior
+
+Replaced refresh-result generation invalidation with one coroutine `Mutex` spanning each persistent pairing operation: confirm, refresh, unlink, and local abandon. The lock is suspendable, so it does not block the UI thread, and cancellation releases it. A later refresh therefore observes the record left by an earlier authoritative refresh instead of acting on a stale pending snapshot.
+
+### RED evidence
+
+Before serialization, two deterministic regressions failed:
+
+- An abandon queued while an active refresh was in flight cleared the local record even though the earlier operation had already confirmed it.
+- An active reply followed by a later revoked reply left the pair connected because the generation-based guard discarded the revoked result.
+
+```powershell
+$env:GRADLE_USER_HOME='D:\Daddy-Gradle'
+& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' --console=plain :app:testDebugUnitTest --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgePairingServiceTest'
+```
+
+Result: 18 service tests ran; the two regressions failed at lines 167 and 216 before the production refactor.
+
+### GREEN evidence
+
+```powershell
+$env:GRADLE_USER_HOME='D:\Daddy-Gradle'
+& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' --console=plain --quiet :app:testDebugUnitTest --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgePairingServiceTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgeSecretStoreTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgeUiPolicyTest' --tests 'me.rerere.rikkahub.ui.pages.codehut.CodeHutVMActionSafetyTest' :app:compileDebugAndroidTestKotlin
+```
+
+Result: both commands succeeded. The focused JVM suite had 30 tests with zero failures or errors (18 service, 3 secret-store, 4 policy, 5 VM), and Android test sources compiled successfully. The initial combined invocation was blocked by a separately held Gradle output JAR; no cache was changed, and the two commands above were rerun after the lock cleared.
