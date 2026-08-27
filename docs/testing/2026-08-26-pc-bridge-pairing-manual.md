@@ -18,12 +18,13 @@
 3. 在 Supabase 中，将 `daddy-pc-bridge` Edge Function 替换为已审阅的 `dashboard-index.ts` 部署版本。
    - 将该函数的 **legacy JWT verification** 设为关闭。
    - 这里关闭的是 Supabase 的旧 JWT 门槛；真正的安全门仍是 Bridge 的自定义 relay proof（时间戳、一次性 nonce、请求体摘要与 HMAC），不要把它改成匿名开放接口。
-4. 在 Windows 电脑上，使用 Node 24+ 的 `daddy-pc-bridge` 命令按如下顺序初始化：
+4. 在 Windows 电脑上，使用 Node 24+ 直接运行已审阅工件中的 TypeScript CLI，按如下顺序初始化：
 
-   ```text
-   daddy-pc-bridge prepare
-   daddy-pc-bridge configure-relay https://<你的项目>.supabase.co/functions/v1/daddy-pc-bridge
-   daddy-pc-bridge pair-pc
+   ```powershell
+   $BridgeCli = 'D:\small progect\ai_chat\orangechat-minimal\.worktrees\daddy-pc-bridge-core\tools\daddy-pc-bridge\src\cli\main.ts'
+   node --experimental-strip-types $BridgeCli prepare
+   node --experimental-strip-types $BridgeCli configure-relay https://<你的项目>.supabase.co/functions/v1/daddy-pc-bridge
+   node --experimental-strip-types $BridgeCli pair-pc
    ```
 
    - `prepare` 只创建默认 D 盘 Bridge 布局；`configure-relay` 只保存公开 HTTPS 端点；`pair-pc` 才会打开临时配对。
@@ -58,9 +59,13 @@
 
 这通常只会出现在手机已安全保存临时配对资料、但等待 `pairJoin` 回包时网络中断的少见情况。先点“刷新状态”；如果电脑端确认没有完成配对，可以点“放弃本机待恢复配对”并在二次确认后重新生成邀请码。该操作**只删除手机本地加密记录**，不会联系 PC 或 Supabase；极少数“服务器已配对但回包丢失”的情况会留下旧 PC 端配对，之后从固定 PC 工作台清理即可。
 
+### 手机上显示“配对状态未确认”
+
+这表示手机保存的是已确认的本机配对，但刷新或解除配对没有得到可验证结果。先点“刷新状态”。若确定要重新连接，可以点“忘记本机电脑配对”，再在二次确认中继续；该操作**只清除手机本地加密记录**，不会联系电脑、Supabase 或任何模型。远端配对可能仍存在，重新配对前请先在固定 PC 工作台清理。
+
 ### 粘贴后提示邀请码无效、已过期或已使用
 
-不要反复粘贴旧码。回到 PC 重新运行 `daddy-pc-bridge pair-pc`，只使用新产生的一条 `DADDY-PC2:`。请在五分钟内完成手机确认。
+不要反复粘贴旧码。回到 PC 重新运行 `node --experimental-strip-types $BridgeCli pair-pc`，只使用新产生的一条 `DADDY-PC2:`。请在五分钟内完成手机确认。
 
 ### PC 已运行，但手机始终无法配对
 

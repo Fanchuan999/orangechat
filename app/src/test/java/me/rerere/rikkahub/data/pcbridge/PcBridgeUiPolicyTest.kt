@@ -30,14 +30,27 @@ class PcBridgeUiPolicyTest {
     }
 
     @Test
-    fun `only pending recovery offers local abandon action`() {
+    fun `each recovery state offers only its explicit local recovery action`() {
         val pending = PcBridgeUiPolicy.from(PcBridgeUiState.PendingRecovery)
+        val confirmed = PcBridgeUiPolicy.from(PcBridgeUiState.ConfirmedRecovery)
 
         assertEquals("放弃本机待恢复配对", pending.dangerAction)
+        assertEquals(PcBridgeLocalRecoveryAction.AbandonPendingPairing, pending.localRecoveryAction)
         assertEquals("刷新状态", pending.primaryAction)
+        assertEquals("忘记本机电脑配对", confirmed.dangerAction)
+        assertEquals(PcBridgeLocalRecoveryAction.ForgetUnavailableConfirmedPairing, confirmed.localRecoveryAction)
+        assertFalse(confirmed.flattenText().contains("relay-secret"))
         assertEquals(null, PcBridgeUiPolicy.from(PcBridgeUiState.Unavailable("offline")).dangerAction)
+        assertEquals(null, PcBridgeUiPolicy.from(PcBridgeUiState.Unavailable("offline")).localRecoveryAction)
+        assertEquals(null, PcBridgeUiPolicy.from(PcBridgeUiState.Unpaired).localRecoveryAction)
+        assertEquals(
+            null,
+            PcBridgeUiPolicy.from(PcBridgeUiState.InvitationDraft(null, "邀请码无效或已过期。")).localRecoveryAction,
+        )
+        assertEquals(null, PcBridgeUiPolicy.from(PcBridgeUiState.Pairing).localRecoveryAction)
         assertFalse(
             PcBridgeUiPolicy.from(PcBridgeUiState.Paired("电脑", "已连接", 1L)).dangerAction == "放弃本机待恢复配对",
         )
+        assertEquals(null, PcBridgeUiPolicy.from(PcBridgeUiState.Paired("电脑", "已连接", 1L)).localRecoveryAction)
     }
 }

@@ -6,12 +6,18 @@ package me.rerere.rikkahub.data.pcbridge
  * Do not use values carried by [PcBridgeUiState] here. Those values originate outside the UI
  * boundary and may contain credentials or other private machine data.
  */
+enum class PcBridgeLocalRecoveryAction {
+    AbandonPendingPairing,
+    ForgetUnavailableConfirmedPairing,
+}
+
 data class PcBridgeUiPolicy(
     val title: String,
     val status: String,
     val detail: String,
     val primaryAction: String?,
     val dangerAction: String?,
+    val localRecoveryAction: PcBridgeLocalRecoveryAction? = null,
 ) {
     fun flattenText(): String = listOfNotNull(title, status, detail, primaryAction, dangerAction).joinToString("\n")
 
@@ -55,6 +61,17 @@ data class PcBridgeUiPolicy(
                 detail = "可先刷新状态；若电脑端确认未配对，可只清理本机待恢复配对后重新连接。",
                 primaryAction = "刷新状态",
                 dangerAction = "放弃本机待恢复配对",
+                localRecoveryAction = PcBridgeLocalRecoveryAction.AbandonPendingPairing,
+            )
+
+            PcBridgeUiState.ConfirmedRecovery -> PcBridgeUiPolicy(
+                title = "电脑命令",
+                status = "配对状态未确认",
+                detail = "可先刷新状态；若要重新连接，可忘记本机电脑配对。远端配对可能仍存在，" +
+                    "请先在固定 PC 工作台清理。",
+                primaryAction = "刷新状态",
+                dangerAction = "忘记本机电脑配对",
+                localRecoveryAction = PcBridgeLocalRecoveryAction.ForgetUnavailableConfirmedPairing,
             )
 
             is PcBridgeUiState.Unavailable -> PcBridgeUiPolicy(

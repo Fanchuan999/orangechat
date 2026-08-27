@@ -82,6 +82,36 @@ class CodeHutVMActionSafetyTest {
         }
     }
 
+    @Test
+    fun `confirmed local forget delegates only to the explicit confirmed recovery action`() {
+        val actions = ConfirmedRecoveryPcActions()
+        val vm = testVm(actions)
+        val refreshCountBeforeForget = actions.refreshCount
+
+        vm.forgetUnavailableConfirmedPcBridge()
+
+        assertEquals(1, actions.forgetCount)
+        assertEquals(refreshCountBeforeForget, actions.refreshCount)
+        assertTrue(vm.state.value.pcBridge is PcBridgeUiState.Unpaired)
+    }
+
+    @Test
+    fun `confirmed local forget is not delegated outside confirmed recovery`() {
+        listOf(
+            PcBridgeUiState.PendingRecovery,
+            PcBridgeUiState.Unavailable("offline"),
+            PcBridgeUiState.Paired("电脑 pc-test", "中继已连接", 1L),
+        ).forEach { bridgeState ->
+            val actions = StaticPcActions(bridgeState)
+            val vm = testVm(actions)
+
+            vm.forgetUnavailableConfirmedPcBridge()
+
+            assertEquals(0, actions.forgetCount)
+            assertEquals(bridgeState, vm.state.value.pcBridge)
+        }
+    }
+
     private fun testVm(actions: PcBridgeUiActions) = CodeHutVM(
         initialHarnessSnapshot = HarnessSnapshot(),
         harnessSnapshots = emptyFlow(),
@@ -111,6 +141,7 @@ class CodeHutVMActionSafetyTest {
         }
         override suspend fun unlink() = error("token=relay-secret")
         override suspend fun abandonPendingPairing() = error("token=relay-secret")
+        override suspend fun forgetUnavailableConfirmedPairing() = error("token=relay-secret")
     }
 
     private class StartupPcActions : PcBridgeUiActions {
@@ -130,6 +161,7 @@ class CodeHutVMActionSafetyTest {
         }
         override suspend fun unlink() = Unit
         override suspend fun abandonPendingPairing() = Unit
+        override suspend fun forgetUnavailableConfirmedPairing() = Unit
     }
 
     private class PendingRecoveryPcActions : PcBridgeUiActions {
@@ -149,11 +181,34 @@ class CodeHutVMActionSafetyTest {
             abandonCount += 1
             state.value = PcBridgeUiState.Unpaired
         }
+        override suspend fun forgetUnavailableConfirmedPairing() = Unit
+    }
+
+    private class ConfirmedRecoveryPcActions : PcBridgeUiActions {
+        override val state = MutableStateFlow<PcBridgeUiState>(PcBridgeUiState.ConfirmedRecovery)
+        var forgetCount = 0
+            private set
+        var refreshCount = 0
+            private set
+
+        override fun updateInvitationCode(value: String) = Unit
+        override suspend fun confirmPairing() = Unit
+        override suspend fun refreshStatus() {
+            refreshCount += 1
+        }
+        override suspend fun unlink() = Unit
+        override suspend fun abandonPendingPairing() = Unit
+        override suspend fun forgetUnavailableConfirmedPairing() {
+            forgetCount += 1
+            state.value = PcBridgeUiState.Unpaired
+        }
     }
 
     private class StaticPcActions(initialState: PcBridgeUiState) : PcBridgeUiActions {
         override val state = MutableStateFlow(initialState)
         var abandonCount = 0
+            private set
+        var forgetCount = 0
             private set
 
         override fun updateInvitationCode(value: String) = Unit
@@ -162,6 +217,9 @@ class CodeHutVMActionSafetyTest {
         override suspend fun unlink() = Unit
         override suspend fun abandonPendingPairing() {
             abandonCount += 1
+        }
+        override suspend fun forgetUnavailableConfirmedPairing() {
+            forgetCount += 1
         }
     }
 }

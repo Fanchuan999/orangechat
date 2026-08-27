@@ -9,4 +9,5 @@ interface PcBridgeUiActions {
     suspend fun refreshStatus()
     suspend fun unlink()
     suspend fun abandonPendingPairing()
+    suspend fun forgetUnavailableConfirmedPairing()
 }

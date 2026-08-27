@@ -17,6 +17,7 @@ sealed interface PcBridgeUiState {
         val refreshedAtEpochMillis: Long,
     ) : PcBridgeUiState
     data object PendingRecovery : PcBridgeUiState
+    data object ConfirmedRecovery : PcBridgeUiState
     data class Unavailable(val message: String) : PcBridgeUiState
 }
 
@@ -145,21 +146,13 @@ class PcBridgePairingService(
                 }
 
                 else -> {
-                    mutableState.value = if (credentials.pendingConfirmation) {
-                        PcBridgeUiState.PendingRecovery
-                    } else {
-                        PcBridgeUiState.Unavailable("无法刷新电脑状态，请重试。")
-                    }
+                    mutableState.value = unavailableRecoveryState(credentials)
                 }
             }
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            mutableState.value = if (credentials.pendingConfirmation) {
-                PcBridgeUiState.PendingRecovery
-            } else {
-                PcBridgeUiState.Unavailable("无法刷新电脑状态，请重试。")
-            }
+            mutableState.value = unavailableRecoveryState(credentials)
         } finally {
             credentials.envelopeKey.fill(0)
         }
@@ -176,12 +169,12 @@ class PcBridgePairingService(
                 secretStore.clear()
                 mutableState.value = PcBridgeUiState.Unpaired
             } else {
-                mutableState.value = PcBridgeUiState.Unavailable("无法解除电脑配对，请重试。")
+                mutableState.value = unavailableRecoveryState(credentials)
             }
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            mutableState.value = PcBridgeUiState.Unavailable("无法解除电脑配对，请重试。")
+            mutableState.value = unavailableRecoveryState(credentials)
         } finally {
             credentials.envelopeKey.fill(0)
         }
@@ -201,6 +194,31 @@ class PcBridgePairingService(
             credentials.envelopeKey.fill(0)
         }
     }
+
+    override suspend fun forgetUnavailableConfirmedPairing() = pairingOperationMutex.withLock {
+        val credentials = secretStore.load()
+        if (credentials == null) {
+            mutableState.value = PcBridgeUiState.Unpaired
+            return@withLock
+        }
+        try {
+            if (credentials.pendingConfirmation) {
+                mutableState.value = PcBridgeUiState.PendingRecovery
+                return@withLock
+            }
+            secretStore.clear()
+            mutableState.value = PcBridgeUiState.Unpaired
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            mutableState.value = PcBridgeUiState.ConfirmedRecovery
+        } finally {
+            credentials.envelopeKey.fill(0)
+        }
+    }
+
+    private fun unavailableRecoveryState(credentials: PcBridgeCredentials): PcBridgeUiState =
+        if (credentials.pendingConfirmation) PcBridgeUiState.PendingRecovery else PcBridgeUiState.ConfirmedRecovery
 
     private fun pairedState(pcDeviceId: String, statusText: String) = PcBridgeUiState.Paired(
         deviceLabel = "电脑 $pcDeviceId",

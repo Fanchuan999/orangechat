@@ -38,6 +38,7 @@ class PcBridgeCardInstrumentedTest {
                     onRefresh = {},
                     onUnlink = {},
                     onAbandonPendingPairing = {},
+                    onForgetUnavailableConfirmedPairing = {},
                 )
             }
         }
@@ -66,6 +67,7 @@ class PcBridgeCardInstrumentedTest {
                     onRefresh = {},
                     onUnlink = { unlinkCalls++ },
                     onAbandonPendingPairing = {},
+                    onForgetUnavailableConfirmedPairing = {},
                 )
             }
         }
@@ -93,6 +95,7 @@ class PcBridgeCardInstrumentedTest {
                     onRefresh = {},
                     onUnlink = {},
                     onAbandonPendingPairing = { abandonCalls++ },
+                    onForgetUnavailableConfirmedPairing = {},
                 )
             }
         }
@@ -105,5 +108,37 @@ class PcBridgeCardInstrumentedTest {
         assertEquals(1, abandonCalls)
         composeRule.runOnIdle { bridgeState = PcBridgeUiState.Unpaired }
         assertTrue(composeRule.onAllNodesWithText("确认放弃本机配对").fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
+    fun forgettingConfirmedRecoveryRequiresExplicitConfirmationWithoutSecrets() {
+        var bridgeState by mutableStateOf<PcBridgeUiState>(PcBridgeUiState.ConfirmedRecovery)
+        var forgetCalls = 0
+
+        composeRule.setContent {
+            MaterialTheme {
+                PcBridgeCard(
+                    state = bridgeState,
+                    policy = PcBridgeUiPolicy.from(bridgeState),
+                    onInvitationChange = {},
+                    onConfirmPairing = {},
+                    onRefresh = {},
+                    onUnlink = {},
+                    onAbandonPendingPairing = {},
+                    onForgetUnavailableConfirmedPairing = { forgetCalls++ },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("忘记本机电脑配对").performClick()
+        composeRule.onNodeWithText("确认忘记本机配对").assertExists()
+        composeRule.onNodeWithText("固定 PC 工作台", substring = true).assertExists()
+        assertTrue(composeRule.onAllNodesWithText("relay-secret", substring = true).fetchSemanticsNodes().isEmpty())
+        assertEquals(0, forgetCalls)
+        composeRule.onNodeWithText("确认忘记本机配对").performClick()
+
+        assertEquals(1, forgetCalls)
+        composeRule.runOnIdle { bridgeState = PcBridgeUiState.Unpaired }
+        assertTrue(composeRule.onAllNodesWithText("确认忘记本机配对").fetchSemanticsNodes().isEmpty())
     }
 }

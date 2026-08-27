@@ -92,6 +92,50 @@ class PcBridgePairingServiceTest {
     }
 
     @Test
+    fun `failed refresh of a confirmed credential offers only confirmed local forget recovery`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+        store.save(testCredentials(pendingConfirmation = false))
+        val service = service(storage, RecordingTransport("""{"status":{"state":"active"}}""").apply { failure = true })
+
+        service.refreshStatus()
+
+        assertEquals("忘记本机电脑配对", PcBridgeUiPolicy.from(service.state.value).dangerAction)
+        assertFalse(store.load()!!.pendingConfirmation)
+    }
+
+    @Test
+    fun `failed unlink of a confirmed credential offers only confirmed local forget recovery`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+        store.save(testCredentials(pendingConfirmation = false))
+        val service = service(storage, RecordingTransport("""{"revoked":true}""").apply { failure = true })
+
+        service.unlink()
+
+        assertEquals("忘记本机电脑配对", PcBridgeUiPolicy.from(service.state.value).dangerAction)
+        assertFalse(store.load()!!.pendingConfirmation)
+    }
+
+    @Test
+    fun `pending and absent credentials never offer confirmed local forget recovery`() = runBlocking {
+        val pendingStorage = ServiceRecordStorage()
+        val pendingStore = PcBridgeSecretStore(pendingStorage, ServiceWrappingCipher())
+        pendingStore.save(testCredentials(pendingConfirmation = true))
+        val pendingService = service(
+            pendingStorage,
+            RecordingTransport("""{"status":{"state":"active"}}""").apply { failure = true },
+        )
+        val absentService = service(ServiceRecordStorage(), RecordingTransport("""{"status":{"state":"active"}}"""))
+
+        pendingService.refreshStatus()
+        absentService.refreshStatus()
+
+        assertEquals("放弃本机待恢复配对", PcBridgeUiPolicy.from(pendingService.state.value).dangerAction)
+        assertEquals(null, PcBridgeUiPolicy.from(absentService.state.value).dangerAction)
+    }
+
+    @Test
     fun `abandon pending pairing clears only local pending record without relay request`() = runBlocking {
         val storage = ServiceRecordStorage()
         PcBridgeSecretStore(storage, ServiceWrappingCipher()).save(testCredentials(pendingConfirmation = true))
@@ -116,6 +160,38 @@ class PcBridgePairingServiceTest {
         service.abandonPendingPairing()
 
         assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+        assertEquals(0, storage.clearCount)
+        assertEquals(0, transport.callCount)
+    }
+
+    @Test
+    fun `confirmed local forget clears only the local confirmed record without relay request`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        PcBridgeSecretStore(storage, ServiceWrappingCipher()).save(testCredentials(pendingConfirmation = false))
+        val transport = RecordingTransport("""{"status":{"state":"active"}}""")
+        val service = service(storage, transport)
+
+        service.forgetUnavailableConfirmedPairing()
+
+        assertTrue(service.state.value is PcBridgeUiState.Unpaired)
+        assertNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
+        assertEquals(1, storage.clearCount)
+        assertEquals(0, transport.callCount)
+    }
+
+    @Test
+    fun `confirmed local forget preserves a record that changed to pending`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+        store.save(testCredentials(pendingConfirmation = false))
+        val transport = RecordingTransport("""{"status":{"state":"active"}}""")
+        val service = service(storage, transport)
+        store.save(testCredentials(pendingConfirmation = true))
+
+        service.forgetUnavailableConfirmedPairing()
+
+        assertTrue(service.state.value is PcBridgeUiState.PendingRecovery)
+        assertTrue(store.load()!!.pendingConfirmation)
         assertEquals(0, storage.clearCount)
         assertEquals(0, transport.callCount)
     }
@@ -149,7 +225,7 @@ class PcBridgePairingServiceTest {
     }
 
     @Test
-    fun `confirmed refresh rejects missing and unknown relay states`() = runBlocking {
+    fun `confirmed refresh turns missing and unknown relay states into confirmed recovery`() = runBlocking {
         listOf("""{"status":{}}""", """{"status":{"state":"unknown"}}""").forEach { response ->
             val storage = ServiceRecordStorage()
             val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
@@ -158,7 +234,7 @@ class PcBridgePairingServiceTest {
 
             service.refreshStatus()
 
-            assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+            assertTrue(service.state.value is PcBridgeUiState.ConfirmedRecovery)
             assertFalse(store.load()!!.pendingConfirmation)
         }
     }
@@ -186,7 +262,7 @@ class PcBridgePairingServiceTest {
     }
 
     @Test
-    fun `later unknown refresh makes a confirmed pairing unavailable`() = runBlocking {
+    fun `later unknown refresh makes a confirmed pairing recoverable`() = runBlocking {
         val storage = ServiceRecordStorage()
         val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
         store.save(testCredentials(pendingConfirmation = true))
@@ -207,7 +283,7 @@ class PcBridgePairingServiceTest {
         transport.release[1].complete(Unit)
         secondRefresh.await()
 
-        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+        assertTrue(service.state.value is PcBridgeUiState.ConfirmedRecovery)
         assertFalse(store.load()!!.pendingConfirmation)
         assertFalse(PcBridgeUiPolicy.from(service.state.value).dangerAction == "放弃本机待恢复配对")
     }
@@ -275,7 +351,7 @@ class PcBridgePairingServiceTest {
         service.unlink()
 
         assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
-        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+        assertTrue(service.state.value is PcBridgeUiState.ConfirmedRecovery)
     }
 
     @Test
@@ -290,7 +366,7 @@ class PcBridgePairingServiceTest {
         service.unlink()
 
         assertNotNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
-        assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+        assertTrue(service.state.value is PcBridgeUiState.ConfirmedRecovery)
     }
 
     @Test
