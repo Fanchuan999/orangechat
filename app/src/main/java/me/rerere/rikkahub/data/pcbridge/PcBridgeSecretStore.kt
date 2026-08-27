@@ -212,7 +212,7 @@ private data class PcBridgePrivateRecord(
 )
 
 @Serializable
-private data class PcBridgeStoredRecord(
+internal data class PcBridgeStoredRecord(
     val version: Int,
     val endpoint: String,
     val bridgeId: String,

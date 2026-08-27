@@ -66,6 +66,22 @@ class CodeHutVMActionSafetyTest {
         assertTrue(vm.state.value.pcBridge is PcBridgeUiState.Unpaired)
     }
 
+    @Test
+    fun `abandon pairing is not delegated outside pending recovery`() {
+        listOf(
+            PcBridgeUiState.Unavailable("offline"),
+            PcBridgeUiState.Paired("电脑 pc-test", "中继已连接", 1L),
+        ).forEach { bridgeState ->
+            val actions = StaticPcActions(bridgeState)
+            val vm = testVm(actions)
+
+            vm.abandonPendingPcBridge()
+
+            assertEquals(0, actions.abandonCount)
+            assertEquals(bridgeState, vm.state.value.pcBridge)
+        }
+    }
+
     private fun testVm(actions: PcBridgeUiActions) = CodeHutVM(
         initialHarnessSnapshot = HarnessSnapshot(),
         harnessSnapshots = emptyFlow(),
@@ -132,6 +148,20 @@ class CodeHutVMActionSafetyTest {
         override suspend fun abandonPendingPairing() {
             abandonCount += 1
             state.value = PcBridgeUiState.Unpaired
+        }
+    }
+
+    private class StaticPcActions(initialState: PcBridgeUiState) : PcBridgeUiActions {
+        override val state = MutableStateFlow(initialState)
+        var abandonCount = 0
+            private set
+
+        override fun updateInvitationCode(value: String) = Unit
+        override suspend fun confirmPairing() = Unit
+        override suspend fun refreshStatus() = Unit
+        override suspend fun unlink() = Unit
+        override suspend fun abandonPendingPairing() {
+            abandonCount += 1
         }
     }
 }

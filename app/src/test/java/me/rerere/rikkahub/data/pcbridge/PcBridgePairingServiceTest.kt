@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.data.pcbridge
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl
 import org.junit.Assert.assertEquals
@@ -131,6 +133,57 @@ class PcBridgePairingServiceTest {
     }
 
     @Test
+    fun `pending refresh accepts only active relay state`() = runBlocking {
+        listOf("""{"status":{}}""", """{"status":{"state":"unknown"}}""").forEach { response ->
+            val storage = ServiceRecordStorage()
+            val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+            store.save(testCredentials(pendingConfirmation = true))
+            val service = service(storage, RecordingTransport(response))
+
+            service.refreshStatus()
+
+            assertTrue(service.state.value is PcBridgeUiState.PendingRecovery)
+            assertTrue(store.load()!!.pendingConfirmation)
+        }
+    }
+
+    @Test
+    fun `confirmed refresh rejects missing and unknown relay states`() = runBlocking {
+        listOf("""{"status":{}}""", """{"status":{"state":"unknown"}}""").forEach { response ->
+            val storage = ServiceRecordStorage()
+            val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+            store.save(testCredentials(pendingConfirmation = false))
+            val service = service(storage, RecordingTransport(response))
+
+            service.refreshStatus()
+
+            assertTrue(service.state.value is PcBridgeUiState.Unavailable)
+            assertFalse(store.load()!!.pendingConfirmation)
+        }
+    }
+
+    @Test
+    fun `abandon wins over an in flight refresh without restoring local pairing`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+        store.save(testCredentials(pendingConfirmation = true))
+        val transport = DelayedRecordingTransport("""{"status":{"state":"active"}}""")
+        val service = service(storage, transport)
+
+        val refresh = async { service.refreshStatus() }
+        transport.started.await()
+        service.abandonPendingPairing()
+        transport.release.complete(Unit)
+        refresh.await()
+
+        assertTrue(service.state.value is PcBridgeUiState.Unpaired)
+        assertNull(store.load())
+        assertEquals(1, storage.clearCount)
+        assertEquals(1, storage.writeCount)
+        assertEquals(null, PcBridgeUiPolicy.from(service.state.value).dangerAction)
+    }
+
+    @Test
     fun `invitation state never exposes invitation or pairing secret`() {
         val service = service(ServiceRecordStorage(), RecordingTransport("""{"paired":true}"""))
 
@@ -201,7 +254,7 @@ class PcBridgePairingServiceTest {
         assertNotNull(runBlocking { PcBridgeSecretStore(storage, ServiceWrappingCipher()).load() })
     }
 
-    private fun service(storage: ServiceRecordStorage, transport: RecordingTransport) = PcBridgePairingService(
+    private fun service(storage: ServiceRecordStorage, transport: PcBridgeRelayTransport) = PcBridgePairingService(
         secretStore = PcBridgeSecretStore(storage, ServiceWrappingCipher()),
         relayClient = PcBridgeRelayClient(transport, nowMillis = { nowMillis }, nonceFactory = { "nonce-main" }),
         phoneDeviceIdFactory = { "phone-main" },
@@ -228,14 +281,30 @@ private class ServiceRecordStorage(
     private var record: PcBridgeEncryptedRecord? = null
     var clearCount = 0
         private set
+    var writeCount = 0
+        private set
     override suspend fun read() = record
     override suspend fun write(record: PcBridgeEncryptedRecord) {
         if (failWrite) error("local save failed")
+        writeCount += 1
         this.record = record
     }
     override suspend fun clear() {
         clearCount += 1
         record = null
+    }
+}
+
+private class DelayedRecordingTransport(
+    private val response: String,
+) : PcBridgeRelayTransport {
+    val started = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+
+    override suspend fun post(endpoint: HttpUrl, body: String, headers: Map<String, String>): String {
+        started.complete(Unit)
+        release.await()
+        return response
     }
 }
 
