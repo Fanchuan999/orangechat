@@ -34,6 +34,7 @@ data class CodeHutUiState(
     val activeInboxTasks: List<HarnessInboxTask> = emptyList(),
     val pcBridge: PcBridgeUiState = PcBridgeUiState.Unpaired,
     val inboxNotice: String? = null,
+    val feedback: CodeHutFeedback? = null,
     val error: String? = null,
 ) {
     val environment: CodeHutEnvironmentPresentation
@@ -45,6 +46,12 @@ data class CodeHutUiState(
     val pcBridgePolicy: PcBridgeUiPolicy
         get() = PcBridgeUiPolicy.from(pcBridge)
 }
+
+data class CodeHutFeedback(
+    val id: Long,
+    val message: String,
+    val isError: Boolean,
+)
 
 class CodeHutVM(
     initialHarnessSnapshot: HarnessSnapshot,
@@ -63,6 +70,7 @@ class CodeHutVM(
         )
     )
     val state: StateFlow<CodeHutUiState> = _state.asStateFlow()
+    private var nextFeedbackId = 0L
 
     constructor(
         harnessManager: HarnessManager,
@@ -195,14 +203,22 @@ class CodeHutVM(
         launchScope.launch {
             when (val result = sendImage(HarnessImageAttachment(mediaType.orEmpty(), bytes))) {
                 HarnessImageSendResult.Sent -> _state.value = _state.value.copy(
-                    inboxNotice = "图片已进入 Harness 收件箱队列。是否可被理解取决于当前工作模型是否支持视觉输入。",
+                    inboxNotice = "图片已进入 Harness 收件箱队列。工作台中无需再次点击上传。",
+                    feedback = nextFeedback("图片已进入 Harness 收件箱队列。", isError = false),
                     error = null,
                 )
 
                 is HarnessImageSendResult.Failure -> _state.value = _state.value.copy(
-                    error = redactCodeHutUiText(result.message),
+                    error = "图片没有进入 Harness 收件箱，请重试或到工作台查看。",
+                    feedback = nextFeedback("图片没有进入 Harness 收件箱，请重试或到工作台查看。", isError = true),
                 )
             }
+        }
+    }
+
+    fun consumeFeedback(id: Long) {
+        if (_state.value.feedback?.id == id) {
+            _state.value = _state.value.copy(feedback = null)
         }
     }
 
@@ -212,5 +228,10 @@ class CodeHutVM(
 
     private fun publishPcBridgeError(message: String) {
         _state.value = _state.value.copy(error = redactCodeHutUiText(message))
+    }
+
+    private fun nextFeedback(message: String, isError: Boolean): CodeHutFeedback {
+        nextFeedbackId += 1
+        return CodeHutFeedback(nextFeedbackId, message, isError)
     }
 }

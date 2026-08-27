@@ -43,6 +43,32 @@ class CodeHutVMActionSafetyTest {
     }
 
     @Test
+    fun `image send result is exposed as one-shot user feedback`() {
+        val vm = testVm(StaticPcActions(PcBridgeUiState.Unpaired))
+
+        vm.sendImageToInbox("image/jpeg", byteArrayOf(1, 2, 3))
+
+        val feedback = vm.state.value.feedback
+        assertEquals("图片已进入 Harness 收件箱队列。", feedback?.message)
+        vm.consumeFeedback(feedback?.id ?: error("missing feedback"))
+        assertEquals(null, vm.state.value.feedback)
+    }
+
+    @Test
+    fun `image send failure is exposed as one-shot user feedback without raw details`() {
+        val vm = testVm(
+            StaticPcActions(PcBridgeUiState.Unpaired),
+            sendImage = { HarnessImageSendResult.Failure("token=do-not-show") },
+        )
+
+        vm.sendImageToInbox("image/jpeg", byteArrayOf(1, 2, 3))
+
+        val feedback = vm.state.value.feedback
+        assertEquals("图片没有进入 Harness 收件箱，请重试或到工作台查看。", feedback?.message)
+        assertFalse(feedback?.message.orEmpty().contains("token="))
+    }
+
+    @Test
     fun `startup refresh restores persisted pairing exactly once after state collection starts`() {
         val actions = StartupPcActions()
 
@@ -112,12 +138,15 @@ class CodeHutVMActionSafetyTest {
         }
     }
 
-    private fun testVm(actions: PcBridgeUiActions) = CodeHutVM(
+    private fun testVm(
+        actions: PcBridgeUiActions,
+        sendImage: suspend (HarnessImageAttachment) -> HarnessImageSendResult = { HarnessImageSendResult.Sent },
+    ) = CodeHutVM(
         initialHarnessSnapshot = HarnessSnapshot(),
         harnessSnapshots = emptyFlow(),
         inspectHarness = {},
         loadInbox = { HarnessInboxLoadResult.Unavailable("unused") },
-        sendImage = { _: HarnessImageAttachment -> HarnessImageSendResult.Sent },
+        sendImage = sendImage,
         pairingService = actions,
         actionScope = CoroutineScope(Dispatchers.Unconfined),
         refreshInboxOnStart = false,

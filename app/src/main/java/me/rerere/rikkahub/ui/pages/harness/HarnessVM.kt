@@ -103,7 +103,7 @@ class HarnessVM(
                         approvalMode = lease.mode,
                         busyAction = null,
                         message = if (lease.mode == CodeHutApprovalMode.HELP_ME_APPROVE) {
-                            "“帮我批准”已生效 30 分钟；仅严格只读操作会连续放行。"
+                            "“帮我批准”已生效 30 分钟；普通项目读取、检索、对比和单文件编辑会连续放行。"
                         } else {
                             "代码小屋权限预设已写入工作台：普通操作也会逐次确认。"
                         },

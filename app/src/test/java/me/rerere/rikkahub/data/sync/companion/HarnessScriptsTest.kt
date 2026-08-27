@@ -343,7 +343,7 @@ class HarnessScriptsTest {
     }
 
     @Test
-    fun riskGateKeepsOnlyStrictMetadataCommandsClassifiedAsLowRisk() {
+    fun riskGateClassifiesOrdinaryProjectReadsAndSingleFileEditsAsLowRisk() {
         val gate = HarnessScripts.scriptFiles("/sdcard/result")
             .single { it.path.endsWith("/risk-gate/index.mjs") }
             .body
@@ -375,12 +375,27 @@ class HarnessScriptsTest {
                   name: 'bash',
                   arguments: { command: 'cat /proc/self/environ' },
                 })
+                const searchRisk = classifyToolCall({
+                  name: 'bash',
+                  arguments: { command: 'rg TODO app/src' },
+                })
+                const diffRisk = classifyToolCall({
+                  name: 'bash',
+                  arguments: { command: 'git diff -- app/src/Main.kt' },
+                })
+                const editRisk = classifyToolCall({
+                  name: 'edit',
+                  arguments: { path: 'app/src/Main.kt' },
+                })
                 if (listRisk !== 'low-risk') throw new Error(`expected list to classify low-risk, got ${'$'}{listRisk}`)
                 if (gitStatusRisk !== 'low-risk') throw new Error(`expected git status to classify low-risk, got ${'$'}{gitStatusRisk}`)
-                if (readRisk !== 'high-risk-shell') throw new Error(`expected generic read to require confirmation, got ${'$'}{readRisk}`)
-                if (fileContentRisk !== 'high-risk-shell') throw new Error(`expected cat to require confirmation, got ${'$'}{fileContentRisk}`)
+                if (readRisk !== 'low-risk') throw new Error(`expected normal read to classify low-risk, got ${'$'}{readRisk}`)
+                if (fileContentRisk !== 'low-risk') throw new Error(`expected normal cat to classify low-risk, got ${'$'}{fileContentRisk}`)
+                if (searchRisk !== 'low-risk') throw new Error(`expected normal search to classify low-risk, got ${'$'}{searchRisk}`)
+                if (diffRisk !== 'low-risk') throw new Error(`expected normal diff to classify low-risk, got ${'$'}{diffRisk}`)
+                if (editRisk !== 'low-risk') throw new Error(`expected normal single-file edit to classify low-risk, got ${'$'}{editRisk}`)
                 if (procContentRisk !== 'high-risk-shell') throw new Error(`expected proc content to require confirmation, got ${'$'}{procContentRisk}`)
-                process.stdout.write('only metadata commands stay low risk\n')
+                process.stdout.write('ordinary project work stays low risk\n')
             """.trimIndent(),
         )
         try {
@@ -391,7 +406,7 @@ class HarnessScriptsTest {
             val output = process.inputStream.bufferedReader().use { it.readText() }
 
             assertEquals(output, 0, process.waitFor())
-            assertTrue(output, output.contains("only metadata commands stay low risk"))
+            assertTrue(output, output.contains("ordinary project work stays low risk"))
         } finally {
             tempDir.toFile().deleteRecursively()
         }
@@ -450,12 +465,14 @@ class HarnessScriptsTest {
                 const safeMetadata = await handler({ name: 'bash', arguments: { command: 'ls' } }, next)
                 const genericRead = await handler({ name: 'read', arguments: { path: 'config.json' } }, next)
                 const contentRead = await handler({ name: 'bash', arguments: { command: 'cat config.json' } }, next)
+                const normalEdit = await handler({ name: 'edit', arguments: { path: 'app/src/Main.kt' } }, next)
                 const procRead = await handler({ name: 'bash', arguments: { command: 'cat /proc/self/environ' } }, next)
                 if (secretRead.kind !== 'ask') throw new Error('secret read must still ask in HELP_ME_APPROVE')
                 if (dangerousChain.kind !== 'ask') throw new Error('chained destructive command must still ask')
                 if (safeMetadata.kind !== 'next') throw new Error('bare metadata command should pass in HELP_ME_APPROVE')
-                if (genericRead.kind !== 'ask') throw new Error('generic read must still ask in HELP_ME_APPROVE')
-                if (contentRead.kind !== 'ask') throw new Error('file content read must still ask in HELP_ME_APPROVE')
+                if (genericRead.kind !== 'next') throw new Error('normal project read should pass in HELP_ME_APPROVE')
+                if (contentRead.kind !== 'next') throw new Error('normal project content read should pass in HELP_ME_APPROVE')
+                if (normalEdit.kind !== 'next') throw new Error('normal single-file edit should pass in HELP_ME_APPROVE')
                 if (procRead.kind !== 'ask') throw new Error('proc environment read must still ask in HELP_ME_APPROVE')
                 if (secretRead.reason.includes('.credentials.yaml')) throw new Error('secret path leaked into confirmation')
                 process.stdout.write('chained command and secret path safety verified\\n')

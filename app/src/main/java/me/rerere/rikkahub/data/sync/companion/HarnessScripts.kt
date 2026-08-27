@@ -541,6 +541,44 @@ internal object HarnessScripts {
           ].join('\n')
         }
 
+        function isRelativeProjectPath(value) {
+          if (typeof value !== 'string') return false
+          const normalized = value.trim().replace(/\\/g, '/')
+          if (!normalized || normalized.startsWith('/') || normalized.startsWith('~') || /^[a-z]:\//i.test(normalized)) return false
+          const segments = normalized.split('/').filter(Boolean)
+          return segments.length > 0 && segments.every(segment => segment !== '.' && segment !== '..') &&
+            !containsSensitivePath(normalized)
+        }
+
+        function hasSingleRelativeProjectPath(args) {
+          const path = stringArg(args, 'path', 'file_path', 'file', 'target')
+          return path !== undefined && isRelativeProjectPath(path)
+        }
+
+        function hasOnlySafeReadArguments(tokens, start = 1) {
+          return tokens.slice(start).every(token => {
+            if (token === '--' || token.startsWith('-')) return true
+            if (containsSensitivePath(token)) return false
+            const normalized = token.replace(/\\/g, '/')
+            return !normalized.startsWith('/') && !normalized.startsWith('~') &&
+              !/^[a-z]:\//i.test(normalized) && !normalized.split('/').includes('..')
+          })
+        }
+
+        function isSafeProjectReadCommand(tokens) {
+          const first = tokens[0]?.toLowerCase() ?? ''
+          const second = tokens[1]?.toLowerCase() ?? ''
+          if (first === 'pwd') return tokens.length === 1
+          if (['ls', 'dir'].includes(first)) return hasOnlySafeReadArguments(tokens)
+          if (['cat', 'head', 'tail', 'rg', 'grep'].includes(first)) {
+            return tokens.length > 1 && hasOnlySafeReadArguments(tokens)
+          }
+          if (first === 'git' && ['status', 'diff', 'log'].includes(second)) {
+            return hasOnlySafeReadArguments(tokens, 2)
+          }
+          return false
+        }
+
         function shellRisk(command) {
           const normalized = command.trim().replace(/\s+/g, ' ')
           if (normalized.length === 0) return 'high-risk-shell'
@@ -594,13 +632,11 @@ internal object HarnessScripts {
           // benign command. This prevents `ls && rm ...` style bypasses.
           if (/(?:&&|\|\||[;|`]|\${'$'}\(|[()])/.test(normalized)) return 'high-risk-shell'
 
-          // HELP_ME_APPROVE may only continue strict commands that reveal directory/status
-          // metadata, never arbitrary file content. Keep the grammar deliberately tiny.
-          if (tokens.length === 1 && ['pwd', 'ls', 'dir'].includes(first)) return 'low-risk'
-          if (
-            first === 'git' && second === 'status' &&
-            tokens.slice(2).every(flag => ['--short', '-s', '--porcelain', '--branch'].includes(flag))
-          ) return 'low-risk'
+          // HELP_ME_APPROVE may continue ordinary project inspection only after the
+          // destructive, credential, network and shell grammar checks above passed.
+          // It never auto-allows an absolute/traversal path, sensitive file, pipeline,
+          // command substitution or nested interpreter.
+          if (isSafeProjectReadCommand(tokens)) return 'low-risk'
           return 'high-risk-shell'
         }
 
@@ -614,16 +650,20 @@ internal object HarnessScripts {
             ['read', 'read_image', 'glob', 'grep', 'session_event_read', 'session_event_search',
               'session_event_trace', 'session_search', 'session_trace', 'job_output'].includes(lower)
           ) {
-            return 'high-risk-shell'
+            return hasSingleRelativeProjectPath(args) ? 'low-risk' : 'high-risk-shell'
           }
           if (lower === 'write' || /(?:^|[_-])write(?:[_-]|${'$'})/.test(lower)) {
+            // A generic write may create a new file or replace an existing one. The gate cannot
+            // prove either a trustworthy working directory or non-existence for every tool shape,
+            // so preserve a separate confirmation for it. Single-file editor operations below
+            // remain eligible for the temporary HELP_ME_APPROVE lease.
             return 'overwrite'
           }
           if (lower === 'edit' || lower === 'patch' || /(?:^|[_-])(?:edit|replace|patch)(?:[_-]|${'$'})/.test(lower)) {
-            return 'overwrite'
+            return hasSingleRelativeProjectPath(args) ? 'low-risk' : 'overwrite'
           }
           if (lower === 'str_replace_editor') {
-            return 'overwrite'
+            return hasSingleRelativeProjectPath(args) ? 'low-risk' : 'overwrite'
           }
           if (/(?:^|[_-])(?:delete|remove|unlink|trash)(?:[_-]|${'$'})/.test(lower)) return 'delete'
           if (/(?:^|[_-])(?:move|rename)(?:[_-]|${'$'})/.test(lower)) {
@@ -648,7 +688,7 @@ internal object HarnessScripts {
 
         export function runSelfTest() {
           const cases = [
-            [{ name: 'read', arguments: { path: 'x' } }, 'high-risk-shell'],
+            [{ name: 'read', arguments: { path: 'x' } }, 'low-risk'],
             [{ name: 'bash', arguments: { command: 'ls' } }, 'low-risk'],
             [{ name: 'bash', arguments: { command: 'rm -rf build' } }, 'delete'],
             [{ name: 'bash', arguments: { command: 'git clean -fd' } }, 'delete'],
@@ -656,7 +696,9 @@ internal object HarnessScripts {
             [{ name: 'bash', arguments: { command: 'mv a b archive/' } }, 'bulk-move'],
             [{ name: 'bash', arguments: { command: 'ls' } }, 'low-risk'],
             [{ name: 'bash', arguments: { command: 'git status --short' } }, 'low-risk'],
-            [{ name: 'bash', arguments: { command: 'cat config.json' } }, 'high-risk-shell'],
+            [{ name: 'bash', arguments: { command: 'cat config.json' } }, 'low-risk'],
+            [{ name: 'bash', arguments: { command: 'rg TODO app/src' } }, 'low-risk'],
+            [{ name: 'bash', arguments: { command: 'git diff -- app/src/Main.kt' } }, 'low-risk'],
             [{ name: 'bash', arguments: { command: 'cat /proc/self/environ' } }, 'high-risk-shell'],
             [{ name: 'bash', arguments: { command: 'npm i eslint' } }, 'package-install'],
             [{ name: 'bash', arguments: { command: 'yarn add react' } }, 'package-install'],
@@ -677,7 +719,8 @@ internal object HarnessScripts {
             [{ name: 'bash', arguments: { command: 'curl -X POST https://example.com -d x=1' } }, 'external-submit'],
             [{ name: 'bash', arguments: { command: 'adb shell pm grant app android.permission.POST_NOTIFICATIONS' } }, 'android-system'],
             [{ name: 'bash', arguments: { command: 'sudo systemctl restart ssh' } }, 'privileged'],
-            [{ name: 'edit', arguments: { path: 'x' } }, 'overwrite'],
+            [{ name: 'edit', arguments: { path: 'x' } }, 'low-risk'],
+            [{ name: 'write', arguments: { path: 'src/NewFile.kt' } }, 'overwrite'],
             [{ name: 'terminal_send', arguments: { chars: 'x' } }, 'high-risk-shell'],
           ]
           for (const [exec, expected] of cases) {

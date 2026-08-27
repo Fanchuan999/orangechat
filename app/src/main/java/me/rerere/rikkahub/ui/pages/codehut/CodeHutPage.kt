@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.dokar.sonner.ToastType
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,6 +69,15 @@ fun CodeHutPage(
     val context = LocalContext.current
     val toaster = LocalToaster.current
     val scope = rememberCoroutineScope()
+    LaunchedEffect(state.feedback?.id) {
+        state.feedback?.let { feedback ->
+            toaster.show(
+                feedback.message,
+                type = if (feedback.isError) ToastType.Error else ToastType.Success,
+            )
+            vm.consumeFeedback(feedback.id)
+        }
+    }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {

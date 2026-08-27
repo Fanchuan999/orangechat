@@ -240,7 +240,7 @@ private fun ApprovalModeCard(
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("权限策略", style = MaterialTheme.typography.titleMedium)
         Text(
-            "“每次询问”保持最保守默认；“帮我批准”只连续放行低风险操作，删除、安装包、推送、密钥、外部提交和系统级改动仍必须确认。",
+            "“每次询问”保持最保守默认；“帮我批准”连续放行普通项目读取、检索、对比和单文件编辑。删除、批量覆盖、安装包、推送、密钥、外部提交和系统级改动仍必须确认。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
