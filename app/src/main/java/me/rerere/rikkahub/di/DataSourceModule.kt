@@ -56,8 +56,14 @@ import me.rerere.rikkahub.data.sync.companion.TermuxConfigBridge
 import me.rerere.rikkahub.data.codehut.CodeHutCredentialBridge
 import me.rerere.rikkahub.data.codehut.CodeHutProviderResolver
 import me.rerere.rikkahub.data.codehut.HarnessTaskGateway
+import me.rerere.rikkahub.data.codehut.HarnessInboxClient
 import me.rerere.rikkahub.data.codehut.SettingsCodeHutProviderResolver
 import me.rerere.rikkahub.data.codehut.buildCodeHutUpstreamClient
+import me.rerere.rikkahub.data.pcbridge.PcBridgePairingService
+import me.rerere.rikkahub.data.pcbridge.PcBridgeUiActions
+import me.rerere.rikkahub.data.pcbridge.buildPcBridgeRelayHttpClient
+import me.rerere.rikkahub.data.pcbridge.PcBridgeRelayClient
+import me.rerere.rikkahub.data.pcbridge.PcBridgeSecretStore
 import me.rerere.search.SearchService
 import me.rerere.rikkahub.data.sync.S3Sync
 import okhttp3.Dispatcher
@@ -303,6 +309,11 @@ val dataSourceModule = module {
 
     single<CodeHutProviderResolver> { SettingsCodeHutProviderResolver(settingsStore = get()) }
     single { HarnessTaskGateway() }
+    single { HarnessInboxClient(upstreamClient = get()) }
+    single { PcBridgeSecretStore(context = get()) }
+    single { PcBridgeRelayClient(httpClient = buildPcBridgeRelayHttpClient(get())) }
+    single { PcBridgePairingService(secretStore = get(), relayClient = get()) }
+    single<PcBridgeUiActions> { get<PcBridgePairingService>() }
 
     single {
         val sharedHttpClient: OkHttpClient = get()

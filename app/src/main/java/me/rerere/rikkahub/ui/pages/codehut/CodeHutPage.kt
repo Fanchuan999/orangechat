@@ -6,6 +6,8 @@
 
 package me.rerere.rikkahub.ui.pages.codehut
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,12 +16,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -29,15 +29,28 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import me.rerere.rikkahub.data.codehut.CodeHutTask
-import me.rerere.rikkahub.data.codehut.CodeHutTaskStatus
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.text.DateFormat
+import java.util.Date
+import me.rerere.rikkahub.data.codehut.HarnessImagePolicy
+import me.rerere.rikkahub.data.codehut.HarnessInboxTask
+import me.rerere.rikkahub.data.codehut.HarnessInboxTaskState
 import me.rerere.rikkahub.data.codehut.redactCodeHutUiText
+import me.rerere.rikkahub.data.pcbridge.PcBridgeUiPolicy
+import me.rerere.rikkahub.data.pcbridge.PcBridgeUiState
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.CustomColors
@@ -51,73 +64,74 @@ fun CodeHutPage(
     vm: CodeHutVM = koinViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     val toaster = LocalToaster.current
-
+    val scope = rememberCoroutineScope()
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)?.use(::readImageAtMostHarnessLimit)
+            }
+            if (bytes == null) {
+                toaster.show("无法读取这张图片，或图片超过 5 MB。")
+            } else {
+                vm.sendImageToInbox(context.contentResolver.getType(uri), bytes)
+            }
+        }
+    }
     Scaffold(
         topBar = {
             LargeFlexibleTopAppBar(
                 title = { Text("代码小屋") },
                 navigationIcon = { BackButton() },
-                scrollBehavior = scrollBehavior,
+                scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(),
                 colors = CustomColors.topBarColors,
             )
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            item { InboxBoardCard(state.activeInboxTasks, state.inboxNotice, vm::refreshInbox) }
             item {
-                TaskCard(
-                    state = state,
-                    onDraftChange = vm::updateDraft,
-                    onPrepare = vm::prepareTaskForWorkbench,
-                    onReset = vm::resetTask,
-                    onCopyTask = { prompt ->
-                        clipboard.setText(AnnotatedString(prompt))
-                        toaster.show("任务内容已复制；请在完整工作台中手动粘贴运行。")
-                    },
-                    onOpenWorkbench = onOpenWorkbench,
-                    onOpenHarnessSettings = onOpenHarnessSettings,
+                PcBridgeCard(
+                    state = state.pcBridge,
+                    policy = state.pcBridgePolicy,
+                    onInvitationChange = vm::updatePcInvitation,
+                    onConfirmPairing = { vm.confirmPcPairing() },
+                    onRefresh = { vm.refreshPcBridge() },
+                    onUnlink = { vm.unlinkPcBridge() },
+                    onAbandonPendingPairing = { vm.abandonPendingPcBridge() },
+                    onForgetUnavailableConfirmedPairing = { vm.forgetUnavailableConfirmedPcBridge() },
                 )
             }
-
             item {
                 WorkbenchCard(
-                    presentation = state.workbench,
-                    onOpenWorkbench = onOpenWorkbench,
-                    onOpenHarnessSettings = onOpenHarnessSettings,
-                    onRefresh = vm::refreshHarness,
+                    state.workbench,
+                    onOpenWorkbench,
+                    onOpenHarnessSettings,
+                    vm::refreshHarness,
+                    onSelectImage = { imagePicker.launch("image/*") },
                 )
             }
-
-            item {
-                EnvironmentCard(environment = state.environment)
-            }
-
-            item {
-                PermissionCard(onOpenPermissionSettings = onOpenPermissionSettings)
-            }
-
+            item { EnvironmentCard(state.environment) }
+            item { PermissionCard(onOpenPermissionSettings) }
             if (!state.error.isNullOrBlank()) {
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(
+                        Row(
                             modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                text = redactCodeHutUiText(state.error.orEmpty()),
+                                redactCodeHutUiText(state.error.orEmpty()),
                                 color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.weight(1f),
                             )
-                            TextButton(onClick = vm::clearError) {
-                                Text("知道了")
-                            }
+                            TextButton(onClick = vm::clearError) { Text("知道了") }
                         }
                     }
                 }
@@ -126,165 +140,256 @@ fun CodeHutPage(
     }
 }
 
+private fun readImageAtMostHarnessLimit(input: InputStream): ByteArray? {
+    val output = ByteArrayOutputStream()
+    var total = 0
+    while (true) {
+        val remaining = HarnessImagePolicy.MAX_BYTES + 1 - total
+        val buffer = ByteArray(minOf(DEFAULT_BUFFER_SIZE, remaining))
+        val count = input.read(buffer)
+        if (count < 0) break
+        total += count
+        if (total > HarnessImagePolicy.MAX_BYTES) return null
+        output.write(buffer, 0, count)
+    }
+    return output.toByteArray()
+}
+
 @Composable
-private fun TaskCard(
-    state: CodeHutUiState,
-    onDraftChange: (CodeHutTaskDraft) -> Unit,
-    onPrepare: () -> Unit,
-    onReset: () -> Unit,
-    onCopyTask: (String) -> Unit,
-    onOpenWorkbench: () -> Unit,
-    onOpenHarnessSettings: () -> Unit,
-) {
+private fun InboxBoardCard(tasks: List<HarnessInboxTask>, notice: String?, onRefresh: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("任务", style = MaterialTheme.typography.titleLarge)
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("任务看板", style = MaterialTheme.typography.titleLarge)
             Text(
-                "只把任务、显式文件、目录和约束交给 Harness；不会带入聊天人设、世界书、Ombre 或记忆。",
+                "这里仅显示待执行或执行中的收件箱任务；已完成和失败的任务会自动从首页消失。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-
-            val draft = state.draft
-            OutlinedTextField(
-                value = draft.taskText,
-                onValueChange = { onDraftChange(draft.copy(taskText = it)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("任务") },
-                minLines = 3,
-            )
-            OutlinedTextField(
-                value = draft.selectedFilesText,
-                onValueChange = { onDraftChange(draft.copy(selectedFilesText = it)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("显式文件，每行一个相对路径") },
-                minLines = 2,
-            )
-            OutlinedTextField(
-                value = draft.workingDirectory,
-                onValueChange = { onDraftChange(draft.copy(workingDirectory = it)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("工作目录") },
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = draft.constraintsText,
-                onValueChange = { onDraftChange(draft.copy(constraintsText = it)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("约束，每行一个") },
-                minLines = 2,
-            )
-
-            TaskResultCard(
-                task = state.activeTask,
-                workbench = state.workbench,
-                onOpenWorkbench = onOpenWorkbench,
-                onOpenHarnessSettings = onOpenHarnessSettings,
-                onCopyTask = onCopyTask,
-                onReset = onReset,
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    onClick = onPrepare,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("准备任务")
-                }
-                FilledTonalButton(
-                    onClick = if (state.workbench.canOpen) onOpenWorkbench else onOpenHarnessSettings,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(if (state.workbench.canOpen) "去工作台继续" else "安装 / 启动 Harness")
-                }
-            }
-            if (!state.workbench.canOpen) {
+            if (tasks.isEmpty()) {
                 Text(
-                    state.workbench.guidance,
-                    style = MaterialTheme.typography.bodySmall,
+                    notice ?: "目前没有进行中的工作。",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            } else {
+                tasks.groupBy { it.state }.forEach { (taskState, group) ->
+                    Text(taskState.label(), style = MaterialTheme.typography.titleMedium)
+                    group.forEach { task ->
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(task.title, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "${task.taskId} · ${task.createdAt.ifBlank { "等待工作台记录时间" }}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (task.statusSummary.isNotBlank()) {
+                                Text(
+                                    redactCodeHutUiText(task.statusSummary),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
             }
+            FilledTonalButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) { Text("刷新任务状态") }
         }
     }
 }
 
+private fun HarnessInboxTaskState.label(): String = when (this) {
+    HarnessInboxTaskState.QUEUED -> "待执行"
+    HarnessInboxTaskState.RUNNING -> "执行中"
+    HarnessInboxTaskState.UNKNOWN -> "状态待确认"
+}
+
 @Composable
-private fun TaskResultCard(
-    task: CodeHutTask?,
-    workbench: CodeHutWorkbenchPresentation,
-    onOpenWorkbench: () -> Unit,
-    onOpenHarnessSettings: () -> Unit,
-    onCopyTask: (String) -> Unit,
-    onReset: () -> Unit,
+internal fun PcBridgeCard(
+    state: PcBridgeUiState,
+    policy: PcBridgeUiPolicy,
+    onInvitationChange: (String) -> Unit,
+    onConfirmPairing: () -> Unit,
+    onRefresh: () -> Unit,
+    onUnlink: () -> Unit,
+    onAbandonPendingPairing: () -> Unit,
+    onForgetUnavailableConfirmedPairing: () -> Unit,
 ) {
-    if (task == null) {
-        Text(
-            "暂无任务。准备后不会自动提交；请复制任务内容，再在完整工作台中手动粘贴运行。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        return
+    var invitation by remember(state is PcBridgeUiState.Unpaired) { mutableStateOf("") }
+    var unlinkConfirmationVisible by remember(state is PcBridgeUiState.Paired) { mutableStateOf(false) }
+    var abandonConfirmationVisible by remember(state is PcBridgeUiState.PendingRecovery) { mutableStateOf(false) }
+    var forgetConfirmationVisible by remember(state is PcBridgeUiState.ConfirmedRecovery) { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(policy.title, style = MaterialTheme.typography.titleLarge)
+            Text(policy.status, style = MaterialTheme.typography.titleMedium)
+            Text(
+                policy.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when (state) {
+                PcBridgeUiState.Unpaired -> {
+                    Text(
+                        "请先在电脑上运行 daddy-pc-bridge pair-pc，然后将电脑邀请粘贴到这里。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedTextField(
+                        value = invitation,
+                        onValueChange = {
+                            invitation = it
+                            onInvitationChange(it)
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("pc-bridge-invitation"),
+                        label = { Text("粘贴电脑邀请") },
+                        minLines = 2,
+                    )
+                }
+
+                is PcBridgeUiState.InvitationDraft -> {
+                    state.preview?.let { preview ->
+                        Text("电脑地址与有效期：$preview", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    state.error?.let {
+                        Text(
+                            "邀请码无效或已过期。",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Button(
+                        onClick = onConfirmPairing,
+                        enabled = state.preview != null && state.error == null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(policy.primaryAction ?: "确认连接")
+                    }
+                    TextButton(
+                        onClick = {
+                            invitation = ""
+                            onInvitationChange("")
+                        },
+                    ) {
+                        Text("重新粘贴邀请")
+                    }
+                }
+
+                PcBridgeUiState.Pairing -> Unit
+
+                is PcBridgeUiState.Paired -> {
+                    Text(state.deviceLabel, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "上次刷新：${DateFormat.getDateTimeInstance().format(Date(state.refreshedAtEpochMillis))}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                        Text(policy.primaryAction ?: "刷新状态")
+                    }
+                    TextButton(onClick = { unlinkConfirmationVisible = true }) {
+                        Text(policy.dangerAction ?: "解除配对")
+                    }
+                }
+
+                PcBridgeUiState.PendingRecovery -> {
+                    Button(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                        Text(policy.primaryAction ?: "刷新状态")
+                    }
+                    TextButton(onClick = { abandonConfirmationVisible = true }) {
+                        Text(policy.dangerAction ?: "放弃本机待恢复配对")
+                    }
+                }
+
+                PcBridgeUiState.ConfirmedRecovery -> {
+                    Button(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                        Text(policy.primaryAction ?: "刷新状态")
+                    }
+                    TextButton(onClick = { forgetConfirmationVisible = true }) {
+                        Text(policy.dangerAction ?: "忘记本机电脑配对")
+                    }
+                }
+
+                is PcBridgeUiState.Unavailable -> {
+                    Button(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
+                        Text(policy.primaryAction ?: "刷新状态")
+                    }
+                }
+            }
+        }
     }
 
-    HorizontalDivider()
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = when (task.status) {
-                CodeHutTaskStatus.QUEUED -> "任务已排队"
-                CodeHutTaskStatus.RUNNING -> "任务进行中"
-                CodeHutTaskStatus.SUCCEEDED -> "任务结果"
-                CodeHutTaskStatus.FAILED -> "任务失败"
-                CodeHutTaskStatus.PREPARED -> "任务已准备（尚未提交）"
-                CodeHutTaskStatus.UNSUPPORTED -> "需要转到完整工作台"
-                CodeHutTaskStatus.DRAFT -> "草稿"
-            },
-            style = MaterialTheme.typography.titleMedium,
-        )
-        SelectionContainer {
-            Text(
-                text = redactCodeHutUiText(task.result?.summary ?: task.ticket.prompt),
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = if (task.result == null) FontFamily.Monospace else FontFamily.Default,
-            )
-        }
-        val changedFiles = task.result?.changedFiles.orEmpty()
-        if (changedFiles.isNotEmpty()) {
-            Text(
-                "改动文件：${redactCodeHutUiText(changedFiles.joinToString())}",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        val verification = task.result?.verification.orEmpty()
-        if (verification.isNotBlank()) {
-            Text(
-                "验证：${redactCodeHutUiText(verification)}",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (task.status == CodeHutTaskStatus.PREPARED) {
-                FilledTonalButton(onClick = { onCopyTask(task.ticket.prompt) }) {
-                    Text(codeHutTaskActionLabel(task))
-                }
-            }
-            if (task.status in setOf(CodeHutTaskStatus.PREPARED, CodeHutTaskStatus.UNSUPPORTED)) {
-                FilledTonalButton(
-                    onClick = if (workbench.canOpen) onOpenWorkbench else onOpenHarnessSettings,
+    if (unlinkConfirmationVisible) {
+        AlertDialog(
+            onDismissRequest = { unlinkConfirmationVisible = false },
+            title = { Text("解除电脑配对？") },
+            text = { Text("解除后，这台手机将不能再向该电脑发送命令。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        unlinkConfirmationVisible = false
+                        onUnlink()
+                    },
                 ) {
-                    Text(if (workbench.canOpen) "去工作台粘贴运行" else workbench.actionLabel)
+                    Text("确认解除配对")
                 }
-            }
-            TextButton(onClick = onReset) {
-                Text("清空")
-            }
-        }
+            },
+            dismissButton = {
+                TextButton(onClick = { unlinkConfirmationVisible = false }) { Text("取消") }
+            },
+        )
+    }
+
+    if (abandonConfirmationVisible) {
+        AlertDialog(
+            onDismissRequest = { abandonConfirmationVisible = false },
+            title = { Text("放弃本机待恢复配对？") },
+            text = {
+                Text(
+                    "这只会清除手机本地保存的待恢复配对，不会联系电脑或服务器。极少数情况下，" +
+                        "电脑端可能仍保留旧配对；之后重新连接即可。",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        abandonConfirmationVisible = false
+                        onAbandonPendingPairing()
+                    },
+                ) {
+                    Text("确认放弃本机配对")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { abandonConfirmationVisible = false }) { Text("取消") }
+            },
+        )
+    }
+
+    if (forgetConfirmationVisible) {
+        AlertDialog(
+            onDismissRequest = { forgetConfirmationVisible = false },
+            title = { Text("忘记本机电脑配对？") },
+            text = {
+                Text(
+                    "这只会清除手机本地保存的电脑配对，不会联系电脑或服务器。远端配对可能仍存在；" +
+                        "重新配对前，请先在固定 PC 工作台清理。",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        forgetConfirmationVisible = false
+                        onForgetUnavailableConfirmedPairing()
+                    },
+                ) {
+                    Text("确认忘记本机配对")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { forgetConfirmationVisible = false }) { Text("取消") }
+            },
+        )
     }
 }
 
@@ -294,47 +399,32 @@ private fun WorkbenchCard(
     onOpenWorkbench: () -> Unit,
     onOpenHarnessSettings: () -> Unit,
     onRefresh: () -> Unit,
+    onSelectImage: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("工作台", style = MaterialTheme.typography.titleLarge)
             Text(
-                "完整 Harness WebView 只在这里打开，用于深入操作和未文档化任务提交。",
+                "进入完整 Harness 工作台，可查看收件箱过程、处理结果和需要你确认的危险操作。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text("当前服务：${presentation.status}", style = MaterialTheme.typography.bodyMedium)
-            if (!presentation.canOpen) {
-                Text(
-                    presentation.guidance,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    onClick = onOpenWorkbench,
-                    enabled = presentation.canOpen,
-                    modifier = Modifier.weight(1f),
-                ) {
+            Text("当前服务：${presentation.status}")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onOpenWorkbench, enabled = presentation.canOpen, modifier = Modifier.weight(1f)) {
                     Text(presentation.actionLabel)
                 }
-                FilledTonalButton(
-                    onClick = onOpenHarnessSettings,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Harness 设置")
-                }
-                FilledTonalButton(onClick = onRefresh) {
-                    Text("刷新")
-                }
+                FilledTonalButton(onClick = onOpenHarnessSettings, modifier = Modifier.weight(1f)) { Text("Harness 设置") }
+                FilledTonalButton(onClick = onRefresh) { Text("刷新") }
             }
+            FilledTonalButton(onClick = onSelectImage, modifier = Modifier.fillMaxWidth()) {
+                Text("发送图片到 Harness 收件箱")
+            }
+            Text(
+                "Harness 当前只支持 PNG、JPEG、WebP、GIF 图片（单张不超过 5 MB）；普通文件请在工作台用文件工具处理。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -342,29 +432,15 @@ private fun WorkbenchCard(
 @Composable
 private fun EnvironmentCard(environment: CodeHutEnvironmentPresentation) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("环境", style = MaterialTheme.typography.titleLarge)
             environment.items.forEach { item ->
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(item.title, style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            item.status,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
+                        Text(item.status, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     }
-                    Text(
-                        item.detail,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Text(item.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -374,20 +450,14 @@ private fun EnvironmentCard(environment: CodeHutEnvironmentPresentation) {
 @Composable
 private fun PermissionCard(onOpenPermissionSettings: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("权限", style = MaterialTheme.typography.titleLarge)
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("权限设置", style = MaterialTheme.typography.titleLarge)
             Text(
-                "这里预留给后续权限策略合并。当前入口只跳到安全/权限相关设置，不在代码小屋里扩大权限。",
+                "安全确认由 Harness 风险门执行。这里不会扩大工作台权限。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            FilledTonalButton(
-                onClick = onOpenPermissionSettings,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            FilledTonalButton(onClick = onOpenPermissionSettings, modifier = Modifier.fillMaxWidth()) {
                 Text("打开权限入口")
             }
         }

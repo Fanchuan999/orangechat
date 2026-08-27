@@ -6,7 +6,6 @@
 
 package me.rerere.rikkahub.ui.pages.codehut
 
-import me.rerere.rikkahub.data.ai.mcp.serverUrl
 import me.rerere.rikkahub.data.codehut.CodeHutTask
 import me.rerere.rikkahub.data.codehut.CodeHutTaskPolicy
 import me.rerere.rikkahub.data.codehut.CodeHutTaskStatus
@@ -16,10 +15,6 @@ import me.rerere.rikkahub.data.codehut.TaskTicket
 import me.rerere.rikkahub.data.codehut.redactCodeHutUiText
 import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.datastore.HarnessStatus
-import me.rerere.rikkahub.data.datastore.Settings
-import me.rerere.rikkahub.data.datastore.WorkCapability
-import me.rerere.rikkahub.data.datastore.WorkProtocol
-import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 
 data class CodeHutEnvironmentItem(
     val title: String,
@@ -28,16 +23,11 @@ data class CodeHutEnvironmentItem(
 )
 
 data class CodeHutEnvironmentPresentation(
-    val model: CodeHutEnvironmentItem,
     val service: CodeHutEnvironmentItem,
-    val skills: CodeHutEnvironmentItem,
-    val mcp: CodeHutEnvironmentItem,
-    val github: CodeHutEnvironmentItem,
-    val diagnostics: CodeHutEnvironmentItem,
     val permissions: CodeHutEnvironmentItem,
 ) {
     val items: List<CodeHutEnvironmentItem>
-        get() = listOf(model, service, skills, mcp, github, diagnostics, permissions)
+        get() = listOf(service, permissions)
 
     fun flattenText(): String = items.joinToString("\n") { "${it.title} ${it.status} ${it.detail}" }
 }
@@ -81,73 +71,12 @@ fun codeHutWorkbenchPresentation(status: HarnessStatus): CodeHutWorkbenchPresent
 
 fun canOpenCodeHutWorkbench(status: HarnessStatus): Boolean = status == HarnessStatus.RUNNING
 
-fun codeHutEnvironmentPresentation(
-    settings: Settings,
-    harnessSnapshot: HarnessSnapshot,
-): CodeHutEnvironmentPresentation {
-    val selectedBinding = settings.codeHutSetting.defaultBindingId?.let { id ->
-        settings.codeHutSetting.bindings.firstOrNull { it.id == id }
-    }
-    val model = if (selectedBinding == null) {
-        CodeHutEnvironmentItem(
-            title = "模型",
-            status = "未配置",
-            detail = "未配置工作模型",
-        )
-    } else {
-        CodeHutEnvironmentItem(
-            title = "模型",
-            status = "Harness 单一执行器",
-            detail = buildString {
-                append(protocolLabel(selectedBinding.protocol))
-                append(" · ")
-                append(capabilityLabel(selectedBinding.capability))
-            },
-        )
-    }
-
-    val enabledSkills = settings.getCurrentAssistant().enabledSkills.size
-    val enabledMcp = settings.mcpServers.count { it.commonOptions.enable }
-    val githubConfigured = settings.mcpServers.any { server ->
-        server.commonOptions.enable &&
-            (
-                server.commonOptions.name.contains("github", ignoreCase = true) ||
-                    server.serverUrl.contains("github", ignoreCase = true)
-                )
-    }
-
+fun codeHutEnvironmentPresentation(harnessSnapshot: HarnessSnapshot): CodeHutEnvironmentPresentation {
     return CodeHutEnvironmentPresentation(
-        model = model,
         service = CodeHutEnvironmentItem(
             title = "服务",
             status = harnessStatusLabel(harnessSnapshot.status),
             detail = "Harness 工作台：127.0.0.1:3080",
-        ),
-        skills = CodeHutEnvironmentItem(
-            title = "Skills",
-            status = if (enabledSkills > 0) "可用" else "未配置",
-            detail = if (enabledSkills > 0) {
-                "$enabledSkills 个已启用 Skill"
-            } else {
-                "未启用 Skills"
-            },
-        ),
-        mcp = CodeHutEnvironmentItem(
-            title = "MCP",
-            status = if (enabledMcp > 0) "已配置" else "未配置",
-            detail = if (enabledMcp > 0) "$enabledMcp 个已启用 MCP 服务" else "未配置 MCP",
-        ),
-        github = CodeHutEnvironmentItem(
-            title = "GitHub",
-            status = if (githubConfigured) "已配置" else "未配置",
-            detail = if (githubConfigured) "GitHub MCP 已配置" else "未配置 GitHub",
-        ),
-        diagnostics = CodeHutEnvironmentItem(
-            title = "诊断",
-            status = if (harnessSnapshot.detail.isBlank()) "待检查" else "有状态",
-            detail = redactCodeHutUiText(
-                harnessSnapshot.detail.ifBlank { "暂无诊断详情，刷新 Harness 后更新" },
-            ),
         ),
         permissions = CodeHutEnvironmentItem(
             title = "权限",
@@ -210,17 +139,4 @@ fun harnessStatusLabel(status: HarnessStatus): String = when (status) {
     HarnessStatus.BACKING_OFF -> "等待恢复"
     HarnessStatus.REPAIRING -> "修复中"
     HarnessStatus.ERROR -> "异常"
-}
-
-private fun protocolLabel(protocol: WorkProtocol): String = when (protocol) {
-    WorkProtocol.OPENAI_CHAT_COMPLETIONS -> "OpenAI Chat Completions"
-    WorkProtocol.ANTHROPIC_MESSAGES -> "Anthropic Messages"
-    WorkProtocol.OPENAI_RESPONSES -> "OpenAI Responses"
-}
-
-private fun capabilityLabel(capability: WorkCapability): String = when (capability) {
-    WorkCapability.NEEDS_PROBE -> "待探测"
-    WorkCapability.EXECUTABLE -> "可执行"
-    WorkCapability.CONSULT_ONLY -> "仅咨询"
-    WorkCapability.FAILED -> "不可用"
 }

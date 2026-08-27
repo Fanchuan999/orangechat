@@ -1,0 +1,23 @@
+{
+  "type": "server-response",
+  "rpcId": "[REDACTED]",
+  "result": {
+    "ok": true,
+    "value": {
+      "items": [
+        {
+          "sessionId": "[REDACTED]",
+          "updatedAt": "2026-08-24T10:00:00.000Z",
+          "running": false,
+          "blank": false,
+          "cwd": "[REDACTED]",
+          "agentPreset": "standard",
+          "projections": {
+            "asOfSeq": 10,
+            "values": { "title": "📥 Daddy收件箱" }
+          }
+        }
+      ]
+    }
+  }
+}

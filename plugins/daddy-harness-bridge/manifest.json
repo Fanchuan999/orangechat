@@ -1,0 +1,24 @@
+{
+  "id": "com.daddy.harness-bridge",
+  "name": "Harness工作台桥",
+  "description": "让 Daddy 把需要实际操作的任务，安全地转达给本机 Harness 收件箱。",
+  "version": "1.1.0",
+  "author": "Daddy",
+  "icon": "🛠️",
+  "entry": "main.js",
+  "tools": [
+    {
+      "name": "relay_to_harness",
+      "description": "把已整理、仅含任务必需信息的操作需求送入 Harness 收件箱串行队列。",
+      "parameters": [
+        { "name": "requirement", "type": "string", "required": true, "description": "背景、具体动作、成功标准和相关文件；不得含人设、记忆、密钥或完整聊天。" }
+      ]
+    },
+    {
+      "name": "check_harness_status",
+      "description": "读取 Harness 收件箱中仍未结束的 Daddy 任务。",
+      "parameters": []
+    }
+  ],
+  "promptTemplate": "## Daddy → Harness 工作台桥\n\n当用户明确要求真实操作（改代码、读写文件、运行程序、批处理、自动化或需要工具验证的研究）时，调用 relay_to_harness；纯聊天不要调用。\n\n转达前将需求写成简洁事实任务简报：必要背景、具体动作、成功标准、相关文件或目录。只交付任务必需信息；绝不附带 Daddy 人设、关系设定、世界书、Ombre/其他记忆、密钥/令牌、完整聊天记录或无关私人内容。\n\n转达成功只可说“已进入工作台收件箱队列”，不得假装完成。用户询问进度时调用 check_harness_status 并如实转述。删除、覆盖、安装、登录、推送等高风险操作仍由 Harness 自己要求确认。"
+}

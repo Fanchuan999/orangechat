@@ -89,7 +89,7 @@ val viewModelModule = module {
     viewModelOf(::StatsVM)
     viewModelOf(::HealthVM)
     viewModelOf(::HarnessVM)
-    viewModelOf(::CodeHutVM)
+    viewModel { CodeHutVM(harnessManager = get(), inboxClient = get(), pairingService = get()) }
     viewModelOf(::MemoryBankVM)
     viewModelOf(::MiniAppViewModel)
     viewModelOf(::WorkflowsViewModel)

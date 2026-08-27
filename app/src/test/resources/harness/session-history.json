@@ -1,0 +1,18 @@
+{
+  "type": "server-response",
+  "rpcId": "[REDACTED]",
+  "result": {
+    "ok": true,
+    "value": {
+      "events": [
+        { "event": { "type": "agent/inbox/spliced", "seq": 1, "time": "2026-08-24T10:00:00.000Z", "data": {} } },
+        { "event": { "type": "turn/start", "seq": 2, "time": "2026-08-24T10:00:01.000Z", "data": {} } },
+        { "event": { "type": "user/message", "seq": 3, "time": "2026-08-24T10:00:01.000Z", "data": { "content": [{ "type": "text", "text": "【Daddy任务】\\ntask_id: daddy-probe-001\\ncreated_at: 2026-08-24T10:00:00.000Z\\ntitle: [REDACTED]\\n【任务简报】\\n[REDACTED]" }] } } },
+        { "event": { "type": "assistant/message", "seq": 4, "time": "2026-08-24T10:00:02.000Z", "data": { "content": [{ "type": "text", "text": "[REDACTED]" }] } } },
+        { "event": { "type": "turn/end", "seq": 5, "time": "2026-08-24T10:00:02.000Z", "data": {} } }
+      ],
+      "hasMore": false,
+      "projections": {}
+    }
+  }
+}
