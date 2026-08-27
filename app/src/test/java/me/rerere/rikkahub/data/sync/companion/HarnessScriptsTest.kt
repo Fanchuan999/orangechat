@@ -779,6 +779,42 @@ class HarnessScriptsTest {
     }
 
     @Test
+    fun riskGateAllowsNewRelativeWriteInsideTheTrustedSessionCwd() {
+        val gate = HarnessScripts.scriptFiles("/sdcard/result")
+            .single { it.path.endsWith("/risk-gate/index.mjs") }
+            .body
+        val tempDir = Files.createTempDirectory("daddy-harness-risk-gate-new-write")
+        val gateFile = tempDir.resolve("risk-gate.mjs")
+        val runnerFile = tempDir.resolve("new-relative-write-test.mjs")
+        Files.writeString(gateFile, gate)
+        Files.writeString(
+            runnerFile,
+            """
+                import { classifyToolCall } from './risk-gate.mjs'
+                const risk = classifyToolCall({
+                  name: 'write',
+                  arguments: { path: 'notes/today.md' },
+                  agent: { session: { header: { cwd: process.cwd() } } },
+                })
+                if (risk !== 'low-risk') throw new Error(`expected low-risk, got ${'$'}{risk}`)
+                process.stdout.write('new relative write allowed\n')
+            """.trimIndent(),
+        )
+        try {
+            val process = ProcessBuilder("node", runnerFile.toString())
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+
+            assertEquals(output, 0, process.waitFor())
+            assertTrue(output, output.contains("new relative write allowed"))
+        } finally {
+            tempDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun riskGateAsksWhenARelativeWriteHasNoTrustworthySessionCwd() {
         val gate = HarnessScripts.scriptFiles("/sdcard/result")
             .single { it.path.endsWith("/risk-gate/index.mjs") }

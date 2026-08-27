@@ -381,7 +381,8 @@ internal object HarnessScripts {
     """.trimIndent() + "\n"
 
     private fun riskGatePluginScript(): String = """
-        import { readFileSync } from 'node:fs'
+        import { existsSync, readFileSync, realpathSync } from 'node:fs'
+        import { dirname, isAbsolute, relative, resolve } from 'node:path'
 
         export const name = 'daddy-harness-risk-gate'
         const APPROVAL_MODE_PATH = process.env.DADDY_CODE_HUT_APPROVAL_MODE_PATH ??
@@ -555,6 +556,38 @@ internal object HarnessScripts {
           return path !== undefined && isRelativeProjectPath(path)
         }
 
+        function nearestExistingAncestor(candidate) {
+          let current = candidate
+          while (!existsSync(current)) {
+            const parent = dirname(current)
+            if (parent === current) return undefined
+            current = parent
+          }
+          return realpathSync.native(current)
+        }
+
+        function isNewFileInsideTrustedSessionCwd(exec, args) {
+          const relativePath = stringArg(args, 'path', 'file_path', 'file', 'target')
+          const cwd = exec?.agent?.session?.header?.cwd
+          if (relativePath === undefined || !isRelativeProjectPath(relativePath) ||
+              typeof cwd !== 'string' || cwd.trim().length === 0) {
+            return false
+          }
+          try {
+            const root = realpathSync.native(resolve(cwd))
+            const target = resolve(root, relativePath)
+            const existingParent = nearestExistingAncestor(dirname(target))
+            const parentRelativePath = existingParent === undefined ? undefined : relative(root, existingParent)
+            const staysInsideRoot = parentRelativePath === '' ||
+              (parentRelativePath !== undefined && parentRelativePath !== '..' &&
+                !parentRelativePath.startsWith('../') && !parentRelativePath.startsWith('..\\') &&
+                !isAbsolute(parentRelativePath))
+            return staysInsideRoot && target !== root && !existsSync(target)
+          } catch {
+            return false
+          }
+        }
+
         function hasOnlySafeReadArguments(tokens, start = 1) {
           return tokens.slice(start).every(token => {
             if (token === '--' || token.startsWith('-')) return true
@@ -653,11 +686,10 @@ internal object HarnessScripts {
             return hasSingleRelativeProjectPath(args) ? 'low-risk' : 'high-risk-shell'
           }
           if (lower === 'write' || /(?:^|[_-])write(?:[_-]|${'$'})/.test(lower)) {
-            // A generic write may create a new file or replace an existing one. The gate cannot
-            // prove either a trustworthy working directory or non-existence for every tool shape,
-            // so preserve a separate confirmation for it. Single-file editor operations below
-            // remain eligible for the temporary HELP_ME_APPROVE lease.
-            return 'overwrite'
+            // A new relative file may proceed only after resolving the Harness session cwd and
+            // checking its existing parent. Existing files, absent cwd data, sensitive paths and
+            // symlinked parents outside the cwd stay behind an overwrite confirmation.
+            return isNewFileInsideTrustedSessionCwd(exec, args) ? 'low-risk' : 'overwrite'
           }
           if (lower === 'edit' || lower === 'patch' || /(?:^|[_-])(?:edit|replace|patch)(?:[_-]|${'$'})/.test(lower)) {
             return hasSingleRelativeProjectPath(args) ? 'low-risk' : 'overwrite'
