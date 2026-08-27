@@ -168,15 +168,18 @@ class PcBridgePairingServiceTest {
     fun `confirmed local forget clears only the local confirmed record without relay request`() = runBlocking {
         val storage = ServiceRecordStorage()
         PcBridgeSecretStore(storage, ServiceWrappingCipher()).save(testCredentials(pendingConfirmation = false))
-        val transport = RecordingTransport("""{"status":{"state":"active"}}""")
+        val transport = RecordingTransport("""{"status":{"state":"active"}}""").apply { failure = true }
         val service = service(storage, transport)
 
+        service.refreshStatus()
+        assertTrue(service.state.value is PcBridgeUiState.ConfirmedRecovery)
+        val callsBeforeForget = transport.callCount
         service.forgetUnavailableConfirmedPairing()
 
         assertTrue(service.state.value is PcBridgeUiState.Unpaired)
         assertNull(PcBridgeSecretStore(storage, ServiceWrappingCipher()).load())
         assertEquals(1, storage.clearCount)
-        assertEquals(0, transport.callCount)
+        assertEquals(callsBeforeForget, transport.callCount)
     }
 
     @Test
@@ -194,6 +197,37 @@ class PcBridgePairingServiceTest {
         assertTrue(store.load()!!.pendingConfirmation)
         assertEquals(0, storage.clearCount)
         assertEquals(0, transport.callCount)
+    }
+
+    @Test
+    fun `confirmed forget queued behind active refresh preserves the recovered pairing`() = runBlocking {
+        val storage = ServiceRecordStorage()
+        val store = PcBridgeSecretStore(storage, ServiceWrappingCipher())
+        store.save(testCredentials(pendingConfirmation = false))
+        val transport = OrderedDelayedTransport(
+            responses = listOf(
+                """{"status":{"state":"unknown"}}""",
+                """{"status":{"state":"active"}}""",
+            ),
+        )
+        val service = service(storage, transport)
+
+        val unavailableRefresh = async { service.refreshStatus() }
+        transport.started[0].await()
+        transport.release[0].complete(Unit)
+        unavailableRefresh.await()
+        assertTrue(service.state.value is PcBridgeUiState.ConfirmedRecovery)
+
+        val activeRefresh = async { service.refreshStatus() }
+        transport.started[1].await()
+        val forget = async(start = CoroutineStart.UNDISPATCHED) { service.forgetUnavailableConfirmedPairing() }
+        transport.release[1].complete(Unit)
+        activeRefresh.await()
+        forget.await()
+
+        assertTrue(service.state.value is PcBridgeUiState.Paired)
+        assertNotNull(store.load())
+        assertEquals(0, storage.clearCount)
     }
 
     @Test

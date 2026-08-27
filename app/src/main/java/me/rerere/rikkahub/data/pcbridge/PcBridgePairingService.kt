@@ -196,6 +196,10 @@ class PcBridgePairingService(
     }
 
     override suspend fun forgetUnavailableConfirmedPairing() = pairingOperationMutex.withLock {
+        if (mutableState.value !is PcBridgeUiState.ConfirmedRecovery) {
+            restoreLocalRecoveryWithoutForgetting()
+            return@withLock
+        }
         val credentials = secretStore.load()
         if (credentials == null) {
             mutableState.value = PcBridgeUiState.Unpaired
@@ -212,6 +216,20 @@ class PcBridgePairingService(
             throw error
         } catch (_: Exception) {
             mutableState.value = PcBridgeUiState.ConfirmedRecovery
+        } finally {
+            credentials.envelopeKey.fill(0)
+        }
+    }
+
+    private suspend fun restoreLocalRecoveryWithoutForgetting() {
+        val credentials = secretStore.load() ?: run {
+            mutableState.value = PcBridgeUiState.Unpaired
+            return
+        }
+        try {
+            if (credentials.pendingConfirmation) {
+                mutableState.value = PcBridgeUiState.PendingRecovery
+            }
         } finally {
             credentials.envelopeKey.fill(0)
         }

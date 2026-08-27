@@ -58,3 +58,40 @@ No Gradle output lock occurred in these final two runs. No cache was cleared and
 
 - No Edge Function, Supabase, relay, APK installation, deployment, push, or memory/Ombre changes were made.
 - Existing user-owned Code Hut/Harness changes remain untouched. The shared `CodeHutVM.kt` and `CodeHutPage.kt` PC Bridge hunks intentionally remain **unstaged** because each file already contains unrelated user work; final release assembly must include those precise hunks after a separate shared-file review.
+
+## Follow-up review — queued refresh/forget race
+
+### Root cause
+
+The ViewModel already gates the confirmed local-forget action to `ConfirmedRecovery`, but a delayed refresh may hold `pairingOperationMutex` while the UI is still showing that state. If the refresh then receives authoritative `active` status, it restores `Paired`; a forget request that was queued while the old UI was visible must not clear that newly healthy credential after it acquires the mutex.
+
+### TDD — RED evidence
+
+Added `confirmed forget queued behind active refresh preserves the recovered pairing` using the real service, encrypted store, mutex, and an ordered delayed relay transport. With the new service-side `ConfirmedRecovery` recheck temporarily removed, the focused command failed exactly as expected: one test, one assertion failure at the final `Paired` assertion because the queued forget cleared the healthy local record.
+
+```powershell
+$env:JAVA_HOME='D:\ebbingflow\jdk-17.0.19+10'
+$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
+$env:GRADLE_USER_HOME='D:\Daddy-Gradle'
+& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' :app:testDebugUnitTest --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgePairingServiceTest.confirmed forget queued behind active refresh preserves the recovered pairing'
+```
+
+### Minimal fix
+
+`forgetUnavailableConfirmedPairing()` now rechecks `mutableState` **after** it obtains `pairingOperationMutex`. It clears a confirmed credential only while the current state is still `ConfirmedRecovery`. If a serialized operation has already moved the service elsewhere, it reloads the local record without clearing it: an absent record becomes `Unpaired`, a pending record becomes `PendingRecovery`, and an already recovered confirmed record leaves its authoritative state intact.
+
+### GREEN evidence
+
+The normal worktree output JAR was held by another Windows process (`bundleDebugClassesToCompileJar/classes.jar`); it was not deleted and no process/cache was changed. A temporary, ignored Gradle init script isolated this verification in `.pcbridge-race-test-build/` and was not committed.
+
+```powershell
+& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' --console=plain -I '.superpowers\sdd\2026-08-26-daddy-pc-code-hut-pairing\pcbridge-race-test.init.gradle' :app:testDebugUnitTest --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgePairingServiceTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgeUiPolicyTest' --tests 'me.rerere.rikkahub.data.pcbridge.PcBridgePairingManualTest' --tests 'me.rerere.rikkahub.ui.pages.codehut.CodeHutVMActionSafetyTest'
+```
+
+Result: `BUILD SUCCESSFUL`; 36 focused JVM tests, 0 failures, 0 errors.
+
+```powershell
+& 'D:\Daddy-Gradle\wrapper\dists\gradle-9.4.1-bin\arn2x92ynaizyzdaamcbpbhtj\gradle-9.4.1\bin\gradle.bat' --console=plain -I '.superpowers\sdd\2026-08-26-daddy-pc-code-hut-pairing\pcbridge-race-test.init.gradle' :app:compileDebugAndroidTestKotlin
+```
+
+Result: `BUILD SUCCESSFUL in 13s`. The only output was the existing unresolved opt-in marker warning for `ExperimentalNavigation3Api`; no source or dependency changes were made for it.
