@@ -158,6 +158,9 @@ fun VisitorLoungePage(
                                 }
                                 VisitorLoungeStartResult.Busy -> snackbar.showSnackbar("已有一场外出访问正在进行")
                                 VisitorLoungeStartResult.MissingCredential -> snackbar.showSnackbar("找不到此朋友的 Visitor Key，请重新保存")
+                                VisitorLoungeStartResult.ProactiveNotAllowed,
+                                VisitorLoungeStartResult.ProactiveRateLimited
+                                -> snackbar.showSnackbar("此访问暂时不可用，请稍后重试")
                             }
                         }
                     },
@@ -215,7 +218,7 @@ private fun FriendCard(
             headlineContent = { Text("允许自主拜访") },
             supportingContent = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("默认关闭；开启后仍受频率和总次数限制。")
+                    Text("默认关闭；开启后，主助手可在正常聊天结束时发起访问，仍受频率和总次数限制。")
                     Switch(
                         checked = friend.consent == VisitorLoungeConsent.ALLOW_PROACTIVE,
                         onCheckedChange = onConsentChange,

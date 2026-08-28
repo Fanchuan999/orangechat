@@ -22,6 +22,8 @@ sealed interface VisitorLoungeStartResult {
     data class Started(val visit: VisitorLoungeVisit) : VisitorLoungeStartResult
     data object Busy : VisitorLoungeStartResult
     data object MissingCredential : VisitorLoungeStartResult
+    data object ProactiveNotAllowed : VisitorLoungeStartResult
+    data object ProactiveRateLimited : VisitorLoungeStartResult
 }
 
 /** Coordinates the app's single outgoing visitor-lounge session. */
@@ -31,17 +33,52 @@ class VisitorLoungeVisitCoordinator(
     private val mcpClient: VisitorLoungeMcpClient,
     private val appScope: AppScope,
     private val conversationRepository: ConversationRepository,
+    private val proactivePolicy: VisitorLoungeProactivePolicy = VisitorLoungeProactivePolicy(),
     private val now: () -> Instant = Instant::now,
 ) {
     private val outgoingMutex = Mutex()
     private val visitJobs = ConcurrentHashMap<String, Job>()
 
-    suspend fun startManual(sourceConversationId: String?, friendId: String, topic: String): VisitorLoungeStartResult {
+    suspend fun startManual(sourceConversationId: String?, friendId: String, topic: String): VisitorLoungeStartResult =
+        start(sourceConversationId, friendId, topic, VisitorLoungeVisitMode.MANUAL)
+
+    suspend fun startProactive(sourceConversationId: String, friendId: String, topic: String): VisitorLoungeStartResult =
+        start(sourceConversationId, friendId, topic, VisitorLoungeVisitMode.PROACTIVE)
+
+    suspend fun proactivePrompt(): String? {
+        val visits = repository.visits()
+        val availableFriends = repository.proactiveFriends().filter { friend ->
+            proactivePolicy.evaluate(friend, visits, now()) == VisitorLoungeProactiveDecision.ALLOW
+        }
+        return availableFriends.takeIf { it.isNotEmpty() }?.let(VisitorLoungeProactiveDirectiveParser::promptFor)
+    }
+
+    private suspend fun start(
+        sourceConversationId: String?,
+        friendId: String,
+        topic: String,
+        mode: VisitorLoungeVisitMode,
+    ): VisitorLoungeStartResult {
         if (!outgoingMutex.tryLock()) return VisitorLoungeStartResult.Busy
         val friend = repository.getFriend(friendId)
         if (friend == null) {
             outgoingMutex.unlock()
             return VisitorLoungeStartResult.MissingCredential
+        }
+        if (mode == VisitorLoungeVisitMode.PROACTIVE) {
+            when (proactivePolicy.evaluate(friend, repository.visits(), now())) {
+                VisitorLoungeProactiveDecision.CONSENT_REQUIRED -> {
+                    outgoingMutex.unlock()
+                    return VisitorLoungeStartResult.ProactiveNotAllowed
+                }
+                VisitorLoungeProactiveDecision.FRIEND_COOLDOWN,
+                VisitorLoungeProactiveDecision.GLOBAL_DAILY_LIMIT
+                -> {
+                    outgoingMutex.unlock()
+                    return VisitorLoungeStartResult.ProactiveRateLimited
+                }
+                VisitorLoungeProactiveDecision.ALLOW -> Unit
+            }
         }
         val hasCredential = secretStore.withKey(friendId) { true } == true
         if (!hasCredential) {
@@ -52,7 +89,7 @@ class VisitorLoungeVisitCoordinator(
             val visit = repository.createVisit(
                 friendId = friendId,
                 sourceConversationId = sourceConversationId,
-                mode = VisitorLoungeVisitMode.MANUAL,
+                mode = mode,
                 topic = topic,
             )
             visitJobs[visit.id] = appScope.launch {

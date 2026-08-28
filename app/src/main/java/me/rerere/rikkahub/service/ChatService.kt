@@ -107,6 +107,8 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.withoutVisitorLoungeReportCards
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
+import me.rerere.rikkahub.data.lounge.VisitorLoungeProactiveDirectiveParser
+import me.rerere.rikkahub.data.lounge.VisitorLoungeVisitCoordinator
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.data.model.selectContextMessages
 import me.rerere.rikkahub.data.model.toMessageNode
@@ -176,6 +178,7 @@ class ChatService(
     private val memoryBankService: MemoryBankService,
     private val folderRepository: FolderRepository,
     private val companionMoodEngine: CompanionMoodEngine,
+    private val visitorLoungeVisitCoordinator: VisitorLoungeVisitCoordinator,
     /**
      * The PC bridge includes encrypted local state and should not be resolved merely because a
      * chat page is opened. Resolving it on demand keeps an unavailable PC bridge from blocking
@@ -867,6 +870,17 @@ class ChatService(
         val assistant = settings.getAssistantById(initialConversation.assistantId)
             ?: settings.getCurrentAssistant()
         val model = settings.findModelById(assistant.chatModelId ?: settings.chatModelId) ?: return
+        val isPrimaryAssistant = assistant.id == settings.getCurrentAssistant().id
+        val visitorLoungePrompt = if (isPrimaryAssistant) {
+            try {
+                visitorLoungeVisitCoordinator.proactivePrompt()
+            } catch (error: Exception) {
+                Log.w(TAG, "Failed to prepare visitor lounge prompt", error)
+                null
+            }
+        } else {
+            null
+        }
 
         val senderName = if (assistant.useAssistantAvatar) {
             assistant.name.ifEmpty { context.getString(R.string.assistant_page_default_assistant) }
@@ -989,9 +1003,14 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                 }) { duplicateToolName ->
                     Log.w(TAG, "Dropped duplicate tool name: $duplicateToolName")
                 },
-                pluginPromptInjections = pluginToolProvider.getPluginPromptInjections(
-                    allowedPluginIds = smartToolSelection.allowedPluginIds,
-                ),
+                pluginPromptInjections = buildList {
+                    addAll(
+                        pluginToolProvider.getPluginPromptInjections(
+                            allowedPluginIds = smartToolSelection.allowedPluginIds,
+                        ),
+                    )
+                    visitorLoungePrompt?.let(::add)
+                },
                 conversationId = conversationId.toString(),
             ).onCompletion {
                 // 取消 Live Update 通知
@@ -1034,10 +1053,57 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
             Logging.log(TAG, "handleMessageComplete: $it")
             Logging.log(TAG, it.stackTraceToString())
         }.onSuccess {
-            val finalConversation = session.saveMutex.withLock {
+            var finalConversation = session.saveMutex.withLock {
                 val latest = getConversationFlow(conversationId).value
                 saveConversation(conversationId, latest)
                 latest
+            }
+            val proactiveDirective = if (isPrimaryAssistant) {
+                finalConversation.currentMessages.lastOrNull { it.role == MessageRole.ASSISTANT }
+                    ?.parts
+                    ?.filterIsInstance<UIMessagePart.Text>()
+                    ?.joinToString("\n") { it.text }
+                    ?.let(VisitorLoungeProactiveDirectiveParser::consume)
+            } else {
+                null
+            }
+            if (proactiveDirective != null) {
+                finalConversation = session.saveMutex.withLock {
+                    val latest = conversationRepo.getConversationById(conversationId) ?: finalConversation
+                    val lastAssistant = latest.currentMessages.lastOrNull { it.role == MessageRole.ASSISTANT }
+                        ?: return@withLock latest
+                    val cleanedAssistant = lastAssistant.copy(
+                        parts = lastAssistant.parts.map { part ->
+                            if (part is UIMessagePart.Text) {
+                                part.copy(text = VisitorLoungeProactiveDirectiveParser.hideDirectiveMarkers(part.text))
+                            } else {
+                                part
+                            }
+                        },
+                    )
+                    val cleanedConversation = latest.copy(
+                        messageNodes = latest.messageNodes.map { node ->
+                            node.copy(
+                                messages = node.messages.map { message ->
+                                    if (message.id == cleanedAssistant.id) cleanedAssistant else message
+                                },
+                            )
+                        },
+                    )
+                    saveConversation(conversationId, cleanedConversation)
+                    cleanedConversation
+                }
+                appScope.launch {
+                    runCatching {
+                        visitorLoungeVisitCoordinator.startProactive(
+                            sourceConversationId = conversationId.toString(),
+                            friendId = proactiveDirective.friendId,
+                            topic = proactiveDirective.topic,
+                        )
+                    }.onFailure {
+                        Log.w(TAG, "Failed to start proactive visitor lounge visit")
+                    }
+                }
             }
             val waitingForToolApproval = finalConversation.currentMessages.lastOrNull()
                 ?.getTools()

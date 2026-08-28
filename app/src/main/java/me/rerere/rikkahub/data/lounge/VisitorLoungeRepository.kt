@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.lounge
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import me.rerere.rikkahub.data.db.dao.VisitorLoungeDao
 import me.rerere.rikkahub.data.db.entity.VisitorLoungeFriendEntity
@@ -35,7 +36,12 @@ class VisitorLoungeRepository(
 ) {
     fun observeFriends(): Flow<List<FriendPublicRecord>> = store.observeFriends()
 
+    suspend fun proactiveFriends(): List<FriendPublicRecord> =
+        observeFriends().first().filter { it.consent == VisitorLoungeConsent.ALLOW_PROACTIVE }
+
     fun observeVisits(): Flow<List<VisitorLoungeVisit>> = store.observeVisits()
+
+    suspend fun visits(): List<VisitorLoungeVisit> = store.visits()
 
     fun observeTranscript(visitId: String): Flow<List<VisitorLoungeTranscriptEntry>> = store.observeTranscript(visitId)
 
