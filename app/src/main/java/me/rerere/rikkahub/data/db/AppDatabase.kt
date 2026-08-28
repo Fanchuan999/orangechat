@@ -21,6 +21,7 @@ import me.rerere.rikkahub.data.db.dao.MemoryBankDAO
 import me.rerere.rikkahub.data.db.dao.MemoryDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
+import me.rerere.rikkahub.data.db.dao.VisitorLoungeDao
 import me.rerere.rikkahub.data.db.entity.ConversationEntity
 import me.rerere.rikkahub.data.db.entity.FavoriteEntity
 import me.rerere.rikkahub.data.db.entity.FolderEntity
@@ -31,6 +32,9 @@ import me.rerere.rikkahub.data.db.entity.MemoryEntity
 import me.rerere.rikkahub.data.db.entity.MessageNodeEntity
 import me.rerere.rikkahub.data.db.entity.SshHostEntity
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
+import me.rerere.rikkahub.data.db.entity.VisitorLoungeFriendEntity
+import me.rerere.rikkahub.data.db.entity.VisitorLoungeMessageEntity
+import me.rerere.rikkahub.data.db.entity.VisitorLoungeVisitEntity
 import me.rerere.rikkahub.data.db.dao.SshHostDao
 import me.rerere.rikkahub.data.security.SecurityAuditDao
 import me.rerere.rikkahub.data.security.SecurityAuditEntity
@@ -41,6 +45,7 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
 import me.rerere.rikkahub.data.db.migrations.Migration_16_17
 import me.rerere.rikkahub.data.db.migrations.Migration_24_25
 import me.rerere.rikkahub.data.db.migrations.Migration_8_9
+import me.rerere.rikkahub.data.db.migrations.Migration_29_30
 import me.rerere.rikkahub.utils.JsonInstant
 
 @Database(
@@ -58,8 +63,11 @@ import me.rerere.rikkahub.utils.JsonInstant
         WorkflowRunEntity::class,
         SshHostEntity::class,
         SecurityAuditEntity::class,
+        VisitorLoungeFriendEntity::class,
+        VisitorLoungeVisitEntity::class,
+        VisitorLoungeMessageEntity::class,
     ],
-    version = 29,
+    version = 30,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -107,6 +115,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sshHostDao(): SshHostDao
 
     abstract fun securityAuditDao(): SecurityAuditDao
+
+    abstract fun visitorLoungeDao(): VisitorLoungeDao
 }
 
 object TokenUsageConverter {
