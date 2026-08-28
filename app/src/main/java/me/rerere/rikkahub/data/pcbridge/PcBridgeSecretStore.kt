@@ -168,7 +168,8 @@ private class DataStorePcBridgeSecureRecordStorage(context: Context) : PcBridgeS
     }
 }
 
-private class AndroidKeystorePcBridgeWrappingCipher : PcBridgeWrappingCipher {
+/** Shared only by the pairing record and the local encrypted PC task board. */
+internal class AndroidKeystorePcBridgeWrappingCipher : PcBridgeWrappingCipher {
     override fun encrypt(plaintext: ByteArray): PcBridgeWrappedBytes {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())

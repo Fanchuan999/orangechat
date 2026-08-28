@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import java.util.concurrent.CancellationException
 import me.rerere.rikkahub.data.codehut.HarnessInboxClient
@@ -27,11 +28,14 @@ import me.rerere.rikkahub.data.datastore.HarnessSnapshot
 import me.rerere.rikkahub.data.pcbridge.PcBridgeUiActions
 import me.rerere.rikkahub.data.pcbridge.PcBridgeUiPolicy
 import me.rerere.rikkahub.data.pcbridge.PcBridgeUiState
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskCard
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskService
 import me.rerere.rikkahub.data.sync.companion.HarnessManager
 
 data class CodeHutUiState(
     val harnessSnapshot: HarnessSnapshot,
     val activeInboxTasks: List<HarnessInboxTask> = emptyList(),
+    val activePcTasks: List<PcBridgeTaskCard> = emptyList(),
     val pcBridge: PcBridgeUiState = PcBridgeUiState.Unpaired,
     val inboxNotice: String? = null,
     val feedback: CodeHutFeedback? = null,
@@ -60,6 +64,9 @@ class CodeHutVM(
     private val loadInbox: suspend () -> HarnessInboxLoadResult,
     private val sendImage: suspend (HarnessImageAttachment) -> HarnessImageSendResult,
     private val pairingService: PcBridgeUiActions,
+    private val pcTaskCards: Flow<List<PcBridgeTaskCard>> = emptyFlow(),
+    private val restorePcTasks: suspend () -> Unit = {},
+    private val refreshPcTasks: suspend () -> Unit = {},
     actionScope: CoroutineScope? = null,
     private val refreshInboxOnStart: Boolean = true,
 ) : ViewModel() {
@@ -76,6 +83,7 @@ class CodeHutVM(
         harnessManager: HarnessManager,
         inboxClient: HarnessInboxClient,
         pairingService: PcBridgeUiActions,
+        pcTaskService: PcBridgeTaskService,
     ) : this(
         initialHarnessSnapshot = harnessManager.snapshot.value,
         harnessSnapshots = harnessManager.snapshot,
@@ -83,6 +91,9 @@ class CodeHutVM(
         loadInbox = inboxClient::loadActiveTasks,
         sendImage = inboxClient::sendImageToInbox,
         pairingService = pairingService,
+        pcTaskCards = pcTaskService.cards,
+        restorePcTasks = pcTaskService::restore,
+        refreshPcTasks = pcTaskService::refreshFromPc,
     )
 
     init {
@@ -94,6 +105,22 @@ class CodeHutVM(
         launchScope.launch(start = CoroutineStart.UNDISPATCHED) {
             pairingService.state.collect { pcBridge ->
                 _state.value = _state.value.copy(pcBridge = pcBridge)
+            }
+        }
+        launchScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            pcTaskCards.collect { cards ->
+                _state.value = _state.value.copy(activePcTasks = cards)
+            }
+        }
+        launchScope.launch {
+            try {
+                restorePcTasks()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                _state.value = _state.value.copy(
+                    feedback = nextFeedback("无法恢复本机电脑任务看板。", isError = true),
+                )
             }
         }
         refreshPcBridge()
@@ -142,6 +169,18 @@ class CodeHutVM(
             throw error
         } catch (_: Exception) {
             publishPcBridgeError("无法刷新电脑状态，请重试。")
+        }
+    }
+
+    fun refreshPcTaskBoard(): Job = launchScope.launch {
+        try {
+            refreshPcTasks()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            _state.value = _state.value.copy(
+                feedback = nextFeedback("无法刷新电脑任务，请确认电脑中继正在运行。", isError = true),
+            )
         }
     }
 

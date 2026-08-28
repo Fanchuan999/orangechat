@@ -64,6 +64,10 @@ import me.rerere.rikkahub.data.pcbridge.PcBridgeUiActions
 import me.rerere.rikkahub.data.pcbridge.buildPcBridgeRelayHttpClient
 import me.rerere.rikkahub.data.pcbridge.PcBridgeRelayClient
 import me.rerere.rikkahub.data.pcbridge.PcBridgeSecretStore
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskBoardStore
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskMailbox
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskMailboxClient
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskService
 import me.rerere.search.SearchService
 import me.rerere.rikkahub.data.sync.S3Sync
 import okhttp3.Dispatcher
@@ -312,6 +316,10 @@ val dataSourceModule = module {
     single { HarnessInboxClient(upstreamClient = get()) }
     single { PcBridgeSecretStore(context = get()) }
     single { PcBridgeRelayClient(httpClient = buildPcBridgeRelayHttpClient(get())) }
+    single { PcBridgeTaskMailboxClient(secretStore = get(), relayClient = get()) }
+    single<PcBridgeTaskMailbox> { get<PcBridgeTaskMailboxClient>() }
+    single { PcBridgeTaskBoardStore(context = get()) }
+    single { PcBridgeTaskService(mailbox = get(), boardStorage = get()) }
     single { PcBridgePairingService(secretStore = get(), relayClient = get()) }
     single<PcBridgeUiActions> { get<PcBridgePairingService>() }
 

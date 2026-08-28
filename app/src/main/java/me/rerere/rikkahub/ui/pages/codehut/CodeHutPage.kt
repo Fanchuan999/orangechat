@@ -53,6 +53,8 @@ import me.rerere.rikkahub.data.codehut.HarnessInboxTaskState
 import me.rerere.rikkahub.data.codehut.redactCodeHutUiText
 import me.rerere.rikkahub.data.pcbridge.PcBridgeUiPolicy
 import me.rerere.rikkahub.data.pcbridge.PcBridgeUiState
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskCard
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskCardState
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.CustomColors
@@ -107,6 +109,9 @@ fun CodeHutPage(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { InboxBoardCard(state.activeInboxTasks, state.inboxNotice, vm::refreshInbox) }
+            if (state.pcBridge is PcBridgeUiState.Paired) {
+                item { PcTaskBoardCard(state.activePcTasks, vm::refreshPcTaskBoard) }
+            }
             item {
                 PcBridgeCard(
                     state = state.pcBridge,
@@ -170,7 +175,7 @@ private fun readImageAtMostHarnessLimit(input: InputStream): ByteArray? {
 private fun InboxBoardCard(tasks: List<HarnessInboxTask>, notice: String?, onRefresh: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("任务看板", style = MaterialTheme.typography.titleLarge)
+            Text("手机 Harness 任务", style = MaterialTheme.typography.titleLarge)
             Text(
                 "这里仅显示待执行或执行中的收件箱任务；已完成和失败的任务会自动从首页消失。",
                 style = MaterialTheme.typography.bodySmall,
@@ -207,6 +212,53 @@ private fun InboxBoardCard(tasks: List<HarnessInboxTask>, notice: String?, onRef
             FilledTonalButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) { Text("刷新任务状态") }
         }
     }
+}
+
+@Composable
+private fun PcTaskBoardCard(tasks: List<PcBridgeTaskCard>, onRefresh: () -> Unit) {
+    val activeTasks = tasks.filter { it.state !in setOf(PcBridgeTaskCardState.COMPLETE, PcBridgeTaskCardState.FAILED, PcBridgeTaskCardState.CANCELED) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("电脑任务", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "任务内容以加密信封发送给已配对电脑；这里仅保留进行中的简短状态，完成或失败后会从首页消失。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (activeTasks.isEmpty()) {
+                Text(
+                    "目前没有进行中的电脑任务。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                activeTasks.groupBy { it.state }.forEach { (taskState, group) ->
+                    Text(taskState.label(), style = MaterialTheme.typography.titleMedium)
+                    group.forEach { task ->
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(task.brief.take(160), style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                task.summary,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+            FilledTonalButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) { Text("刷新电脑任务") }
+        }
+    }
+}
+
+private fun PcBridgeTaskCardState.label(): String = when (this) {
+    PcBridgeTaskCardState.AWAITING_PC -> "待电脑接收"
+    PcBridgeTaskCardState.RECEIVED -> "已接收"
+    PcBridgeTaskCardState.RUNNING -> "执行中"
+    PcBridgeTaskCardState.WAITING_PHONE_APPROVAL -> "等待你确认"
+    PcBridgeTaskCardState.COMPLETE,
+    PcBridgeTaskCardState.FAILED,
+    PcBridgeTaskCardState.CANCELED -> "已结束"
 }
 
 private fun HarnessInboxTaskState.label(): String = when (this) {

@@ -72,6 +72,10 @@ val appModule = module {
         LocalTools(get(), get(), get(), get(), get())
     }
 
+    single {
+        me.rerere.rikkahub.data.ai.tools.PcBridgeTaskTools(get())
+    }
+
     // 微信 Bot (iLink 协议) HTTP 客户端
     single { me.rerere.rikkahub.data.weixin.WeixinBotClient(get()) }
 
@@ -89,6 +93,7 @@ val appModule = module {
             workspaceRepository = get(),
             json = get(),
             memoryRepository = get(),
+            pcBridgeTaskTools = get(),
         )
     }
 

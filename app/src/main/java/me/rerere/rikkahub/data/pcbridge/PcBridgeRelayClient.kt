@@ -8,6 +8,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl
@@ -64,6 +65,44 @@ class PcBridgeRelayClient(
             parseObject(response).isStrictBooleanTrue("revoked")
         }
 
+    /** Sends only routing metadata plus AES-GCM ciphertext to the private relay. */
+    internal suspend fun enqueueEnvelope(credentials: PcBridgeCredentials, envelope: PcBridgeRelayEnvelope) {
+        validateEnvelope(envelope)
+        val response = authenticated(
+            credentials,
+            "{\"operation\":\"enqueue\",\"envelope\":${Json.encodeToString(envelope)}}",
+        )
+        if (!parseObject(response).isStrictBooleanTrue("accepted")) throw PcBridgeRelayException()
+    }
+
+    internal suspend fun claimNextEnvelope(
+        credentials: PcBridgeCredentials,
+        leaseId: String,
+    ): PcBridgeRelayEnvelope? {
+        requireIdentifier(leaseId, "lease id")
+        val response = authenticated(credentials, "{\"operation\":\"claimNext\",\"leaseId\":\"$leaseId\"}")
+        val claimed = parseObject(response)["claimed"] ?: return null
+        return try {
+            Json.decodeFromJsonElement<PcBridgeRelayEnvelope>(claimed)
+        } catch (_: Exception) {
+            throw PcBridgeRelayException()
+        }
+    }
+
+    internal suspend fun markEnvelopeReceived(
+        credentials: PcBridgeCredentials,
+        envelopeId: String,
+        leaseId: String,
+    ) {
+        requireIdentifier(envelopeId, "envelope id")
+        requireIdentifier(leaseId, "lease id")
+        val response = authenticated(
+            credentials,
+            "{\"operation\":\"markReceived\",\"envelopeId\":\"$envelopeId\",\"leaseId\":\"$leaseId\"}",
+        )
+        if (!parseObject(response).isStrictBooleanTrue("received")) throw PcBridgeRelayException()
+    }
+
     private suspend fun authenticated(credentials: PcBridgeCredentials, body: String): String {
         val endpoint = PcBridgeEndpointPolicy.requireExactRelayEndpoint(credentials.endpoint)
         val proof = PcBridgeRelayProof.create(
@@ -109,7 +148,26 @@ class PcBridgeRelayClient(
         return !value.isString && value.booleanOrNull == true
     }
 
+    private fun validateEnvelope(envelope: PcBridgeRelayEnvelope) {
+        requireIdentifier(envelope.envelopeId, "envelope id")
+        requireIdentifier(envelope.taskId, "task id")
+        requireIdentifier(envelope.attemptId, "attempt id")
+        requireIdentifier(envelope.targetDeviceId, "target device id")
+        require(envelope.sequence >= 0) { "Invalid PC bridge envelope sequence" }
+        require(envelope.expiresAt > 0) { "Invalid PC bridge envelope expiry" }
+        require(envelope.encryption.version == 1) { "Unsupported PC bridge envelope version" }
+        require(envelope.encryption.iv.isNotBlank() && envelope.encryption.ciphertext.isNotBlank()) {
+            "Invalid PC bridge encrypted envelope"
+        }
+    }
+
+    private fun requireIdentifier(value: String, field: String) {
+        require(IDENTIFIER.matches(value)) { "Invalid PC bridge $field" }
+    }
+
     companion object {
+        private val IDENTIFIER = Regex("[A-Za-z0-9_-]{1,128}")
+
         fun newRelayToken(): String = ByteArray(32).also(SecureRandom()::nextBytes).let(PcBridgeCrypto::encodeBase64Url)
 
         private fun newNonce(): String = ByteArray(24)
