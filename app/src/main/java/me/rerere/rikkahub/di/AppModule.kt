@@ -149,7 +149,7 @@ val appModule = module {
             memoryBankService = get(),
             folderRepository = get(),
             companionMoodEngine = get(),
-            pcBridgeTaskTools = get(),
+            pcBridgeTaskToolsProvider = { get() },
         )
     }
 

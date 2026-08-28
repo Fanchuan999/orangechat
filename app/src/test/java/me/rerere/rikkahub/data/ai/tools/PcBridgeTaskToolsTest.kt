@@ -44,11 +44,22 @@ class PcBridgeTaskToolsTest {
     }
 
     @Test
-    fun `interactive chat always includes paired PC task tools outside manual plugin selection`() {
+    fun `interactive chat defers PC bridge construction until a message needs its tools`() {
         val chatService = File("src/main/java/me/rerere/rikkahub/service/ChatService.kt").readText()
 
-        assertTrue(chatService.contains("private val pcBridgeTaskTools: PcBridgeTaskTools"))
-        assertTrue(chatService.contains("addAll(pcBridgeTaskTools.getTools())"))
+        assertTrue(chatService.contains("private val pcBridgeTaskToolsProvider: () -> PcBridgeTaskTools"))
+        assertTrue(chatService.contains("addAll(pcBridgeTaskToolsProvider().getTools())"))
+    }
+
+    @Test
+    fun `PC task service resolves its board through the repository interface`() {
+        val dataSourceModule = File("src/main/java/me/rerere/rikkahub/di/DataSourceModule.kt").readText()
+
+        assertTrue(
+            dataSourceModule.contains(
+                "single<PcBridgeTaskBoardRepository> { get<PcBridgeTaskBoardStore>() }",
+            ),
+        )
     }
 
     private class RecordingMailbox : PcBridgeTaskMailbox {

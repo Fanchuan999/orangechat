@@ -65,6 +65,7 @@ import me.rerere.rikkahub.data.pcbridge.buildPcBridgeRelayHttpClient
 import me.rerere.rikkahub.data.pcbridge.PcBridgeRelayClient
 import me.rerere.rikkahub.data.pcbridge.PcBridgeSecretStore
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskBoardStore
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskBoardRepository
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskMailbox
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskMailboxClient
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskService
@@ -319,6 +320,7 @@ val dataSourceModule = module {
     single { PcBridgeTaskMailboxClient(secretStore = get(), relayClient = get()) }
     single<PcBridgeTaskMailbox> { get<PcBridgeTaskMailboxClient>() }
     single { PcBridgeTaskBoardStore(context = get()) }
+    single<PcBridgeTaskBoardRepository> { get<PcBridgeTaskBoardStore>() }
     single { PcBridgeTaskService(mailbox = get(), boardStorage = get()) }
     single { PcBridgePairingService(secretStore = get(), relayClient = get()) }
     single<PcBridgeUiActions> { get<PcBridgePairingService>() }

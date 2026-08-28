@@ -175,7 +175,12 @@ class ChatService(
     private val memoryBankService: MemoryBankService,
     private val folderRepository: FolderRepository,
     private val companionMoodEngine: CompanionMoodEngine,
-    private val pcBridgeTaskTools: PcBridgeTaskTools,
+    /**
+     * The PC bridge includes encrypted local state and should not be resolved merely because a
+     * chat page is opened. Resolving it on demand keeps an unavailable PC bridge from blocking
+     * normal companion chats.
+     */
+    private val pcBridgeTaskToolsProvider: () -> PcBridgeTaskTools,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
@@ -979,7 +984,7 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                     )
                     // PC bridge is a native, paired-device capability. It must remain available even when
                     // MCP/plugin tools are manually throttled, otherwise Daddy cannot dispatch a PC task.
-                    addAll(pcBridgeTaskTools.getTools())
+                    addAll(pcBridgeTaskToolsProvider().getTools())
                 }) { duplicateToolName ->
                     Log.w(TAG, "Dropped duplicate tool name: $duplicateToolName")
                 },
