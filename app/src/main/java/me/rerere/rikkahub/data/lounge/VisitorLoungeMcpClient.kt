@@ -165,6 +165,7 @@ class StreamableVisitorLoungeMcpSessionFactory : VisitorLoungeMcpSessionFactory 
             requestBuilder = {
                 headers.append(HttpHeaders.Authorization, "Bearer $visitorKey")
             },
+            logPayloads = false,
         )
         val client = Client(
             clientInfo = Implementation(name = "Daddy Visitor Lounge", version = "2.5.45"),

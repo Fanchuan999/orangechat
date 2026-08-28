@@ -71,6 +71,7 @@ public class StreamableHttpClientTransport(
     private val url: String,
     private val reconnectionTime: Duration? = null,
     private val requestBuilder: HttpRequestBuilder.() -> Unit = {},
+    private val logPayloads: Boolean = true,
 ) : AbstractTransport() {
     public var sessionId: String? = null
         private set
@@ -109,7 +110,11 @@ public class StreamableHttpClientTransport(
         onResumptionToken: ((String) -> Unit)? = null,
     ) {
         check(initialized.load()) { "Transport is not started" }
-        Log.d(TAG, "Client sending message via POST to $url: ${McpJson.encodeToString(message)}")
+        if (logPayloads) {
+            Log.d(TAG, "Client sending message via POST to $url: ${McpJson.encodeToString(message)}")
+        } else {
+            Log.d(TAG, "Client sending message via POST to $url")
+        }
 
         // If we have a resumption token, reconnect the SSE stream with it
         resumptionToken?.let { token ->
@@ -294,7 +299,11 @@ public class StreamableHttpClientTransport(
                     lastEventId = it
                     onResumptionToken?.invoke(it)
                 }
-                Log.d(TAG, "Client received SSE event: event=${event.event}, data=${event.data}, id=${event.id}")
+                if (logPayloads) {
+                    Log.d(TAG, "Client received SSE event: event=${event.event}, data=${event.data}, id=${event.id}")
+                } else {
+                    Log.d(TAG, "Client received SSE event: event=${event.event}, id=${event.id}")
+                }
                 when (event.event) {
                     null, "message" ->
                         event.data?.takeIf { it.isNotEmpty() }?.let { json ->
