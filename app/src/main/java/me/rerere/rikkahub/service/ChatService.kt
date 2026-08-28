@@ -73,6 +73,7 @@ import me.rerere.rikkahub.data.ai.GenerationChunk
 import me.rerere.rikkahub.data.ai.GenerationHandler
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.tools.LocalTools
+import me.rerere.rikkahub.data.ai.tools.PcBridgeTaskTools
 import me.rerere.rikkahub.data.ai.tools.SmartToolRouter
 import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.ai.tools.ToolNaming
@@ -174,6 +175,7 @@ class ChatService(
     private val memoryBankService: MemoryBankService,
     private val folderRepository: FolderRepository,
     private val companionMoodEngine: CompanionMoodEngine,
+    private val pcBridgeTaskTools: PcBridgeTaskTools,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
@@ -975,6 +977,9 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                             allowedPluginIds = smartToolSelection.allowedPluginIds,
                         )
                     )
+                    // PC bridge is a native, paired-device capability. It must remain available even when
+                    // MCP/plugin tools are manually throttled, otherwise Daddy cannot dispatch a PC task.
+                    addAll(pcBridgeTaskTools.getTools())
                 }) { duplicateToolName ->
                     Log.w(TAG, "Dropped duplicate tool name: $duplicateToolName")
                 },

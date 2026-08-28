@@ -5,6 +5,7 @@ import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskMailbox
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskRequest
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskService
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -40,6 +41,14 @@ class PcBridgeTaskToolsTest {
         val tools = PcBridgeTaskTools(PcBridgeTaskService(UnpairedMailbox())).getTools()
 
         assertTrue(tools.isEmpty())
+    }
+
+    @Test
+    fun `interactive chat always includes paired PC task tools outside manual plugin selection`() {
+        val chatService = File("src/main/java/me/rerere/rikkahub/service/ChatService.kt").readText()
+
+        assertTrue(chatService.contains("private val pcBridgeTaskTools: PcBridgeTaskTools"))
+        assertTrue(chatService.contains("addAll(pcBridgeTaskTools.getTools())"))
     }
 
     private class RecordingMailbox : PcBridgeTaskMailbox {
