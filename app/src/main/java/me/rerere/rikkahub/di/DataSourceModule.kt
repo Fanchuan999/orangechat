@@ -46,7 +46,10 @@ import me.rerere.rikkahub.data.db.migrations.Migration_25_26
 import me.rerere.rikkahub.data.db.migrations.Migration_29_30
 import me.rerere.rikkahub.data.lounge.RoomVisitorLoungeRecordStore
 import me.rerere.rikkahub.data.lounge.VisitorLoungeRepository
+import me.rerere.rikkahub.data.lounge.VisitorLoungeMcpClient
+import me.rerere.rikkahub.data.lounge.VisitorLoungeMcpSessionFactory
 import me.rerere.rikkahub.data.lounge.VisitorLoungeSecretStore
+import me.rerere.rikkahub.data.lounge.StreamableVisitorLoungeMcpSessionFactory
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.service.CompanionMoodEngine
@@ -206,6 +209,10 @@ val dataSourceModule = module {
             removeCredential = secretStore::remove,
         )
     }
+
+    single<VisitorLoungeMcpSessionFactory> { StreamableVisitorLoungeMcpSessionFactory() }
+
+    single { VisitorLoungeMcpClient(factory = get()) }
 
     single {
         MessageFtsManager(get())

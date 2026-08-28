@@ -6,6 +6,11 @@
 
 package me.rerere.rikkahub.ui.components.message
 
+import me.rerere.rikkahub.Screen
+import me.rerere.rikkahub.data.model.VISITOR_LOUNGE_REPORT_TOOL_NAME
+import me.rerere.rikkahub.data.model.toVisitorLoungeReportCard
+import me.rerere.rikkahub.ui.context.LocalNavController
+
 import android.util.Log
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -205,6 +210,10 @@ fun ChainOfThoughtScope.ChatMessageToolStep(
 
     if (isAskUser) {
         AskUserToolStep(tool = tool, loading = loading, onToolAnswer = onToolAnswer)
+        return
+    }
+    if (tool.toolName == VISITOR_LOUNGE_REPORT_TOOL_NAME) {
+        VisitorLoungeReportToolStep(tool)
         return
     }
     var showResult by remember { mutableStateOf(false) }
@@ -645,6 +654,18 @@ fun ChainOfThoughtScope.ChatMessageToolStep(
             onDismissRequest = { showResult = false }
         )
     }
+}
+
+@Composable
+private fun ChainOfThoughtScope.VisitorLoungeReportToolStep(tool: UIMessagePart.Tool) {
+    val report = tool.toVisitorLoungeReportCard() ?: return
+    val navController = LocalNavController.current
+    ChainOfThoughtStep(
+        label = { Text("会客室 · ${report.friendDisplayName}") },
+        extra = { Text(report.status) },
+        onClick = { navController.navigate(Screen.VisitorLoungeVisit(report.visitId)) },
+        content = { Text(report.summary.ifBlank { "打开查看本地访问记录" }) },
+    )
 }
 
 @Composable

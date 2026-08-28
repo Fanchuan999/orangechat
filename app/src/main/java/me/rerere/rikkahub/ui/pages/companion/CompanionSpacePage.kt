@@ -547,6 +547,16 @@ fun CompanionSpacePage(
             }
 
             item {
+                CardGroup(title = { Text("会客室") }) {
+                    item(
+                        onClick = { navController.navigate(Screen.VisitorLounge) },
+                        headlineContent = { Text("带 Daddy 去朋友家的会客室") },
+                        supportingContent = { Text("保存朋友提供的 HTTPS MCP 入口与 Visitor Key，手动访问或按同意规则自主拜访。") },
+                    )
+                }
+            }
+
+            item {
                 CardGroup(title = { Text("下一间房") }) {
                     item(
                         headlineContent = { Text("一起看电影 / 共同活动") },

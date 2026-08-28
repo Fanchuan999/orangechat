@@ -104,6 +104,7 @@ import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.withoutVisitorLoungeReportCards
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
@@ -918,7 +919,7 @@ class ChatService(
                     } else {
                         it
                     }
-                },
+                }.withoutVisitorLoungeReportCards(),
                 assistant = assistant,
                 conversationSystemPrompt = conversation.customSystemPrompt,
                 workspaceCwd = conversation.workspaceCwd,

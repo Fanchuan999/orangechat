@@ -80,7 +80,7 @@ class VisitorLoungeSecretStore(
         }
     }
 
-    suspend fun <T> withKey(friendId: String, block: (String) -> T): T? {
+    suspend fun <T> withKey(friendId: String, block: suspend (String) -> T): T? {
         val record = storage.read(friendId)?.takeIf { it.version == 1 } ?: return null
         val iv = decodeOrNull(record.iv) ?: return null
         val ciphertext = decodeOrNull(record.ciphertext) ?: run {
