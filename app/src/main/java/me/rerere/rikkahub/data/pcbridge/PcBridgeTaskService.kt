@@ -81,12 +81,17 @@ class PcBridgeTaskService(
         persist()
     }
 
-    /** Pulls one compact PC event. The caller may invoke this from a refresh button or a later poller. */
+    /** Pulls the available compact PC progress events from one user refresh. */
     suspend fun refreshFromPc(): PcBridgeTaskProgress? {
         restore()
-        val progress = mailbox.claimNextProgress() ?: return null
-        applyProgress(progress)
-        return progress
+        expireUnreceivedTasks()
+        var latest: PcBridgeTaskProgress? = null
+        repeat(MAX_PROGRESS_EVENTS_PER_REFRESH) {
+            val progress = mailbox.claimNextProgress() ?: return latest
+            applyProgress(progress)
+            latest = progress
+        }
+        return latest
     }
 
     /** Restores only compact local card state; it does not read chat history, Ombre or Supabase. */
@@ -105,6 +110,29 @@ class PcBridgeTaskService(
     private suspend fun addCard(card: PcBridgeTaskCard) {
         mutableCards.value = mutableCards.value + card
         persist()
+    }
+
+    private suspend fun expireUnreceivedTasks() {
+        val now = nowMillis()
+        val current = mutableCards.value
+        val updated = current.map { card ->
+            if (
+                card.state == PcBridgeTaskCardState.AWAITING_PC &&
+                now - card.updatedAtMillis >= TASK_DELIVERY_TTL_MILLIS
+            ) {
+                card.copy(
+                    state = PcBridgeTaskCardState.FAILED,
+                    summary = "电脑未在 10 分钟内接收，任务已过期；可重新提交。",
+                    updatedAtMillis = now,
+                )
+            } else {
+                card
+            }
+        }
+        if (updated != current) {
+            mutableCards.value = updated
+            persist()
+        }
     }
 
     private suspend fun persist() {
@@ -164,6 +192,8 @@ class PcBridgeTaskService(
         const val MAX_CARD_BRIEF_CHARS = 320
         const val MAX_STORED_CARDS = 80
         const val MAX_HANDLED_EVENT_IDS = 256
+        const val MAX_PROGRESS_EVENTS_PER_REFRESH = 32
+        const val TASK_DELIVERY_TTL_MILLIS = 10 * 60 * 1000L
         val IDENTIFIER = Regex("[A-Za-z0-9_-]{1,128}")
         val REGISTERED_WORKSPACE_IDS = setOf("daddy-orangechat", "daddy-general")
 

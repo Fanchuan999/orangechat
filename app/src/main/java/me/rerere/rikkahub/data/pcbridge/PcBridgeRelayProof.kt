@@ -65,9 +65,9 @@ data class PcBridgeRelayProof(
 
         private fun canonicalJson(value: JsonElement): String = when (value) {
             JsonNull -> "null"
-            is JsonArray -> value.joinToString(prefix = "[", postfix = "]") { canonicalJson(it) }
+            is JsonArray -> value.joinToString(separator = ",", prefix = "[", postfix = "]") { canonicalJson(it) }
             is JsonObject -> {
-                value.entries.sortedBy { it.key }.joinToString(prefix = "{", postfix = "}") { (key, element) ->
+                value.entries.sortedBy { it.key }.joinToString(separator = ",", prefix = "{", postfix = "}") { (key, element) ->
                     "${Json.encodeToString(JsonPrimitive(key))}:${canonicalJson(element)}"
                 }
             }

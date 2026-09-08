@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.pcbridge
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -104,12 +105,78 @@ class PcBridgeTaskServiceTest {
         assertTrue(card.brief.length <= 320)
     }
 
+    @Test
+    fun `refresh expires a task that the PC did not receive within its delivery window`() = runBlocking {
+        var now = 1_800_000_000_000L
+        val service = PcBridgeTaskService(
+            mailbox = RecordingPcTaskMailbox(),
+            taskIdFactory = { "task-readme" },
+            attemptIdFactory = { "attempt-readme" },
+            nowMillis = { now },
+        )
+        service.submit("读取 README 标题", "daddy-orangechat", ".")
+
+        now += 10 * 60 * 1000L + 1
+        val progress = service.refreshFromPc()
+
+        assertNull(progress)
+        val card = service.cards.first().single()
+        assertEquals(PcBridgeTaskCardState.FAILED, card.state)
+        assertEquals("电脑未在 10 分钟内接收，任务已过期；可重新提交。", card.summary)
+    }
+
+    @Test
+    fun `refresh drains queued progress so a failed task is no longer active`() = runBlocking {
+        val mailbox = RecordingPcTaskMailbox().apply {
+            queuedProgress += PcBridgeTaskProgress(
+                eventId = "event-received",
+                taskId = "task-readme",
+                attemptId = "attempt-readme",
+                sequence = 1,
+                state = PcBridgeRemoteTaskState.RECEIVED,
+                summary = "电脑已收到任务。",
+            )
+            queuedProgress += PcBridgeTaskProgress(
+                eventId = "event-running",
+                taskId = "task-readme",
+                attemptId = "attempt-readme",
+                sequence = 2,
+                state = PcBridgeRemoteTaskState.RUNNING,
+                summary = "电脑正在执行任务。",
+            )
+            queuedProgress += PcBridgeTaskProgress(
+                eventId = "event-failed",
+                taskId = "task-readme",
+                attemptId = "attempt-readme",
+                sequence = 3,
+                state = PcBridgeRemoteTaskState.FAILED,
+                summary = "电脑执行失败，未修改任何文件。",
+            )
+        }
+        val service = PcBridgeTaskService(
+            mailbox = mailbox,
+            taskIdFactory = { "task-readme" },
+            attemptIdFactory = { "attempt-readme" },
+        )
+        service.submit("读取 README 标题", "daddy-orangechat", ".")
+
+        val latest = service.refreshFromPc()
+
+        assertEquals(PcBridgeRemoteTaskState.FAILED, latest?.state)
+        assertEquals(PcBridgeTaskCardState.FAILED, service.cards.first().single().state)
+        assertTrue(mailbox.queuedProgress.isEmpty())
+    }
+
     private class RecordingPcTaskMailbox : PcBridgeTaskMailbox {
         val sent = mutableListOf<PcBridgeTaskRequest>()
+        val queuedProgress = ArrayDeque<PcBridgeTaskProgress>()
 
         override suspend fun enqueue(request: PcBridgeTaskRequest) {
             sent += request
         }
+
+        override suspend fun claimNextProgress(): PcBridgeTaskProgress? =
+            if (queuedProgress.isEmpty()) null else queuedProgress.removeFirst()
     }
 
     private class MemoryBoardStorage : PcBridgeTaskBoardRepository {

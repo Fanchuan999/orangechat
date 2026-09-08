@@ -5,9 +5,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -82,6 +84,7 @@ class PcBridgeRelayClient(
         requireIdentifier(leaseId, "lease id")
         val response = authenticated(credentials, "{\"operation\":\"claimNext\",\"leaseId\":\"$leaseId\"}")
         val claimed = parseObject(response)["claimed"] ?: return null
+        if (claimed == JsonNull) return null
         return try {
             Json.decodeFromJsonElement<PcBridgeRelayEnvelope>(claimed)
         } catch (_: Exception) {
@@ -132,6 +135,10 @@ class PcBridgeRelayClient(
     private suspend fun post(endpoint: HttpUrl, body: String, headers: Map<String, String>): String = try {
         transport.post(endpoint, body, headers)
     } catch (error: CancellationException) {
+        throw error
+    } catch (error: PcBridgeRelayHttpException) {
+        throw PcBridgeRelayException.fromHttpStatus(error.statusCode, error.rejection)
+    } catch (error: PcBridgeRelayException) {
         throw error
     } catch (_: Exception) {
         throw PcBridgeRelayException()
@@ -185,7 +192,62 @@ class PcBridgeRelayClient(
     }
 }
 
-class PcBridgeRelayException : Exception("PC bridge relay request failed")
+class PcBridgeRelayException private constructor(message: String) : Exception(message) {
+    constructor() : this("PC bridge relay request failed")
+
+    companion object {
+        internal fun fromHttpStatus(
+            statusCode: Int,
+            rejection: PcBridgeRelayRejection? = null,
+        ): PcBridgeRelayException = when (rejection) {
+            PcBridgeRelayRejection.UNKNOWN_OR_REVOKED_DEVICE ->
+                PcBridgeRelayException("PC bridge relay no longer recognizes this paired phone (HTTP $statusCode).")
+
+            PcBridgeRelayRejection.INVALID_PROOF ->
+                PcBridgeRelayException("PC bridge relay could not verify the phone request proof (HTTP $statusCode).")
+
+            PcBridgeRelayRejection.PROOF_TIMESTAMP_OUT_OF_RANGE ->
+                PcBridgeRelayException("PC bridge relay rejected the phone proof because the phone clock is out of range (HTTP $statusCode).")
+
+            PcBridgeRelayRejection.RELAY_TOKEN_MISMATCH ->
+                PcBridgeRelayException("PC bridge relay rejected the saved phone credential (HTTP $statusCode).")
+
+            PcBridgeRelayRejection.REQUEST_BODY_MISMATCH ->
+                PcBridgeRelayException("PC bridge relay rejected the phone request body proof (HTTP $statusCode).")
+
+            PcBridgeRelayRejection.SIGNATURE_MISMATCH ->
+                PcBridgeRelayException("PC bridge relay rejected the phone request signature (HTTP $statusCode).")
+
+            PcBridgeRelayRejection.PROOF_FORMAT ->
+                PcBridgeRelayException("PC bridge relay rejected the phone request proof format (HTTP $statusCode).")
+
+            PcBridgeRelayRejection.MISSING_CREDENTIAL ->
+                PcBridgeRelayException("PC bridge relay did not receive the phone credential (HTTP $statusCode).")
+
+            null -> when (statusCode) {
+                401 -> PcBridgeRelayException("PC bridge relay rejected the phone credential (HTTP 401).")
+                else -> PcBridgeRelayException("PC bridge relay request failed (HTTP $statusCode).")
+            }
+        }
+    }
+}
+
+/** Transport-only status. Its response body is intentionally never retained or surfaced. */
+internal class PcBridgeRelayHttpException(
+    val statusCode: Int,
+    val rejection: PcBridgeRelayRejection? = null,
+) : Exception()
+
+internal enum class PcBridgeRelayRejection {
+    MISSING_CREDENTIAL,
+    PROOF_FORMAT,
+    UNKNOWN_OR_REVOKED_DEVICE,
+    INVALID_PROOF,
+    PROOF_TIMESTAMP_OUT_OF_RANGE,
+    RELAY_TOKEN_MISMATCH,
+    REQUEST_BODY_MISMATCH,
+    SIGNATURE_MISMATCH,
+}
 
 private class OkHttpPcBridgeRelayTransport(
     private val client: OkHttpClient,
@@ -199,10 +261,36 @@ private class OkHttpPcBridgeRelayTransport(
             .apply { headers.forEach { (name, value) -> header(name, value) } }
             .build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw PcBridgeRelayException()
+            if (!response.isSuccessful) {
+                throw PcBridgeRelayHttpException(
+                    statusCode = response.code,
+                    rejection = response.body.string().toSafeRelayRejection(),
+                )
+            }
             response.body.string()
         }
         }
+
+    private fun String.toSafeRelayRejection(): PcBridgeRelayRejection? {
+        val error = runCatching {
+            Json.parseToJsonElement(this).jsonObject["error"]?.jsonPrimitive?.contentOrNull
+        }.getOrNull()
+        return when (error) {
+            "Missing relay credential" -> PcBridgeRelayRejection.MISSING_CREDENTIAL
+            "Missing relay proof", "Malformed relay proof", "Device proof mismatch" ->
+                PcBridgeRelayRejection.PROOF_FORMAT
+
+            "Unknown or revoked relay device" -> PcBridgeRelayRejection.UNKNOWN_OR_REVOKED_DEVICE
+            "Invalid relay proof" -> PcBridgeRelayRejection.INVALID_PROOF
+            "Invalid relay proof: proof_timestamp_out_of_range" ->
+                PcBridgeRelayRejection.PROOF_TIMESTAMP_OUT_OF_RANGE
+
+            "Invalid relay proof: relay_token_mismatch" -> PcBridgeRelayRejection.RELAY_TOKEN_MISMATCH
+            "Invalid relay proof: request_body_mismatch" -> PcBridgeRelayRejection.REQUEST_BODY_MISMATCH
+            "Invalid relay proof: signature_mismatch" -> PcBridgeRelayRejection.SIGNATURE_MISMATCH
+            else -> null
+        }
+    }
 }
 
 @Serializable
