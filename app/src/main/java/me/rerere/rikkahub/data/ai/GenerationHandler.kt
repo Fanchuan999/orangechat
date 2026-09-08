@@ -195,6 +195,7 @@ class GenerationHandler(
                     processingStatus = processingStatus,
                     conversationSystemPrompt = conversationSystemPrompt,
                     workspaceCwd = workspaceCwd,
+                    requestSessionId = conversationId,
                 )
                 messages = messages.visualTransforms(
                     transformers = outputTransformers,
@@ -391,6 +392,7 @@ class GenerationHandler(
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
         conversationSystemPrompt: String? = null,
         workspaceCwd: String? = null,
+        requestSessionId: String? = null,
     ) {
         val internalMessages = buildList {
             val system = buildString {
@@ -624,12 +626,13 @@ class GenerationHandler(
             customBody = buildList {
                 addAll(assistant.customBodies)
                 addAll(model.customBodies)
-            }
+            },
+            requestSessionId = requestSessionId,
         )
         if (stream) {
             aiLoggingManager.addLog(
                 AILogging.Generation(
-                    params = params,
+                    params = params.copy(requestSessionId = null),
                     messages = messages,
                     providerSetting = provider,
                     stream = true
@@ -655,7 +658,7 @@ class GenerationHandler(
         } else {
             aiLoggingManager.addLog(
                 AILogging.Generation(
-                    params = params,
+                    params = params.copy(requestSessionId = null),
                     messages = messages,
                     providerSetting = provider,
                     stream = false

@@ -27,6 +27,7 @@ import me.rerere.ai.provider.Provider
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.provider.providers.openai.ChatCompletionsAPI
+import me.rerere.ai.provider.providers.openai.OpenCodeGoSessionPolicy
 import me.rerere.ai.provider.providers.openai.ResponseAPI
 import me.rerere.ai.ui.ImageAspectRatio
 import me.rerere.ai.ui.ImageGenerationItem
@@ -118,37 +119,54 @@ class OpenAIProvider(
         providerSetting: ProviderSetting.OpenAI,
         messages: List<UIMessage>,
         params: TextGenerationParams
-    ): Flow<MessageChunk> = if (providerSetting.useResponseApi) {
-        responseAPI.streamText(
-            providerSetting = providerSetting,
-            messages = messages,
-            params = params
-        )
-    } else {
-        chatCompletionsAPI.streamText(
-            providerSetting = providerSetting,
-            messages = messages,
-            params = params
-        )
+    ): Flow<MessageChunk> {
+        val resolvedParams = resolveOpenCodeGoSession(providerSetting, params)
+        return if (providerSetting.useResponseApi) {
+            responseAPI.streamText(
+                providerSetting = providerSetting,
+                messages = messages,
+                params = resolvedParams
+            )
+        } else {
+            chatCompletionsAPI.streamText(
+                providerSetting = providerSetting,
+                messages = messages,
+                params = resolvedParams
+            )
+        }
     }
 
     override suspend fun generateText(
         providerSetting: ProviderSetting.OpenAI,
         messages: List<UIMessage>,
         params: TextGenerationParams
-    ): MessageChunk = if (providerSetting.useResponseApi) {
-        responseAPI.generateText(
-            providerSetting = providerSetting,
-            messages = messages,
-            params = params
-        )
-    } else {
-        chatCompletionsAPI.generateText(
-            providerSetting = providerSetting,
-            messages = messages,
-            params = params
-        )
+    ): MessageChunk {
+        val resolvedParams = resolveOpenCodeGoSession(providerSetting, params)
+        return if (providerSetting.useResponseApi) {
+            responseAPI.generateText(
+                providerSetting = providerSetting,
+                messages = messages,
+                params = resolvedParams
+            )
+        } else {
+            chatCompletionsAPI.generateText(
+                providerSetting = providerSetting,
+                messages = messages,
+                params = resolvedParams
+            )
+        }
     }
+
+    private fun resolveOpenCodeGoSession(
+        providerSetting: ProviderSetting.OpenAI,
+        params: TextGenerationParams,
+    ): TextGenerationParams = params.copy(
+        customHeaders = OpenCodeGoSessionPolicy.apply(
+            baseUrl = providerSetting.baseUrl,
+            headers = params.customHeaders,
+            requestSessionId = params.requestSessionId,
+        ),
+    )
 
     override suspend fun generateEmbedding(
         providerSetting: ProviderSetting.OpenAI,
