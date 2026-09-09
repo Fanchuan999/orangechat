@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import me.rerere.rikkahub.data.db.entity.VisitorLoungeFriendEntity
 import me.rerere.rikkahub.data.db.entity.VisitorLoungeMessageEntity
 import me.rerere.rikkahub.data.db.entity.VisitorLoungeVisitEntity
+import me.rerere.rikkahub.data.db.entity.AutonomousActivityEntity
 
 @Dao
 interface VisitorLoungeDao {
@@ -49,4 +50,19 @@ interface VisitorLoungeDao {
             "(SELECT id FROM visitor_lounge_messages WHERE visit_id = :visitId ORDER BY created_at DESC, id DESC LIMIT :keep)",
     )
     suspend fun trimTranscript(visitId: String, keep: Int)
+}
+
+@Dao
+interface AutonomousActivityDao {
+    @Query("SELECT * FROM autonomous_activity_records ORDER BY created_at DESC, id DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<AutonomousActivityEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(record: AutonomousActivityEntity)
+
+    @Query(
+        "DELETE FROM autonomous_activity_records WHERE id NOT IN " +
+            "(SELECT id FROM autonomous_activity_records ORDER BY created_at DESC, id DESC LIMIT :keep)",
+    )
+    suspend fun trimToLatest(keep: Int)
 }

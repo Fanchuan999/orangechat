@@ -30,6 +30,7 @@ import me.rerere.rikkahub.data.api.SponsorAPI
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.dao.VisitorLoungeDao
+import me.rerere.rikkahub.data.db.dao.AutonomousActivityDao
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
 import me.rerere.rikkahub.data.db.fts.SimpleDictManager
 import me.rerere.rikkahub.data.db.migrations.Migration_6_7
@@ -44,6 +45,7 @@ import me.rerere.rikkahub.data.db.migrations.Migration_23_24
 import me.rerere.rikkahub.data.db.migrations.Migration_24_25
 import me.rerere.rikkahub.data.db.migrations.Migration_25_26
 import me.rerere.rikkahub.data.db.migrations.Migration_29_30
+import me.rerere.rikkahub.data.db.migrations.Migration_30_31
 import me.rerere.rikkahub.data.lounge.RoomVisitorLoungeRecordStore
 import me.rerere.rikkahub.data.lounge.VisitorLoungeRepository
 import me.rerere.rikkahub.data.lounge.VisitorLoungeMcpClient
@@ -52,6 +54,8 @@ import me.rerere.rikkahub.data.lounge.VisitorLoungeSecretStore
 import me.rerere.rikkahub.data.lounge.StreamableVisitorLoungeMcpSessionFactory
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.service.MemoryBankService
+import me.rerere.rikkahub.data.service.AutonomousActivityRepository
+import me.rerere.rikkahub.data.service.RoomAutonomousActivityRecordStore
 import me.rerere.rikkahub.data.service.CompanionMoodEngine
 import me.rerere.rikkahub.data.service.CompanionDiaryService
 import me.rerere.rikkahub.data.service.CompanionSpaceService
@@ -98,7 +102,7 @@ val dataSourceModule = module {
         val context: Context = get()
         Room.databaseBuilder(context, AppDatabase::class.java, "rikka_hub")
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-            .addMigrations(Migration_6_7, Migration_11_12, Migration_13_14, Migration_14_15, Migration_15_16, Migration_19_20, Migration_20_21, Migration_21_22, Migration_23_24, Migration_24_25, Migration_25_26, Migration_29_30)
+            .addMigrations(Migration_6_7, Migration_11_12, Migration_13_14, Migration_14_15, Migration_15_16, Migration_19_20, Migration_20_21, Migration_21_22, Migration_23_24, Migration_24_25, Migration_25_26, Migration_29_30, Migration_30_31)
             .addCallback(object : RoomDatabase.Callback() {
                 override fun onOpen(db: SupportSQLiteDatabase) {
                     val dictDir = SimpleDictManager.extractDict(context)
@@ -198,6 +202,14 @@ val dataSourceModule = module {
 
     single<VisitorLoungeDao> {
         get<AppDatabase>().visitorLoungeDao()
+    }
+
+    single<AutonomousActivityDao> {
+        get<AppDatabase>().autonomousActivityDao()
+    }
+
+    single {
+        AutonomousActivityRepository(store = RoomAutonomousActivityRecordStore(get()))
     }
 
     single { VisitorLoungeSecretStore(context = get()) }
