@@ -74,6 +74,7 @@ import me.rerere.rikkahub.data.ai.GenerationHandler
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.tools.LocalTools
 import me.rerere.rikkahub.data.ai.tools.PcBridgeTaskTools
+import me.rerere.rikkahub.data.ai.tools.VisitorLoungeTools
 import me.rerere.rikkahub.data.ai.tools.SmartToolRouter
 import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.ai.tools.ToolNaming
@@ -107,8 +108,6 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.withoutVisitorLoungeReportCards
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
-import me.rerere.rikkahub.data.lounge.VisitorLoungeProactiveDirectiveParser
-import me.rerere.rikkahub.data.lounge.VisitorLoungeVisitCoordinator
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.data.model.selectContextMessages
 import me.rerere.rikkahub.data.model.toMessageNode
@@ -178,13 +177,13 @@ class ChatService(
     private val memoryBankService: MemoryBankService,
     private val folderRepository: FolderRepository,
     private val companionMoodEngine: CompanionMoodEngine,
-    private val visitorLoungeVisitCoordinator: VisitorLoungeVisitCoordinator,
     /**
      * The PC bridge includes encrypted local state and should not be resolved merely because a
      * chat page is opened. Resolving it on demand keeps an unavailable PC bridge from blocking
      * normal companion chats.
      */
     private val pcBridgeTaskToolsProvider: () -> PcBridgeTaskTools,
+    private val visitorLoungeToolsProvider: () -> VisitorLoungeTools,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
@@ -870,18 +869,6 @@ class ChatService(
         val assistant = settings.getAssistantById(initialConversation.assistantId)
             ?: settings.getCurrentAssistant()
         val model = settings.findModelById(assistant.chatModelId ?: settings.chatModelId) ?: return
-        val isPrimaryAssistant = assistant.id == settings.getCurrentAssistant().id
-        val visitorLoungePrompt = if (isPrimaryAssistant) {
-            try {
-                visitorLoungeVisitCoordinator.proactivePrompt()
-            } catch (error: Exception) {
-                Log.w(TAG, "Failed to prepare visitor lounge prompt", error)
-                null
-            }
-        } else {
-            null
-        }
-
         val senderName = if (assistant.useAssistantAvatar) {
             assistant.name.ifEmpty { context.getString(R.string.assistant_page_default_assistant) }
         } else {
@@ -1000,6 +987,14 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                     // PC bridge is a native, paired-device capability. It must remain available even when
                     // MCP/plugin tools are manually throttled, otherwise Daddy cannot dispatch a PC task.
                     addAll(pcBridgeTaskToolsProvider().getTools())
+                    addAll(
+                        visitorLoungeToolsProvider().getTools(
+                            me.rerere.rikkahub.data.ai.tools.ToolInvocationContext(
+                                callerAssistantId = assistant.id.toString(),
+                                callerConversationId = conversationId.toString(),
+                            ),
+                        ),
+                    )
                 }) { duplicateToolName ->
                     Log.w(TAG, "Dropped duplicate tool name: $duplicateToolName")
                 },
@@ -1009,7 +1004,6 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                             allowedPluginIds = smartToolSelection.allowedPluginIds,
                         ),
                     )
-                    visitorLoungePrompt?.let(::add)
                 },
                 conversationId = conversationId.toString(),
             ).onCompletion {
@@ -1057,53 +1051,6 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                 val latest = getConversationFlow(conversationId).value
                 saveConversation(conversationId, latest)
                 latest
-            }
-            val proactiveDirective = if (isPrimaryAssistant) {
-                finalConversation.currentMessages.lastOrNull { it.role == MessageRole.ASSISTANT }
-                    ?.parts
-                    ?.filterIsInstance<UIMessagePart.Text>()
-                    ?.joinToString("\n") { it.text }
-                    ?.let(VisitorLoungeProactiveDirectiveParser::consume)
-            } else {
-                null
-            }
-            if (proactiveDirective != null) {
-                finalConversation = session.saveMutex.withLock {
-                    val latest = conversationRepo.getConversationById(conversationId) ?: finalConversation
-                    val lastAssistant = latest.currentMessages.lastOrNull { it.role == MessageRole.ASSISTANT }
-                        ?: return@withLock latest
-                    val cleanedAssistant = lastAssistant.copy(
-                        parts = lastAssistant.parts.map { part ->
-                            if (part is UIMessagePart.Text) {
-                                part.copy(text = VisitorLoungeProactiveDirectiveParser.hideDirectiveMarkers(part.text))
-                            } else {
-                                part
-                            }
-                        },
-                    )
-                    val cleanedConversation = latest.copy(
-                        messageNodes = latest.messageNodes.map { node ->
-                            node.copy(
-                                messages = node.messages.map { message ->
-                                    if (message.id == cleanedAssistant.id) cleanedAssistant else message
-                                },
-                            )
-                        },
-                    )
-                    saveConversation(conversationId, cleanedConversation)
-                    cleanedConversation
-                }
-                appScope.launch {
-                    runCatching {
-                        visitorLoungeVisitCoordinator.startProactive(
-                            sourceConversationId = conversationId.toString(),
-                            friendId = proactiveDirective.friendId,
-                            topic = proactiveDirective.topic,
-                        )
-                    }.onFailure {
-                        Log.w(TAG, "Failed to start proactive visitor lounge visit")
-                    }
-                }
             }
             val waitingForToolApproval = finalConversation.currentMessages.lastOrNull()
                 ?.getTools()

@@ -45,14 +45,6 @@ class VisitorLoungeVisitCoordinator(
     suspend fun startProactive(sourceConversationId: String, friendId: String, topic: String): VisitorLoungeStartResult =
         start(sourceConversationId, friendId, topic, VisitorLoungeVisitMode.PROACTIVE)
 
-    suspend fun proactivePrompt(): String? {
-        val visits = repository.visits()
-        val availableFriends = repository.proactiveFriends().filter { friend ->
-            proactivePolicy.evaluate(friend, visits, now()) == VisitorLoungeProactiveDecision.ALLOW
-        }
-        return availableFriends.takeIf { it.isNotEmpty() }?.let(VisitorLoungeProactiveDirectiveParser::promptFor)
-    }
-
     private suspend fun start(
         sourceConversationId: String?,
         friendId: String,

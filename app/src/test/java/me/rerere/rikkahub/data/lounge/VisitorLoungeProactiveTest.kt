@@ -2,28 +2,9 @@ package me.rerere.rikkahub.data.lounge
 
 import java.time.Instant
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VisitorLoungeProactiveTest {
-    @Test
-    fun `internal visit directive is parsed and removed from the visible reply`() {
-        val directive = VisitorLoungeProactiveDirectiveParser.consume(
-            "我去替你问候一下。[[VISIT_LOUNGE:friend-1|问问今天过得如何]]",
-        )
-
-        requireNotNull(directive)
-        assertEquals("friend-1", directive.friendId)
-        assertEquals("问问今天过得如何", directive.topic)
-        assertEquals("我去替你问候一下。", directive.visibleText)
-    }
-
-    @Test
-    fun `malformed directive is not treated as a visit request`() {
-        assertNull(VisitorLoungeProactiveDirectiveParser.consume("[[VISIT_LOUNGE:friend-1]]"))
-    }
-
     @Test
     fun `policy requires consent and enforces friend cooldown plus daily cap`() {
         val now = Instant.parse("2026-08-28T12:00:00Z")
@@ -54,15 +35,6 @@ class VisitorLoungeProactiveTest {
             VisitorLoungeProactiveDecision.CONSENT_REQUIRED,
             policy.evaluate(friend.copy(consent = VisitorLoungeConsent.MANUAL_ONLY), emptyList(), now),
         )
-    }
-
-    @Test
-    fun `prompt exposes only authorized public room labels and marker shape`() {
-        val prompt = VisitorLoungeProactiveDirectiveParser.promptFor(listOf(friend("friend-1", "Alice")))
-
-        assertTrue(prompt.contains("friend-1"))
-        assertTrue(prompt.contains("Alice"))
-        assertTrue(prompt.contains("[[VISIT_LOUNGE:"))
     }
 
     private fun friend(id: String, name: String = "Friend") = FriendPublicRecord(

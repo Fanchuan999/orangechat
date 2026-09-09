@@ -42,6 +42,7 @@ class ToolSurfaceBuilder(
     private val json: Json,
     private val memoryRepository: MemoryRepository,
     private val pcBridgeTaskTools: PcBridgeTaskTools,
+    private val visitorLoungeTools: VisitorLoungeTools,
 ) {
     suspend fun build(
         assistant: me.rerere.rikkahub.data.model.Assistant,
@@ -90,6 +91,7 @@ class ToolSurfaceBuilder(
         }
         addAll(pluginToolProvider.getTools())
         addAll(pcBridgeTaskTools.getTools())
+        addAll(visitorLoungeTools.getTools(invocationContext))
     }) { duplicateToolName ->
         Log.w("ToolSurfaceBuilder", "Dropped duplicate tool name: $duplicateToolName")
     }

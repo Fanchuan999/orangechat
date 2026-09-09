@@ -9,6 +9,8 @@ package me.rerere.rikkahub.di
 import kotlinx.serialization.json.Json
 import me.rerere.highlight.Highlighter
 import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.data.lounge.DefaultVisitorLoungeToolGateway
+import me.rerere.rikkahub.data.lounge.VisitorLoungeToolGateway
 import me.rerere.rikkahub.data.lounge.VisitorLoungeVisitCoordinator
 import me.rerere.rikkahub.data.ai.AILoggingManager
 import me.rerere.rikkahub.data.ai.tools.LocalTools
@@ -87,6 +89,14 @@ val appModule = module {
         )
     }
 
+    single<VisitorLoungeToolGateway> {
+        DefaultVisitorLoungeToolGateway(repository = get(), coordinator = get())
+    }
+
+    single {
+        me.rerere.rikkahub.data.ai.tools.VisitorLoungeTools(get())
+    }
+
     // 微信 Bot (iLink 协议) HTTP 客户端
     single { me.rerere.rikkahub.data.weixin.WeixinBotClient(get()) }
 
@@ -105,6 +115,7 @@ val appModule = module {
             json = get(),
             memoryRepository = get(),
             pcBridgeTaskTools = get(),
+            visitorLoungeTools = get(),
         )
     }
 
@@ -160,8 +171,8 @@ val appModule = module {
             memoryBankService = get(),
             folderRepository = get(),
             companionMoodEngine = get(),
-            visitorLoungeVisitCoordinator = get(),
             pcBridgeTaskToolsProvider = { get() },
+            visitorLoungeToolsProvider = { get() },
         )
     }
 
