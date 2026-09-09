@@ -1297,8 +1297,8 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
     }
 
     /**
-     * 空闲探索只暴露公开搜索与网页读取能力。插件工具必须明确是“读取网页”，并强制视为
-     * 无需审批的只读动作；MCP、本地系统工具、记忆工具和其他插件工具一律不加入。
+     * 空闲探索的公开网页部分：只加入搜索与网页读取工具。其余可选活动会由
+     * [AutonomousActivityToolSurfaceBuilder] 依据单独的用户授权追加，并由类别锁保护。
      */
     private suspend fun buildIdleExploreWebTools(settings: Settings): List<Tool> = ToolNaming.deduplicateToolNames(buildList {
         addAll(createSearchTools(settings))

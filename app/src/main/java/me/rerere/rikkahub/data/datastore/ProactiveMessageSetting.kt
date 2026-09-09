@@ -67,6 +67,18 @@ data class AutonomousMcpToolPermission(
     val toolName: String,
 )
 
+/** Updates one explicit idle-activity MCP permission without clearing the rest of the allowlist. */
+fun AutonomousActivitySetting.withAutonomousMcpToolPermission(
+    serverId: String,
+    toolName: String,
+    selected: Boolean,
+): AutonomousActivitySetting {
+    val target = AutonomousMcpToolPermission(serverId = serverId.trim(), toolName = toolName.trim())
+    if (target.serverId.isBlank() || target.toolName.isBlank()) return copy(allowedMcpTools = normalizedAllowedMcpTools())
+    val remaining = normalizedAllowedMcpTools().filterNot { it == target }
+    return copy(allowedMcpTools = if (selected) remaining + target else remaining)
+}
+
 @Serializable
 data class NightWatchSetting(
     val enabled: Boolean = false,
