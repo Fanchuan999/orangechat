@@ -26,6 +26,8 @@ data class ProactiveMessageSetting(
     val idleExploreEnabled: Boolean = false,
     val idleExploreRunsPerDay: Int = 1,
     val idleExploreRawTokenLimit: Int = 20_000,
+    // 自动对外活动默认关闭；只有用户单独选择的 MCP 工具才可在空闲探索时运行。
+    val autonomousActivity: AutonomousActivitySetting = AutonomousActivitySetting(),
     // 是否允许 AI 根据上下文判断后强制跳转屏幕到聊天界面
     val allowForceJump: Boolean = false,
     val jumpIdleThresholdMinutes: Int = 120, // 用户多久没回复(分钟)才允许跳转屏幕，默认2小时
@@ -40,6 +42,29 @@ data class ProactiveMessageSetting(
     val floatingBubbleEnabled: Boolean = false,
     // 晚安守夜：只在用户本人明确道晚安后运行，不依赖泛用的激进模式。
     val nightWatchSetting: NightWatchSetting = NightWatchSetting(),
+)
+
+@Serializable
+data class AutonomousActivitySetting(
+    val enabled: Boolean = false,
+    val allowedMcpTools: List<AutonomousMcpToolPermission> = emptyList(),
+) {
+    fun normalizedAllowedMcpTools(): List<AutonomousMcpToolPermission> =
+        allowedMcpTools
+            .map { permission ->
+                permission.copy(
+                    serverId = permission.serverId.trim(),
+                    toolName = permission.toolName.trim(),
+                )
+            }
+            .filter { permission -> permission.serverId.isNotBlank() && permission.toolName.isNotBlank() }
+            .distinct()
+}
+
+@Serializable
+data class AutonomousMcpToolPermission(
+    val serverId: String,
+    val toolName: String,
 )
 
 @Serializable
