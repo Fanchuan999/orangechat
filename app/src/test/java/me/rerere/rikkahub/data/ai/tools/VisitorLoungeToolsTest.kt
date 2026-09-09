@@ -80,6 +80,8 @@ class VisitorLoungeToolsTest {
 
         override suspend fun savedFriends(): List<VisitorLoungeToolFriend> = friends
 
+        override suspend fun proactiveFriends(): List<VisitorLoungeToolFriend> = emptyList()
+
         override suspend fun startManual(
             sourceConversationId: String?,
             friendId: String,
@@ -100,5 +102,11 @@ class VisitorLoungeToolsTest {
                 ),
             )
         }
+
+        override suspend fun startProactive(
+            sourceConversationId: String,
+            friendId: String,
+            topic: String,
+        ): VisitorLoungeStartResult = error("not used")
     }
 }

@@ -6,8 +6,16 @@ import kotlinx.coroutines.flow.first
 interface VisitorLoungeToolGateway {
     suspend fun savedFriends(): List<VisitorLoungeToolFriend>
 
+    suspend fun proactiveFriends(): List<VisitorLoungeToolFriend>
+
     suspend fun startManual(
         sourceConversationId: String?,
+        friendId: String,
+        topic: String,
+    ): VisitorLoungeStartResult
+
+    suspend fun startProactive(
+        sourceConversationId: String,
         friendId: String,
         topic: String,
     ): VisitorLoungeStartResult
@@ -23,18 +31,27 @@ class DefaultVisitorLoungeToolGateway(
     private val coordinator: VisitorLoungeVisitCoordinator,
 ) : VisitorLoungeToolGateway {
     override suspend fun savedFriends(): List<VisitorLoungeToolFriend> = repository.observeFriends().first()
-        .map { friend ->
-            VisitorLoungeToolFriend(
-                id = friend.id,
-                displayName = friend.displayName.replace(Regex("[\\r\\n]+"), " ").take(MAX_DISPLAY_NAME_CHARACTERS),
-            )
-        }
+        .map { friend -> friend.toToolFriend() }
+
+    override suspend fun proactiveFriends(): List<VisitorLoungeToolFriend> = coordinator.eligibleProactiveFriends()
+        .map { friend -> friend.toToolFriend() }
 
     override suspend fun startManual(
         sourceConversationId: String?,
         friendId: String,
         topic: String,
     ): VisitorLoungeStartResult = coordinator.startManual(sourceConversationId, friendId, topic)
+
+    override suspend fun startProactive(
+        sourceConversationId: String,
+        friendId: String,
+        topic: String,
+    ): VisitorLoungeStartResult = coordinator.startProactive(sourceConversationId, friendId, topic)
+
+    private fun FriendPublicRecord.toToolFriend() = VisitorLoungeToolFriend(
+        id = id,
+        displayName = displayName.replace(Regex("[\\r\\n]+"), " ").take(MAX_DISPLAY_NAME_CHARACTERS),
+    )
 
     private companion object {
         const val MAX_DISPLAY_NAME_CHARACTERS = 80

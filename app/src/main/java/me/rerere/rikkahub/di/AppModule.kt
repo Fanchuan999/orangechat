@@ -97,6 +97,18 @@ val appModule = module {
         me.rerere.rikkahub.data.ai.tools.VisitorLoungeTools(get())
     }
 
+    single<me.rerere.rikkahub.data.service.AutonomousActivityMcpGateway> {
+        me.rerere.rikkahub.data.service.McpAutonomousActivityGateway(get())
+    }
+
+    single {
+        me.rerere.rikkahub.data.service.AutonomousActivityToolSurfaceBuilder(
+            mcpGateway = get(),
+            visitorLoungeGateway = get(),
+            activityRepository = get(),
+        )
+    }
+
     // 微信 Bot (iLink 协议) HTTP 客户端
     single { me.rerere.rikkahub.data.weixin.WeixinBotClient(get()) }
 

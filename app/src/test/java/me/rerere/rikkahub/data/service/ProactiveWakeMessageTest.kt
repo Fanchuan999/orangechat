@@ -44,4 +44,19 @@ class ProactiveWakeMessageTest {
         assertTrue(text.length <= 140)
         assertTrue(text.contains("[PASS]"))
     }
+
+    @Test
+    fun `idle wake identifies a background activity choice without treating it as user input`() {
+        val message = service.buildProactiveWakeMessage(
+            isNightWatchTrigger = false,
+            isIdleExploreTrigger = true,
+            isFromDeviceEvent = false,
+        )
+        val text = message.parts.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }
+
+        assertEquals(MessageRole.SYSTEM, message.role)
+        assertTrue(text.contains("空闲探索"))
+        assertTrue(text.contains("[PASS]"))
+        assertFalse(text.contains("用户的新消息"))
+    }
 }

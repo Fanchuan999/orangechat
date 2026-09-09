@@ -75,6 +75,7 @@ private val OAUTH_CALLBACK_TIMEOUT = 5.minutes
 internal data class McpToolCallResult(
     val parts: List<UIMessagePart>,
     val isError: Boolean,
+    val unavailable: Boolean = false,
 )
 
 class McpManager(
@@ -151,6 +152,9 @@ class McpManager(
         return clients[config.id]?.second
     }
 
+    /** Idle automation only uses an already-connected client; it never creates a new connection. */
+    fun isClientConnected(serverId: Uuid): Boolean = clients[serverId]?.second?.transport != null
+
     fun getAllAvailableTools(serverIds: Set<Uuid>? = null): List<Pair<Uuid, McpTool>> {
         val settings = settingsStore.settingsFlow.value
         val allowedServerIds = serverIds ?: settings.getCurrentAssistant().mcpServers
@@ -169,7 +173,13 @@ class McpManager(
         return callToolDetailed(serverId = serverId, toolName = toolName, args = args).parts
     }
 
-    internal suspend fun callToolDetailed(serverId: Uuid, toolName: String, args: JsonObject): McpToolCallResult {
+    internal suspend fun callToolDetailed(
+        serverId: Uuid,
+        toolName: String,
+        args: JsonObject,
+        redactArgumentsInLog: Boolean = false,
+        requireExistingConnection: Boolean = false,
+    ): McpToolCallResult {
         val pair = clients[serverId]
         val client = pair?.second
             ?: return McpToolCallResult(
@@ -177,9 +187,22 @@ class McpManager(
                 isError = true,
             )
         val config = pair.first
-        Log.i(TAG, "callTool: $toolName / $args (server: ${config.commonOptions.name})")
+        Log.i(
+            TAG,
+            "callTool: $toolName / ${if (redactArgumentsInLog) "[redacted]" else args} " +
+                "(server: ${config.commonOptions.name})",
+        )
 
-        if (client.transport == null) client.connect(getTransport(config))
+        if (client.transport == null) {
+            if (requireExistingConnection) {
+                return McpToolCallResult(
+                    parts = listOf(UIMessagePart.Text("The MCP server is not currently connected.")),
+                    isError = true,
+                    unavailable = true,
+                )
+            }
+            client.connect(getTransport(config))
+        }
         val result = client.callTool(
             request = CallToolRequest(
                 params = CallToolRequestParams(

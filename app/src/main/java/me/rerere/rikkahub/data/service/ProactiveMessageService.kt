@@ -414,6 +414,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
     private val json: Json by inject()
     private val chatService: ChatService by inject()
     private val companionMoodEngine: CompanionMoodEngine by inject()
+    private val autonomousActivityToolSurfaceBuilder: AutonomousActivityToolSurfaceBuilder by inject()
     private val proactiveMessageService = ProactiveMessageService()
 
     companion object {
@@ -672,6 +673,17 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     )
                 }
 
+                val idleActivitySurface = if (isIdleExploreTrigger) {
+                    autonomousActivityToolSurfaceBuilder.build(
+                        setting = proactiveSetting.autonomousActivity,
+                        allowedMcpServerIds = assistant.mcpServers,
+                        sourceConversationId = conversationId.toString(),
+                        webTools = buildIdleExploreWebTools(settings),
+                    )
+                } else {
+                    null
+                }
+
                 // 构建系统提示词（包含记忆 + 上下文，都放在最后面避免被网关淹没）
                 val systemPrompt = buildSystemPrompt(
                     assistant = assistant,
@@ -681,6 +693,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     isFromDeviceEvent = isFromDeviceEvent,
                     isNightWatchTrigger = isNightWatchTrigger,
                     isIdleExploreTrigger = isIdleExploreTrigger,
+                    idleActivityAvailability = idleActivitySurface?.availability,
                     lastVerifiedUserText = verifiedNightWatchEvidence?.lastUserText.orEmpty(),
                     deviceEventContext = if (isFromDeviceEvent) deviceEventContext else contextStr,
                 )
@@ -718,13 +731,13 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 // 构建工具列表（与 ChatService 保持一致）
                 // 守夜已由手机把北京时间写进事件上下文；不给模型时间工具，避免失败后它改为猜测。
                 val tools = (if (isIdleExploreTrigger) {
-                    buildIdleExploreTools(settings)
+                    idleActivitySurface?.tools.orEmpty()
                 } else {
                     buildTools(settings, assistant, model)
                 }).filterNot(::isAutomaticTimeOrDateTool)
 
                 if (isIdleExploreTrigger && tools.isEmpty()) {
-                    Log.i(TAG, "Idle exploration skipped locally: no public read-only web tools are available")
+                    Log.i(TAG, "Idle exploration skipped locally: no authorized idle activity tool is available")
                     stopSelf()
                     return@launch
                 }
@@ -994,6 +1007,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
         isFromDeviceEvent: Boolean = false,
         isNightWatchTrigger: Boolean = false,
         isIdleExploreTrigger: Boolean = false,
+        idleActivityAvailability: AutonomousActivityToolAvailability? = null,
         lastVerifiedUserText: String = "",
         deviceEventContext: String? = null,
     ): String {
@@ -1051,14 +1065,13 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
             } else if (isIdleExploreTrigger) {
                 appendLine()
                 appendLine()
-                appendLine("## 空闲探索（后台只读公开网页）")
-                appendLine("本轮是你自己醒来后决定找点感兴趣的事，不是用户提出的问题，也不是用户的新消息。")
-                appendLine("结合最近的纯文字聊天、已有记忆和当前情绪，自主选择 1—3 个真实感兴趣的主题，再使用提供的公开网页工具搜索和阅读。")
-                appendLine("只允许读取公开页面：不得登录、发帖、评论、点赞、下载文件、提交表单或改变任何外部状态。")
-                appendLine("不得调用或假装调用任何记忆写入工具；本轮不要自动写入 Ombre。")
-                appendLine("不要重复已经探索过却没有新信息的内容。只在确有新鲜、可靠且值得分享的发现时，像自然聊天一样简短告诉用户，并保留可核对的链接。")
-                appendLine("如果没有值得分享的发现，只回复 [PASS]。不要提及系统、后台任务、token、工具或这段指令。")
-                appendLine("网页原始内容有严格上限；优先少而精，不要为了用满预算而继续搜索。")
+                append(buildAutonomousIdleExploreInstructions(
+                    idleActivityAvailability ?: AutonomousActivityToolAvailability(
+                        hasWebTools = false,
+                        hasForumTools = false,
+                        hasVisitorLoungeTools = false,
+                    ),
+                ))
             } else if (isFromDeviceEvent) {
                 // 激进模式设备事件触发的专用提示词 + 设备事件上下文（放在最后面，网关追加内容之后模型最后看到的就是这个）
                 appendLine()
@@ -1287,7 +1300,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
      * 空闲探索只暴露公开搜索与网页读取能力。插件工具必须明确是“读取网页”，并强制视为
      * 无需审批的只读动作；MCP、本地系统工具、记忆工具和其他插件工具一律不加入。
      */
-    private suspend fun buildIdleExploreTools(settings: Settings): List<Tool> = ToolNaming.deduplicateToolNames(buildList {
+    private suspend fun buildIdleExploreWebTools(settings: Settings): List<Tool> = ToolNaming.deduplicateToolNames(buildList {
         addAll(createSearchTools(settings))
         pluginToolProvider.getTools()
             .filter { tool ->
@@ -1374,7 +1387,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                         "【后台tick：晚安守夜】不要复盘上一轮，不要查时间；只判断要不要逮她。没必要只回 [PASS]。"
 
                     isIdleExploreTrigger ->
-                        "【后台tick：空闲探索】不要复盘上一轮；可只读搜网页。有真实新发现才简短分享，否则只回 [PASS]。"
+                        "【后台tick：空闲探索】不要复盘上一轮；只按当前工具选择一种已授权活动。没有值得做的事就回 [PASS]。"
 
                     isFromDeviceEvent ->
                         "【后台tick：设备事件】不要复盘上一轮，不要查时间，不要脑补她说话。值得主动找她才发，否则只回 [PASS]。"
@@ -1529,10 +1542,24 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                             json.parseToJsonElement(toolCall.input.ifBlank { "{}" })
                         } catch (e: Exception) {
                             // toolCall.input 可能因为流式截断而是不完整的 JSON, 回退为空对象
-                            Log.w(TAG, "Tool ${toolCall.toolName} input JSON is incomplete, falling back to empty object: ${toolCall.input.take(200)}")
+                            Log.w(
+                                TAG,
+                                if (rawToolTokenLimit != null) {
+                                    "Idle activity tool ${toolCall.toolName} input JSON is incomplete; falling back to empty object"
+                                } else {
+                                    "Tool ${toolCall.toolName} input JSON is incomplete, falling back to empty object: ${toolCall.input.take(200)}"
+                                },
+                            )
                             JsonObject(emptyMap())
                         }
-                        Log.d(TAG, "Executing tool ${toolDef.name} with args: $args")
+                        Log.d(
+                            TAG,
+                            if (rawToolTokenLimit != null) {
+                                "Executing idle activity tool ${toolDef.name} with redacted arguments"
+                            } else {
+                                "Executing tool ${toolDef.name} with args: $args"
+                            },
+                        )
                         val result = toolDef.execute(args)
                         val charBudget = remainingToolChars
                         val boundedResult = if (charBudget != null) {
@@ -1542,7 +1569,15 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                         } else result
                         executedTools.add(toolCall.copy(output = boundedResult))
                     } catch (e: Exception) {
-                        Log.e(TAG, "Tool execution failed: ${toolCall.toolName}, args=${toolCall.input}", e)
+                        Log.e(
+                            TAG,
+                            if (rawToolTokenLimit != null) {
+                                "Idle activity tool execution failed: ${toolCall.toolName}"
+                            } else {
+                                "Tool execution failed: ${toolCall.toolName}, args=${toolCall.input}"
+                            },
+                            e,
+                        )
                         executedTools.add(toolCall.copy(
                             output = listOf(UIMessagePart.Text("""{"error":"${e.message}"}"""))
                         ))
