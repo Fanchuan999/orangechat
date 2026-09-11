@@ -1,55 +1,33 @@
 package me.rerere.rikkahub.data.service
 
 import me.rerere.rikkahub.data.datastore.AutonomousActivitySetting
-import me.rerere.rikkahub.data.datastore.AutonomousMcpToolPermission
-import me.rerere.rikkahub.data.datastore.withAutonomousMcpToolPermission
+import me.rerere.rikkahub.data.datastore.withAutonomousMcpServerEnabled
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AutonomousActivitySettingSelectionTest {
     @Test
-    fun `enabling one MCP tool preserves existing explicit selections`() {
-        val current = AutonomousActivitySetting(
-            enabled = true,
-            allowedMcpTools = listOf(
-                AutonomousMcpToolPermission(serverId = "forum-a", toolName = "publish_post"),
-            ),
+    fun `disabling one MCP service preserves every other service default access`() {
+        val updated = AutonomousActivitySetting(enabled = true).withAutonomousMcpServerEnabled(
+            serverId = "forum-a",
+            enabled = false,
         )
 
-        val updated = current.withAutonomousMcpToolPermission(
-            serverId = "forum-b",
-            toolName = "like_post",
-            selected = true,
-        )
-
-        assertEquals(
-            listOf(
-                AutonomousMcpToolPermission(serverId = "forum-a", toolName = "publish_post"),
-                AutonomousMcpToolPermission(serverId = "forum-b", toolName = "like_post"),
-            ),
-            updated.normalizedAllowedMcpTools(),
-        )
+        assertEquals(listOf("forum-a"), updated.normalizedDisabledMcpServerIds())
     }
 
     @Test
-    fun `disabling one MCP tool leaves other selections including unavailable ones intact`() {
+    fun `reenabling one MCP service leaves other disabled services intact`() {
         val current = AutonomousActivitySetting(
             enabled = true,
-            allowedMcpTools = listOf(
-                AutonomousMcpToolPermission(serverId = "forum-a", toolName = "publish_post"),
-                AutonomousMcpToolPermission(serverId = "forum-b", toolName = "like_post"),
-            ),
+            disabledMcpServerIds = listOf("forum-a", "forum-b"),
         )
 
-        val updated = current.withAutonomousMcpToolPermission(
+        val updated = current.withAutonomousMcpServerEnabled(
             serverId = "forum-a",
-            toolName = "publish_post",
-            selected = false,
+            enabled = true,
         )
 
-        assertEquals(
-            listOf(AutonomousMcpToolPermission(serverId = "forum-b", toolName = "like_post")),
-            updated.normalizedAllowedMcpTools(),
-        )
+        assertEquals(listOf("forum-b"), updated.normalizedDisabledMcpServerIds())
     }
 }

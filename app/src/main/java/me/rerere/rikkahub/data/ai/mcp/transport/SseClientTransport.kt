@@ -114,13 +114,13 @@ class SseClientTransport(
             // Always consume the response body to properly release the connection
             // Without this, the unconsumed response can cause connection pool issues
             // that terminate the SSE stream sharing the same HttpClient
-            val bodyText = response.bodyAsText()
+            response.bodyAsText()
 
             if (!response.status.isSuccess()) {
-                error("Error POSTing to endpoint (HTTP ${response.status}): $bodyText")
+                error("MCP SSE request failed with HTTP ${response.status.value}")
             }
 
-            Log.d(TAG, "Client successfully sent message via SSE $endpoint")
+            Log.d(TAG, "Client successfully sent message via SSE")
         } catch (e: Throwable) {
             _onError(e)
             throw e
@@ -139,7 +139,7 @@ class SseClientTransport(
 
                 when (event.event) {
                     "error" -> {
-                        val error = IllegalStateException("SSE error: ${event.data}")
+                        val error = IllegalStateException(formatMcpSseErrorLog(event.data.orEmpty()))
                         _onError(error)
                         throw error
                     }
@@ -173,7 +173,7 @@ class SseClientTransport(
                 Url("$baseUrl/$eventData")
             }
             endpoint.complete(endpointUrl.toString())
-            Log.d(TAG, "Client connected to endpoint: $endpointUrl")
+            Log.d(TAG, "Client connected to endpoint")
         } catch (e: Throwable) {
             _onError(e)
             endpoint.completeExceptionally(e)

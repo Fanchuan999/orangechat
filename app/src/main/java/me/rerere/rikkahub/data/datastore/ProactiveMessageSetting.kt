@@ -26,7 +26,7 @@ data class ProactiveMessageSetting(
     val idleExploreEnabled: Boolean = false,
     val idleExploreRunsPerDay: Int = 1,
     val idleExploreRawTokenLimit: Int = 20_000,
-    // 自动对外活动默认关闭；只有用户单独选择的 MCP 工具才可在空闲探索时运行。
+    // 自动对外活动默认关闭；开启后，已配置 MCP 服务默认可用于空闲探索。
     val autonomousActivity: AutonomousActivitySetting = AutonomousActivitySetting(),
     // 是否允许 AI 根据上下文判断后强制跳转屏幕到聊天界面
     val allowForceJump: Boolean = false,
@@ -47,8 +47,14 @@ data class ProactiveMessageSetting(
 @Serializable
 data class AutonomousActivitySetting(
     val enabled: Boolean = false,
+    // 默认允许所有已配置服务；仅记录用户手动关闭的服务，确保以后新增服务自动可用。
+    val disabledMcpServerIds: List<String> = emptyList(),
+    // 保留旧版逐工具授权，供已经保存的设置平滑读取；不再参与新的授权判断。
     val allowedMcpTools: List<AutonomousMcpToolPermission> = emptyList(),
 ) {
+    fun normalizedDisabledMcpServerIds(): List<String> =
+        disabledMcpServerIds.map(String::trim).filter(String::isNotBlank).distinct()
+
     fun normalizedAllowedMcpTools(): List<AutonomousMcpToolPermission> =
         allowedMcpTools
             .map { permission ->
@@ -59,6 +65,17 @@ data class AutonomousActivitySetting(
             }
             .filter { permission -> permission.serverId.isNotBlank() && permission.toolName.isNotBlank() }
             .distinct()
+}
+
+/** Updates one service-wide idle-activity permission without affecting other MCP services. */
+fun AutonomousActivitySetting.withAutonomousMcpServerEnabled(
+    serverId: String,
+    enabled: Boolean,
+): AutonomousActivitySetting {
+    val normalizedServerId = serverId.trim()
+    if (normalizedServerId.isBlank()) return copy(disabledMcpServerIds = normalizedDisabledMcpServerIds())
+    val remaining = normalizedDisabledMcpServerIds().filterNot { it == normalizedServerId }
+    return copy(disabledMcpServerIds = if (enabled) remaining else remaining + normalizedServerId)
 }
 
 @Serializable

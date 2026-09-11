@@ -69,9 +69,7 @@ import me.rerere.rikkahub.data.datastore.withIdleExploreRunsPerDay
 import me.rerere.rikkahub.data.service.CompanionMoodEngine
 import me.rerere.rikkahub.data.service.AutonomousActivityRepository
 import me.rerere.rikkahub.data.service.AutonomousActivityStatus
-import me.rerere.rikkahub.data.ai.mcp.McpManager
-import me.rerere.rikkahub.data.datastore.getCurrentAssistant
-import me.rerere.rikkahub.data.datastore.withAutonomousMcpToolPermission
+import me.rerere.rikkahub.data.datastore.withAutonomousMcpServerEnabled
 import org.koin.compose.koinInject
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -82,7 +80,6 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
     val navController = LocalNavController.current
     val settings by vm.settings.collectAsStateWithLifecycle()
     val moodEngine: CompanionMoodEngine = koinInject()
-    val mcpManager: McpManager = koinInject()
     val autonomousActivityRepository: AutonomousActivityRepository = koinInject()
     val autonomousActivityRecords by autonomousActivityRepository.observeRecent()
         .collectAsStateWithLifecycle(initialValue = emptyList())
@@ -132,8 +129,8 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
     if (showAutonomousActivityRiskDialog) {
         RiskConfirmDialog(
             title = "允许空闲时自动对外活动",
-            message = "开启后，Daddy 可以在已有的空闲探索机会中，从你逐项勾选的 MCP 工具或已同意的会客室里选择一种行动。" +
-                "这可能包含发帖、评论、点赞或登录；只会使用已配置的会话，不会索要、保存、显示或复述密码、Cookie、验证码、OAuth token 或 Visitor Key，也不会处理验证码或短信验证。",
+            message = "开启后，Daddy 可以在已有的空闲探索机会中，使用所有已配置且已连接的 MCP 服务。" +
+                "每个服务默认允许其全部工具，这可能包含发帖、评论、点赞、登录或私聊；只会使用已有会话，不会在后台新建登录或处理验证码。",
             onConfirm = {
                 showAutonomousActivityRiskDialog = false
                 val proactive = settings.proactiveMessageSetting
@@ -569,28 +566,14 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
             }
             item {
                 val proactiveSetting = settings.proactiveMessageSetting
-                val activeAssistant = settings.getCurrentAssistant()
-                val availableMcpTools = remember(settings.mcpServers, activeAssistant.mcpServers) {
-                    mcpManager.getAllAvailableTools(activeAssistant.mcpServers).map { (serverId, tool) ->
-                        IdleActivityMcpToolChoice(
-                            serverId = serverId.toString(),
-                            serverName = settings.mcpServers
-                                .firstOrNull { it.id == serverId }
-                                ?.commonOptions
-                                ?.name
-                                ?.ifBlank { "未命名 MCP 服务" }
-                                ?: "已配置的 MCP 服务",
-                            toolName = tool.name,
+                val configuredMcpServers = remember(settings.mcpServers) {
+                    settings.mcpServers.map { server ->
+                        IdleActivityMcpServerChoice(
+                            serverId = server.id.toString(),
+                            serverName = server.commonOptions.name.ifBlank { "未命名 MCP 服务" },
+                            enabled = server.commonOptions.enable,
                         )
                     }
-                }
-                val selectedMcpTools = proactiveSetting.autonomousActivity.normalizedAllowedMcpTools()
-                val availableMcpKeys = availableMcpTools.map { it.serverId to it.toolName }.toSet()
-                val configuredServerNames = settings.mcpServers.associate { server ->
-                    server.id.toString() to server.commonOptions.name.ifBlank { "未命名 MCP 服务" }
-                }
-                val unavailableSelections = selectedMcpTools.filter { permission ->
-                    permission.serverId to permission.toolName !in availableMcpKeys
                 }
                 CardGroup(title = { Text("空闲时自己找点事") }) {
                     item(
@@ -598,7 +581,7 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                         supportingContent = {
                             Text(
                                 "默认关闭。开启后，Daddy 每天获得少量独立探索机会，默认只读公开网页；" +
-                                    "若要自动访问会客室或对外使用 MCP，还要单独开启下方的授权。没有值得做的事会安静跳过。"
+                                    "若要对外使用 MCP，还要单独开启下方的授权。没有值得做的事会安静跳过。"
                             )
                         },
                         trailingContent = {
@@ -658,9 +641,9 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                             supportingContent = {
                                 Text(
                                     if (proactiveSetting.autonomousActivity.enabled) {
-                                        "已开启。Daddy 每次空闲探索最多选择网页、论坛或会客室其中一种；不会混用。"
+                                        "已开启。Daddy 每次空闲探索最多选择公开网页或任一已连接 MCP 服务其中一种；不会混用。"
                                     } else {
-                                        "默认关闭。开启前会再次说明风险；关闭后会保留你勾选的工具，但下一次空闲探索不会对外行动。"
+                                        "默认关闭。开启前会再次说明风险；关闭后会保留各服务的开关状态，但下一次空闲探索不会对外行动。"
                                     }
                                 )
                             },
@@ -682,34 +665,40 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                         )
                         if (proactiveSetting.autonomousActivity.enabled) {
                             item(
-                                headlineContent = { Text("可自动使用的 MCP 工具") },
+                                headlineContent = { Text("可自动使用的 MCP 服务") },
                                 supportingContent = {
                                     Text(
-                                        if (availableMcpTools.isEmpty()) {
-                                            "当前主窗口没有已启用且已发现的 MCP 工具。可以先在 MCP 设置中连接服务并获取工具列表；这里不会为自动活动新建连接。"
+                                        if (configuredMcpServers.isEmpty()) {
+                                            "还没有配置 MCP 服务。以后新增服务会自动出现在这里，并默认允许 Daddy 在空闲时使用它的全部工具。"
                                         } else {
-                                            "只勾选你愿意让 Daddy 在空闲时使用的工具。普通聊天里的 MCP 启用和审批设置不会被改动。"
+                                            "每项代表整个服务：开启后，Daddy 可使用该服务全部已连接工具。新服务默认开启；关闭某项会挡住该服务的全部工具。"
                                         }
                                     )
                                 },
                             )
-                            availableMcpTools.forEach { choice ->
-                                val selected = selectedMcpTools.any {
-                                    it.serverId == choice.serverId && it.toolName == choice.toolName
-                                }
+                            configuredMcpServers.forEach { choice ->
+                                val selected = choice.serverId !in proactiveSetting.autonomousActivity
+                                    .normalizedDisabledMcpServerIds()
                                 item(
-                                    headlineContent = { Text("${choice.serverName} · ${choice.toolName}") },
-                                    supportingContent = { Text("仅在已有 MCP 连接存活时可用于空闲活动。") },
+                                    headlineContent = { Text(choice.serverName) },
+                                    supportingContent = {
+                                        Text(
+                                            if (choice.enabled) {
+                                                "${if (selected) "已允许" else "已关闭"}该服务的全部工具；仅在已有连接存活时可用于空闲活动。"
+                                            } else {
+                                                "该服务本身当前已停用；重新启用并连上后，会保留这里的开关状态。"
+                                            },
+                                        )
+                                    },
                                     trailingContent = {
                                         Switch(
                                             checked = selected,
                                             onCheckedChange = { checked ->
                                                 val updated = proactiveSetting.copy(
                                                     autonomousActivity = proactiveSetting.autonomousActivity
-                                                        .withAutonomousMcpToolPermission(
+                                                        .withAutonomousMcpServerEnabled(
                                                             serverId = choice.serverId,
-                                                            toolName = choice.toolName,
-                                                            selected = checked,
+                                                            enabled = checked,
                                                         ),
                                                 )
                                                 vm.updateSettings(settings.copy(proactiveMessageSetting = updated))
@@ -718,23 +707,6 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
                                     },
                                 )
                             }
-                            unavailableSelections.forEach { permission ->
-                                item(
-                                    headlineContent = {
-                                        Text(
-                                            "${configuredServerNames[permission.serverId] ?: "已移除的 MCP 服务"} · ${permission.toolName}",
-                                        )
-                                    },
-                                    supportingContent = { Text("当前不可用，等待 MCP 重新发现；保留原授权，不会自动删除。") },
-                                    trailingContent = { Switch(checked = true, onCheckedChange = {}, enabled = false) },
-                                )
-                            }
-                            item(
-                                headlineContent = { Text("会客室") },
-                                supportingContent = {
-                                    Text("若存在已获同意、满足冷却和次数限制的好友，Daddy 可在空闲时选择一次拜访；仍只会排队，不会把排队说成完成。")
-                                },
-                            )
                             item(
                                 headlineContent = { Text("最近自动活动") },
                                 supportingContent = {
@@ -927,16 +899,15 @@ fun SettingProactiveMessagePage(vm: SettingVM = koinInject()) {
     }
 }
 
-private data class IdleActivityMcpToolChoice(
+private data class IdleActivityMcpServerChoice(
     val serverId: String,
     val serverName: String,
-    val toolName: String,
+    val enabled: Boolean,
 )
 
 private fun me.rerere.rikkahub.data.service.AutonomousActivityFamily.displayName(): String = when (this) {
     me.rerere.rikkahub.data.service.AutonomousActivityFamily.WEB -> "公开网页"
-    me.rerere.rikkahub.data.service.AutonomousActivityFamily.FORUM -> "论坛 MCP"
-    me.rerere.rikkahub.data.service.AutonomousActivityFamily.VISITOR_LOUNGE -> "会客室"
+    me.rerere.rikkahub.data.service.AutonomousActivityFamily.FORUM -> "已配置 MCP"
 }
 
 private fun AutonomousActivityStatus.displayName(): String = when (this) {

@@ -676,8 +676,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                 val idleActivitySurface = if (isIdleExploreTrigger) {
                     autonomousActivityToolSurfaceBuilder.build(
                         setting = proactiveSetting.autonomousActivity,
-                        allowedMcpServerIds = assistant.mcpServers,
-                        sourceConversationId = conversationId.toString(),
+                        allowedMcpServerIds = settings.mcpServers.map { it.id }.toSet(),
                         webTools = buildIdleExploreWebTools(settings),
                     )
                 } else {
@@ -1069,7 +1068,6 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
                     idleActivityAvailability ?: AutonomousActivityToolAvailability(
                         hasWebTools = false,
                         hasForumTools = false,
-                        hasVisitorLoungeTools = false,
                     ),
                 ))
             } else if (isFromDeviceEvent) {
@@ -1298,7 +1296,7 @@ class ProactiveMessageTriggerService : android.app.Service(), KoinComponent {
 
     /**
      * 空闲探索的公开网页部分：只加入搜索与网页读取工具。其余可选活动会由
-     * [AutonomousActivityToolSurfaceBuilder] 依据单独的用户授权追加，并由类别锁保护。
+     * [AutonomousActivityToolSurfaceBuilder] 依据用户允许的 MCP 服务追加，并由类别锁保护。
      */
     private suspend fun buildIdleExploreWebTools(settings: Settings): List<Tool> = ToolNaming.deduplicateToolNames(buildList {
         addAll(createSearchTools(settings))

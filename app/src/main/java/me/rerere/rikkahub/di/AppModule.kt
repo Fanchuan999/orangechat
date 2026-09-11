@@ -9,9 +9,6 @@ package me.rerere.rikkahub.di
 import kotlinx.serialization.json.Json
 import me.rerere.highlight.Highlighter
 import me.rerere.rikkahub.AppScope
-import me.rerere.rikkahub.data.lounge.DefaultVisitorLoungeToolGateway
-import me.rerere.rikkahub.data.lounge.VisitorLoungeToolGateway
-import me.rerere.rikkahub.data.lounge.VisitorLoungeVisitCoordinator
 import me.rerere.rikkahub.data.ai.AILoggingManager
 import me.rerere.rikkahub.data.ai.tools.LocalTools
 import me.rerere.rikkahub.data.event.AppEventBus
@@ -79,24 +76,6 @@ val appModule = module {
         me.rerere.rikkahub.data.ai.tools.PcBridgeTaskTools(get())
     }
 
-    single {
-        VisitorLoungeVisitCoordinator(
-            repository = get(),
-            secretStore = get(),
-            mcpClient = get(),
-            appScope = get(),
-            conversationRepository = get(),
-        )
-    }
-
-    single<VisitorLoungeToolGateway> {
-        DefaultVisitorLoungeToolGateway(repository = get(), coordinator = get())
-    }
-
-    single {
-        me.rerere.rikkahub.data.ai.tools.VisitorLoungeTools(get())
-    }
-
     single<me.rerere.rikkahub.data.service.AutonomousActivityMcpGateway> {
         me.rerere.rikkahub.data.service.McpAutonomousActivityGateway(get())
     }
@@ -104,7 +83,6 @@ val appModule = module {
     single {
         me.rerere.rikkahub.data.service.AutonomousActivityToolSurfaceBuilder(
             mcpGateway = get(),
-            visitorLoungeGateway = get(),
             activityRepository = get(),
         )
     }
@@ -127,7 +105,6 @@ val appModule = module {
             json = get(),
             memoryRepository = get(),
             pcBridgeTaskTools = get(),
-            visitorLoungeTools = get(),
         )
     }
 
@@ -184,7 +161,6 @@ val appModule = module {
             folderRepository = get(),
             companionMoodEngine = get(),
             pcBridgeTaskToolsProvider = { get() },
-            visitorLoungeToolsProvider = { get() },
         )
     }
 

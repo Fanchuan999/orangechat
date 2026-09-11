@@ -9,20 +9,21 @@ package me.rerere.rikkahub.ui.pages.companion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -42,49 +43,38 @@ internal fun PhotoWallSection(
     onRemovePhoto: (CompanionPhoto) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
-        Text(
-            text = "照片墙",
-            color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 8.dp),
-        )
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-        ) {
-            Column(
+    var expanded by rememberSaveable { mutableStateOf(false) }
+
+    CompanionCollapsibleSection(
+        title = "照片墙",
+        summary = if (photos.isEmpty()) "还没有照片" else "已收着 ${photos.size} 张照片",
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = modifier,
+    ) {
+        Text("把一个瞬间挂起来", style = MaterialTheme.typography.titleMedium)
+        if (photos.isEmpty()) {
+            Text("还没有照片。选一张你想让 Daddy 也看得见的吧。")
+        } else {
+            LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                    .height(PhotoWallHeight),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("把一个瞬间挂起来", style = MaterialTheme.typography.titleMedium)
-                if (photos.isEmpty()) {
-                    Text("还没有照片。选一张你想让 Daddy 也看得见的吧。")
-                } else {
-                    LazyRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(PhotoWallHeight),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        items(photos, key = { it.id.toString() }) { photo ->
-                            PhotoWallCard(
-                                photo = photo,
-                                onEditCaption = { onEditCaption(photo) },
-                                onRemove = { onRemovePhoto(photo) },
-                            )
-                        }
-                    }
+                items(photos, key = { it.id.toString() }) { photo ->
+                    PhotoWallCard(
+                        photo = photo,
+                        onEditCaption = { onEditCaption(photo) },
+                        onRemove = { onRemovePhoto(photo) },
+                    )
                 }
-                Button(onClick = onAddPhoto) {
-                    Text("从相册挂一张")
-                }
-                Text("照片会复制进 Daddy 的本地文件夹，普通备份和联动备份都会带走它。")
             }
         }
+        Button(onClick = onAddPhoto) {
+            Text("从相册挂一张")
+        }
+        Text("照片会复制进 Daddy 的本地文件夹，普通备份和联动备份都会带走它。")
     }
 }
 

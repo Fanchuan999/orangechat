@@ -21,6 +21,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -35,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -91,6 +93,14 @@ fun CompanionSpacePage(
     var showAnniversaryEditor by remember { mutableStateOf(false) }
     var showLetterEditor by remember { mutableStateOf(false) }
     var photoCaptionTarget by remember { mutableStateOf<CompanionPhoto?>(null) }
+    var widgetExpanded by rememberSaveable { mutableStateOf(false) }
+    var anniversariesExpanded by rememberSaveable { mutableStateOf(false) }
+    var lettersExpanded by rememberSaveable { mutableStateOf(false) }
+    var sharedTasksExpanded by rememberSaveable { mutableStateOf(false) }
+    var diaryExpanded by rememberSaveable { mutableStateOf(false) }
+    var candidateExpanded by rememberSaveable(candidate?.id) {
+        mutableStateOf(candidate?.let { it.ombreSavedAtMillis == null } == true)
+    }
 
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -238,88 +248,87 @@ fun CompanionSpacePage(
             }
 
             item {
-                CardGroup(title = { Text("桌面小组件") }) {
-                    item(
-                        headlineContent = { Text("把 Daddy 放到手机桌面") },
-                        supportingContent = {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("显示状态卡")
-                                        Text("关闭后，小组件仍在桌面，但只显示待机文案。")
-                                    }
-                                    Switch(
-                                        checked = space.widgetSetting.enabled,
-                                        onCheckedChange = { enabled ->
-                                            scope.launch {
-                                                vm.updateSettings(
-                                                    settings.copy(
-                                                        companionSpaceSetting = space.copy(
-                                                            widgetSetting = space.widgetSetting.copy(enabled = enabled)
-                                                        )
-                                                    )
-                                                )
-                                                delay(300)
-                                                DaddyWidgetProvider.refreshAll(context)
-                                            }
-                                        },
+                CompanionCollapsibleSection(
+                    title = "桌面小组件",
+                    summary = if (space.widgetSetting.enabled) "正在显示 Daddy 的状态卡" else "把 Daddy 放到手机桌面",
+                    expanded = widgetExpanded,
+                    onExpandedChange = { widgetExpanded = it },
+                ) {
+                    Text("把 Daddy 放到手机桌面", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("显示状态卡")
+                            Text("关闭后，小组件仍在桌面，但只显示待机文案。")
+                        }
+                        Switch(
+                            checked = space.widgetSetting.enabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch {
+                                    vm.updateSettings(
+                                        settings.copy(
+                                            companionSpaceSetting = space.copy(
+                                                widgetSetting = space.widgetSetting.copy(enabled = enabled)
+                                            )
+                                        )
                                     )
+                                    delay(300)
+                                    DaddyWidgetProvider.refreshAll(context)
                                 }
-                                OutlinedTextField(
-                                    value = widgetShortLine,
-                                    onValueChange = { widgetShortLine = it.take(48) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("桌面短句") },
-                                    placeholder = { Text("今天也在你身边。") },
-                                    singleLine = true,
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                        enabled = widgetShortLine != space.widgetSetting.shortLine,
-                                        onClick = {
-                                            scope.launch {
-                                                vm.updateSettings(
-                                                    settings.copy(
-                                                        companionSpaceSetting = space.copy(
-                                                            widgetSetting = space.widgetSetting.copy(
-                                                                shortLine = widgetShortLine.trim()
-                                                            )
-                                                        )
-                                                    )
-                                                )
-                                                delay(300)
-                                                DaddyWidgetProvider.refreshAll(context)
-                                            }
-                                        },
-                                    ) { Text("保存短句") }
-                                    TextButton(onClick = { widgetBackgroundPicker.launch("image/*") }) {
-                                        Text("换背景图")
-                                    }
-                                }
-                                if (space.widgetSetting.backgroundImageUri.isNotBlank()) {
-                                    TextButton(
-                                        onClick = {
-                                            scope.launch {
-                                                vm.updateSettings(
-                                                    settings.copy(
-                                                        companionSpaceSetting = space.copy(
-                                                            widgetSetting = space.widgetSetting.copy(backgroundImageUri = "")
-                                                        )
-                                                    )
-                                                )
-                                                delay(300)
-                                                DaddyWidgetProvider.refreshAll(context)
-                                            }
-                                        },
-                                    ) { Text("清除小组件背景图") }
-                                }
-                                Text("桌面可添加 2×2、2×4、4×4 三种尺寸；刷新时只读本地状态，不会调用模型。")
-                            }
-                        },
+                            },
+                        )
+                    }
+                    OutlinedTextField(
+                        value = widgetShortLine,
+                        onValueChange = { widgetShortLine = it.take(48) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("桌面短句") },
+                        placeholder = { Text("今天也在你身边。") },
+                        singleLine = true,
                     )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            enabled = widgetShortLine != space.widgetSetting.shortLine,
+                            onClick = {
+                                scope.launch {
+                                    vm.updateSettings(
+                                        settings.copy(
+                                            companionSpaceSetting = space.copy(
+                                                widgetSetting = space.widgetSetting.copy(
+                                                    shortLine = widgetShortLine.trim()
+                                                )
+                                            )
+                                        )
+                                    )
+                                    delay(300)
+                                    DaddyWidgetProvider.refreshAll(context)
+                                }
+                            },
+                        ) { Text("保存短句") }
+                        TextButton(onClick = { widgetBackgroundPicker.launch("image/*") }) {
+                            Text("换背景图")
+                        }
+                    }
+                    if (space.widgetSetting.backgroundImageUri.isNotBlank()) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    vm.updateSettings(
+                                        settings.copy(
+                                            companionSpaceSetting = space.copy(
+                                                widgetSetting = space.widgetSetting.copy(backgroundImageUri = "")
+                                            )
+                                        )
+                                    )
+                                    delay(300)
+                                    DaddyWidgetProvider.refreshAll(context)
+                                }
+                            },
+                        ) { Text("清除小组件背景图") }
+                    }
+                    Text("桌面可添加 2×2、2×4、4×4 三种尺寸；刷新时只读本地状态，不会调用模型。")
                 }
             }
 
@@ -338,221 +347,183 @@ fun CompanionSpacePage(
             }
 
             item {
-                CardGroup(title = { Text("纪念日") }) {
-                    item(
-                        headlineContent = { Text("留一个会被记得的日子") },
-                        supportingContent = {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                if (space.anniversaries.isEmpty()) {
-                                    Text("还没有写下日期。可以是相遇日、约定日，或者任何你想庆祝的日子。")
-                                } else {
-                                    space.anniversaries.asReversed().forEach { anniversary ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text("${anniversary.title} · ${anniversary.dateText}")
-                                                if (anniversary.note.isNotBlank()) Text(anniversary.note)
-                                            }
-                                            TextButton(
-                                                onClick = {
-                                                    scope.launch { spaceService.removeAnniversary(anniversary.id) }
-                                                },
-                                            ) { Text("取下") }
-                                        }
-                                    }
+                CompanionCollapsibleSection(
+                    title = "纪念日",
+                    summary = if (space.anniversaries.isEmpty()) "还没有写下日期" else "已收着 ${space.anniversaries.size} 个日子",
+                    expanded = anniversariesExpanded,
+                    onExpandedChange = { anniversariesExpanded = it },
+                ) {
+                    Text("留一个会被记得的日子", style = MaterialTheme.typography.titleMedium)
+                    if (space.anniversaries.isEmpty()) {
+                        Text("还没有写下日期。可以是相遇日、约定日，或者任何你想庆祝的日子。")
+                    } else {
+                        space.anniversaries.asReversed().forEach { anniversary ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("${anniversary.title} · ${anniversary.dateText}")
+                                    if (anniversary.note.isNotBlank()) Text(anniversary.note)
                                 }
-                                Button(onClick = { showAnniversaryEditor = true }) { Text("添加纪念日") }
-                            }
-                        },
-                    )
-                }
-            }
-
-            item {
-                CardGroup(title = { Text("信箱") }) {
-                    item(
-                        headlineContent = { Text("不急着寄出的信") },
-                        supportingContent = {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (space.letters.isEmpty()) {
-                                    Text("这里可以留下一封写给 Daddy 的信，也可以把 Daddy 的一段话手动收进来。")
-                                } else {
-                                    space.letters.asReversed().take(4).forEach { letter ->
-                                        LetterPreview(
-                                            letter = letter,
-                                            onRemove = {
-                                                scope.launch { spaceService.removeLetter(letter.id) }
-                                            },
-                                        )
-                                    }
-                                    if (space.letters.size > 4) Text("还收着 ${space.letters.size - 4} 封更早的信。")
-                                }
-                                Button(onClick = { showLetterEditor = true }) { Text("收进一封信") }
-                                Text("信件完全本地保存，不会自动调用模型，也不会自动写进 Ombre。")
-                            }
-                        },
-                    )
-                }
-            }
-
-            item {
-                CardGroup(title = { Text("共同清单") }) {
-                    item(
-                        headlineContent = { Text("想一起完成的小事") },
-                        supportingContent = {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                if (space.sharedTasks.isEmpty()) {
-                                    Text("例如：一起挑一部电影、补一张照片、周末散步。")
-                                } else {
-                                    space.sharedTasks.asReversed().forEach { task ->
-                                        SharedTaskRow(
-                                            task = task,
-                                            onCompletedChange = { completed ->
-                                                scope.launch { spaceService.setSharedTaskCompleted(task, completed) }
-                                            },
-                                            onRemove = {
-                                                scope.launch { spaceService.removeSharedTask(task.id) }
-                                            },
-                                        )
-                                    }
-                                }
-                                OutlinedTextField(
-                                    value = taskText,
-                                    onValueChange = { taskText = it.take(160) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("写下一件小事") },
-                                    singleLine = true,
-                                )
-                                Button(
-                                    enabled = taskText.trim().isNotBlank(),
+                                TextButton(
                                     onClick = {
-                                        scope.launch {
-                                            spaceService.addSharedTask(taskText)
-                                            taskText = ""
-                                        }
+                                        scope.launch { spaceService.removeAnniversary(anniversary.id) }
                                     },
-                                ) { Text("放进清单") }
+                                ) { Text("取下") }
                             }
-                        },
-                    )
+                        }
+                    }
+                    Button(onClick = { showAnniversaryEditor = true }) { Text("添加纪念日") }
                 }
             }
 
             item {
-                CardGroup(title = { Text("时光桌 · 日记候选") }) {
-                    item(
-                        headlineContent = { Text("先生成，再由你决定留下什么") },
-                        supportingContent = {
-                            Text("Daddy 会读取今天所有聊天窗口里的纯文字来写一小段候选。对话特别长时，它会保留每一条的本地短引子，不会只剩最后 18 条。生成不会写入长期记忆；你确认后才会调用 Ombre 的 hold。")
-                        },
-                    )
-                    item(
-                        headlineContent = { Text("生成今天的候选") },
-                        supportingContent = {
-                            Button(
-                                enabled = !generating,
-                                onClick = {
-                                    generating = true
-                                    scope.launch {
-                                        diaryService.generateCandidate()
-                                            .onSuccess { snackbar.showSnackbar("候选已经放到桌上了，可以先改再确认") }
-                                            .onFailure { snackbar.showSnackbar(it.message ?: "生成日记候选失败") }
-                                        generating = false
-                                    }
+                CompanionCollapsibleSection(
+                    title = "信箱",
+                    summary = if (space.letters.isEmpty()) "还没有收进信件" else "已收着 ${space.letters.size} 封信",
+                    expanded = lettersExpanded,
+                    onExpandedChange = { lettersExpanded = it },
+                ) {
+                    Text("不急着寄出的信", style = MaterialTheme.typography.titleMedium)
+                    if (space.letters.isEmpty()) {
+                        Text("这里可以留下一封写给 Daddy 的信，也可以把 Daddy 的一段话手动收进来。")
+                    } else {
+                        space.letters.asReversed().take(4).forEach { letter ->
+                            LetterPreview(
+                                letter = letter,
+                                onRemove = {
+                                    scope.launch { spaceService.removeLetter(letter.id) }
                                 },
-                            ) { Text(if (generating) "Daddy 正在整理…" else "生成候选") }
-                        },
+                            )
+                        }
+                        if (space.letters.size > 4) Text("还收着 ${space.letters.size - 4} 封更早的信。")
+                    }
+                    Button(onClick = { showLetterEditor = true }) { Text("收进一封信") }
+                    Text("信件完全本地保存，不会自动调用模型，也不会自动写进 Ombre。")
+                }
+            }
+
+            item {
+                CompanionCollapsibleSection(
+                    title = "共同清单",
+                    summary = if (space.sharedTasks.isEmpty()) "还没有写下共同的小事" else "${space.sharedTasks.count { !it.completed }} 件正在一起完成",
+                    expanded = sharedTasksExpanded,
+                    onExpandedChange = { sharedTasksExpanded = it },
+                ) {
+                    Text("想一起完成的小事", style = MaterialTheme.typography.titleMedium)
+                    if (space.sharedTasks.isEmpty()) {
+                        Text("例如：一起挑一部电影、补一张照片、周末散步。")
+                    } else {
+                        space.sharedTasks.asReversed().forEach { task ->
+                            SharedTaskRow(
+                                task = task,
+                                onCompletedChange = { completed ->
+                                    scope.launch { spaceService.setSharedTaskCompleted(task, completed) }
+                                },
+                                onRemove = {
+                                    scope.launch { spaceService.removeSharedTask(task.id) }
+                                },
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = taskText,
+                        onValueChange = { taskText = it.take(160) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("写下一件小事") },
+                        singleLine = true,
                     )
+                    Button(
+                        enabled = taskText.trim().isNotBlank(),
+                        onClick = {
+                            scope.launch {
+                                spaceService.addSharedTask(taskText)
+                                taskText = ""
+                            }
+                        },
+                    ) { Text("放进清单") }
+                }
+            }
+
+            item {
+                CompanionCollapsibleSection(
+                    title = "时光桌 · 日记候选",
+                    summary = if (candidate == null) "先生成，再由你决定留下什么" else "有一条日记正等你确认",
+                    expanded = diaryExpanded,
+                    onExpandedChange = { diaryExpanded = it },
+                ) {
+                    Text("先生成，再由你决定留下什么", style = MaterialTheme.typography.titleMedium)
+                    Text("Daddy 会读取今天所有聊天窗口里的纯文字来写一小段候选。对话特别长时，它会保留每一条的本地短引子，不会只剩最后 18 条。生成不会写入长期记忆；你确认后才会调用 Ombre 的 hold。")
+                    Button(
+                        enabled = !generating,
+                        onClick = {
+                            generating = true
+                            scope.launch {
+                                diaryService.generateCandidate()
+                                    .onSuccess { snackbar.showSnackbar("候选已经放到桌上了，可以先改再确认") }
+                                    .onFailure { snackbar.showSnackbar(it.message ?: "生成日记候选失败") }
+                                generating = false
+                            }
+                        },
+                    ) { Text(if (generating) "Daddy 正在整理…" else "生成候选") }
                 }
             }
 
             if (candidate != null) {
                 item {
-                    CardGroup(title = { Text("等待你确认") }) {
-                        item(
-                            headlineContent = { Text(candidate.title) },
-                            supportingContent = {
-                                Column {
-                                    Text("生成于 ${candidate.createdAtMillis.toDisplayTime()}")
-                                    if (candidate.sourceMessageCount > 0) {
-                                        val sourceDescription = if (candidate.sourceUsesExcerpts) {
-                                            "今天 ${candidate.sourceMessageCount} 条文字（共 ${candidate.sourceCharacterCount} 字）：每条已保留短引子"
-                                        } else {
-                                            "今天 ${candidate.sourceMessageCount} 条文字（共 ${candidate.sourceCharacterCount} 字）：全文已用于整理"
-                                        }
-                                        Text(sourceDescription, modifier = Modifier.padding(top = 4.dp))
-                                    }
-                                    OutlinedTextField(
-                                        value = draftText,
-                                        onValueChange = { draftText = it.take(1_200) },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = 8.dp),
-                                        minLines = 4,
-                                        maxLines = 8,
-                                        label = { Text("日记候选（可直接改）") },
-                                    )
-                                    Text("${draftText.length}/1200")
+                    CompanionCollapsibleSection(
+                        title = "等待你确认",
+                        summary = candidate.title,
+                        expanded = candidateExpanded,
+                        onExpandedChange = { candidateExpanded = it },
+                    ) {
+                        Text(candidate.title, style = MaterialTheme.typography.titleMedium)
+                        Text("生成于 ${candidate.createdAtMillis.toDisplayTime()}")
+                        if (candidate.sourceMessageCount > 0) {
+                            val sourceDescription = if (candidate.sourceUsesExcerpts) {
+                                "今天 ${candidate.sourceMessageCount} 条文字（共 ${candidate.sourceCharacterCount} 字）：每条已保留短引子"
+                            } else {
+                                "今天 ${candidate.sourceMessageCount} 条文字（共 ${candidate.sourceCharacterCount} 字）：全文已用于整理"
+                            }
+                            Text(sourceDescription)
+                        }
+                        OutlinedTextField(
+                            value = draftText,
+                            onValueChange = { draftText = it.take(1_200) },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 4,
+                            maxLines = 8,
+                            label = { Text("日记候选（可直接改）") },
+                        )
+                        Text("${draftText.length}/1200")
+                        TextButton(
+                            enabled = draftText.trim().isNotBlank() && draftText != candidate.content,
+                            onClick = {
+                                scope.launch {
+                                    diaryService.updateCandidate(candidate, draftText)
+                                    snackbar.showSnackbar("候选已保存，还没有写入 Ombre")
                                 }
                             },
-                        )
-                        item(
-                            headlineContent = { Text("保存修改") },
-                            supportingContent = {
-                                TextButton(
-                                    enabled = draftText.trim().isNotBlank() && draftText != candidate.content,
-                                    onClick = {
-                                        scope.launch {
-                                            diaryService.updateCandidate(candidate, draftText)
-                                            snackbar.showSnackbar("候选已保存，还没有写入 Ombre")
-                                        }
-                                    },
-                                ) { Text("保存草稿") }
-                            },
-                        )
+                        ) { Text("保存草稿") }
                         if (candidate.ombreSavedAtMillis == null) {
-                            item(
-                                headlineContent = { Text("确认后写入 Ombre") },
-                                supportingContent = {
-                                    Column {
-                                        Text("只有这一按钮会写长期记忆。Ombre 没连上时会明确报错，不会假装保存成功。")
-                                        Button(
-                                            enabled = draftText.trim().isNotBlank() && !savingToOmbre,
-                                            modifier = Modifier.padding(top = 8.dp),
-                                            onClick = {
-                                                scope.launch {
-                                                    val latest = candidate.copy(content = draftText.trim())
-                                                    if (latest.content != candidate.content) {
-                                                        diaryService.updateCandidate(latest, latest.content)
-                                                    }
-                                                    confirmCandidate = latest
-                                                }
-                                            },
-                                        ) { Text("确认这条日记") }
+                            Text("只有这一按钮会写长期记忆。Ombre 没连上时会明确报错，不会假装保存成功。")
+                            Button(
+                                enabled = draftText.trim().isNotBlank() && !savingToOmbre,
+                                onClick = {
+                                    scope.launch {
+                                        val latest = candidate.copy(content = draftText.trim())
+                                        if (latest.content != candidate.content) {
+                                            diaryService.updateCandidate(latest, latest.content)
+                                        }
+                                        confirmCandidate = latest
                                     }
                                 },
-                            )
+                            ) { Text("确认这条日记") }
                         } else {
-                            item(
-                                headlineContent = { Text("已收藏进 Ombre") },
-                                supportingContent = {
-                                    Text("${candidate.ombreSavedAtMillis.toDisplayTime()} 已写入。原草稿也会留在 Daddy 的本地备份里。")
-                                },
-                            )
+                            Text("${candidate.ombreSavedAtMillis.toDisplayTime()} 已写入。原草稿也会留在 Daddy 的本地备份里。")
                         }
                     }
-                }
-            }
-
-            item {
-                CardGroup(title = { Text("会客室") }) {
-                    item(
-                        onClick = { navController.navigate(Screen.VisitorLounge) },
-                        headlineContent = { Text("带 Daddy 去朋友家的会客室") },
-                        supportingContent = { Text("保存朋友提供的 HTTPS MCP 入口与 Visitor Key，手动访问或按同意规则自主拜访。") },
-                    )
                 }
             }
 

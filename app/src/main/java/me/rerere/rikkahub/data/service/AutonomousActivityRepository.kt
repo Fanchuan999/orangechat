@@ -6,7 +6,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import me.rerere.rikkahub.data.db.dao.AutonomousActivityDao
 import me.rerere.rikkahub.data.db.entity.AutonomousActivityEntity
-import me.rerere.rikkahub.data.lounge.VisitorLoungeRedactor
 
 enum class AutonomousActivityStatus {
     STARTED,
@@ -63,7 +62,9 @@ class AutonomousActivityRepository(
         store.trimToLatest(MAX_RECORDS)
     }
 
-    private fun redactSummary(value: String): String = VisitorLoungeRedactor.redact(value)
+    private fun redactSummary(value: String): String = value
+        .replace(endpointWithQuery, "[redacted endpoint query]")
+        .replace(endpointWithUserInfo, "[redacted endpoint credentials]")
         .replace(bearerToken, "Bearer [redacted]")
         .replace(credentialAssignment, "\$1=[redacted]")
         .take(MAX_SUMMARY_CHARACTERS)
@@ -74,6 +75,8 @@ class AutonomousActivityRepository(
         private const val MAX_TOOL_NAME_CHARACTERS = 120
         private const val MAX_SUMMARY_CHARACTERS = 300
         private val bearerToken = Regex("""(?i)\bBearer\s+[^\s,;]+""")
+        private val endpointWithQuery = Regex("""(?i)https://[^\s?#]+(?:/[^\s?#]*)?\?[^\s#]+""")
+        private val endpointWithUserInfo = Regex("""(?i)https://[^\s/@]+@[^\s/?#]+(?:/[^\s?#]*)?""")
         private val credentialAssignment = Regex(
             """(?i)\b(access_token|refresh_token|token|api[_-]?key|key|secret|password)\s*=\s*[^&\s,;]+""",
         )

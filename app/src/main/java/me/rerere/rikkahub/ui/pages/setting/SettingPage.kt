@@ -59,6 +59,7 @@ import me.rerere.hugeicons.stroke.Developer
 import me.rerere.hugeicons.stroke.GlobalSearch
 import me.rerere.hugeicons.stroke.ImageUpload
 import me.rerere.hugeicons.stroke.InLove
+import me.rerere.hugeicons.stroke.Home01
 import me.rerere.hugeicons.stroke.LookTop
 import me.rerere.hugeicons.stroke.McpServer
 import me.rerere.hugeicons.stroke.Megaphone01
@@ -70,6 +71,7 @@ import me.rerere.hugeicons.stroke.Shield02
 import me.rerere.hugeicons.stroke.SmartPhone01
 import me.rerere.hugeicons.stroke.Share04
 import me.rerere.hugeicons.stroke.Sun01
+import me.rerere.hugeicons.stroke.Timeline
 import me.rerere.hugeicons.stroke.WavingHand01
 import me.rerere.hugeicons.stroke.MessageMultiple01
 import me.rerere.hugeicons.stroke.Message01
@@ -281,12 +283,13 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                     )
                     item(
                         onClick = { navController.navigate(Screen.SettingContinuity) },
+                        leadingContent = { Icon(HugeIcons.Timeline, null) },
                         supportingContent = { Text("为当前助手保存近期生活线和当前状态卡，按字数预算带入聊天") },
                         headlineContent = { Text("生活线与状态卡") },
                     )
                     item(
                         onClick = { navController.navigate(Screen.CompanionSpace) },
-                        leadingContent = { Icon(HugeIcons.InLove, null) },
+                        leadingContent = { Icon(HugeIcons.Home01, null) },
                         supportingContent = { Text("日记候选先由你确认，再写入 Ombre；信件和共同活动也会放在这里") },
                         headlineContent = { Text("Daddy 的小屋") },
                     )

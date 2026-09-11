@@ -21,7 +21,6 @@ import me.rerere.rikkahub.data.db.dao.MemoryBankDAO
 import me.rerere.rikkahub.data.db.dao.MemoryDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
-import me.rerere.rikkahub.data.db.dao.VisitorLoungeDao
 import me.rerere.rikkahub.data.db.dao.AutonomousActivityDao
 import me.rerere.rikkahub.data.db.entity.ConversationEntity
 import me.rerere.rikkahub.data.db.entity.FavoriteEntity
@@ -33,9 +32,6 @@ import me.rerere.rikkahub.data.db.entity.MemoryEntity
 import me.rerere.rikkahub.data.db.entity.MessageNodeEntity
 import me.rerere.rikkahub.data.db.entity.SshHostEntity
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
-import me.rerere.rikkahub.data.db.entity.VisitorLoungeFriendEntity
-import me.rerere.rikkahub.data.db.entity.VisitorLoungeMessageEntity
-import me.rerere.rikkahub.data.db.entity.VisitorLoungeVisitEntity
 import me.rerere.rikkahub.data.db.entity.AutonomousActivityEntity
 import me.rerere.rikkahub.data.db.dao.SshHostDao
 import me.rerere.rikkahub.data.security.SecurityAuditDao
@@ -64,12 +60,9 @@ import me.rerere.rikkahub.utils.JsonInstant
         WorkflowRunEntity::class,
         SshHostEntity::class,
         SecurityAuditEntity::class,
-        VisitorLoungeFriendEntity::class,
-        VisitorLoungeVisitEntity::class,
-        VisitorLoungeMessageEntity::class,
         AutonomousActivityEntity::class,
     ],
-    version = 31,
+    version = 32,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
@@ -117,8 +110,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sshHostDao(): SshHostDao
 
     abstract fun securityAuditDao(): SecurityAuditDao
-
-    abstract fun visitorLoungeDao(): VisitorLoungeDao
 
     abstract fun autonomousActivityDao(): AutonomousActivityDao
 }

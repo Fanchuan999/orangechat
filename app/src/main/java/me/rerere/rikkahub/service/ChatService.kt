@@ -74,7 +74,6 @@ import me.rerere.rikkahub.data.ai.GenerationHandler
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.tools.LocalTools
 import me.rerere.rikkahub.data.ai.tools.PcBridgeTaskTools
-import me.rerere.rikkahub.data.ai.tools.VisitorLoungeTools
 import me.rerere.rikkahub.data.ai.tools.SmartToolRouter
 import me.rerere.rikkahub.data.ai.tools.SystemTools
 import me.rerere.rikkahub.data.ai.tools.ToolNaming
@@ -105,7 +104,6 @@ import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
-import me.rerere.rikkahub.data.model.withoutVisitorLoungeReportCards
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
@@ -183,7 +181,6 @@ class ChatService(
      * normal companion chats.
      */
     private val pcBridgeTaskToolsProvider: () -> PcBridgeTaskTools,
-    private val visitorLoungeToolsProvider: () -> VisitorLoungeTools,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
@@ -920,7 +917,7 @@ class ChatService(
                     } else {
                         it
                     }
-                }.withoutVisitorLoungeReportCards(),
+                },
                 assistant = assistant,
                 conversationSystemPrompt = conversation.customSystemPrompt,
                 workspaceCwd = conversation.workspaceCwd,
@@ -987,14 +984,6 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                     // PC bridge is a native, paired-device capability. It must remain available even when
                     // MCP/plugin tools are manually throttled, otherwise Daddy cannot dispatch a PC task.
                     addAll(pcBridgeTaskToolsProvider().getTools())
-                    addAll(
-                        visitorLoungeToolsProvider().getTools(
-                            me.rerere.rikkahub.data.ai.tools.ToolInvocationContext(
-                                callerAssistantId = assistant.id.toString(),
-                                callerConversationId = conversationId.toString(),
-                            ),
-                        ),
-                    )
                 }) { duplicateToolName ->
                     Log.w(TAG, "Dropped duplicate tool name: $duplicateToolName")
                 },

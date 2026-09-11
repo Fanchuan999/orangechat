@@ -20,6 +20,7 @@ import io.modelcontextprotocol.kotlin.sdk.shared.AbstractTransport
 import io.modelcontextprotocol.kotlin.sdk.shared.RequestOptions
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
@@ -72,6 +73,45 @@ private const val MAX_RECONNECT_DELAY_MS = 30000L
 private const val TOKEN_REFRESH_LEEWAY_MS = 60_000L // 令牌到期前 60s 视为需要刷新
 private val OAUTH_CALLBACK_TIMEOUT = 5.minutes
 
+internal fun formatMcpConfigUpdateLog(configs: List<McpServerConfig>): String =
+    "MCP configuration update received for ${configs.size} server(s)"
+
+internal fun formatMcpTransportErrorLog(serverName: String, error: Throwable): String =
+    "MCP transport error for $serverName (${error::class.simpleName ?: "UnknownError"})"
+
+/** A transport captures its request headers, so a refreshed bearer token needs a new transport. */
+internal fun requiresMcpTransportReconnect(
+    connectedConfig: McpServerConfig,
+    refreshedConfig: McpServerConfig,
+): Boolean = connectedConfig.resolveHeaders() != refreshedConfig.resolveHeaders()
+
+/** Some MCP servers wrap an OAuth 401 in an otherwise-successful tool response. */
+internal fun isMcpToolAuthorizationFailure(result: CallToolResult): Boolean =
+    result.isError == true && result.content
+        .filterIsInstance<TextContent>()
+        .any { looksUnauthorizedText(it.text) }
+
+private fun looksUnauthorizedText(message: String): Boolean {
+    val normalized = message.lowercase()
+    return normalized.contains("401") ||
+        normalized.contains("unauthorized") ||
+        normalized.contains("invalid_token") ||
+        normalized.contains("invalid access token") ||
+        normalized.contains("missing or invalid")
+}
+
+/** 合并用户自定义请求头与 OAuth Bearer 令牌。 */
+internal fun McpServerConfig.resolveHeaders(): List<Pair<String, String>> {
+    val base = commonOptions.headers
+    val token = commonOptions.oauth?.takeIf { it.enabled }?.accessToken
+    val hasAuthHeader = base.any { it.first.equals("Authorization", ignoreCase = true) }
+    return if (!token.isNullOrBlank() && !hasAuthHeader) {
+        base + ("Authorization" to "Bearer $token")
+    } else {
+        base
+    }
+}
+
 internal data class McpToolCallResult(
     val parts: List<UIMessagePart>,
     val isError: Boolean,
@@ -119,7 +159,7 @@ class McpManager(
                 .map { settings -> settings.mcpServers }
                 .collect { mcpServerConfigs ->
                     runCatching {
-                        Log.i(TAG, "update configs: $mcpServerConfigs")
+                        Log.i(TAG, formatMcpConfigUpdateLog(mcpServerConfigs))
                         val newConfigs = mcpServerConfigs.filter { it.commonOptions.enable }
                         val currentConfigs = clients.values.map { it.first }.toList()
                         val (toAdd, toRemove) = currentConfigs.checkDifferent(
@@ -130,19 +170,20 @@ class McpManager(
                                 a.commonOptions.headers == b.commonOptions.headers
                             }
                         )
-                        Log.i(TAG, "to_add: $toAdd")
-                        Log.i(TAG, "to_remove: $toRemove")
+                        Log.i(TAG, "MCP server sync: add=${toAdd.size}, remove=${toRemove.size}")
                         toAdd.forEach { cfg ->
                             appScope.launch {
                                 runCatching { addClient(cfg) }
-                                    .onFailure { it.printStackTrace() }
+                                    .onFailure { error ->
+                                        Log.e(TAG, formatMcpTransportErrorLog(cfg.commonOptions.name, error))
+                                    }
                             }
                         }
                         toRemove.forEach { cfg ->
                             appScope.launch { removeClient(cfg) }
                         }
-                    }.onFailure {
-                        it.printStackTrace()
+                    }.onFailure { error ->
+                        Log.e(TAG, "MCP configuration update failed (${error::class.simpleName})")
                     }
                 }
         }
@@ -180,13 +221,35 @@ class McpManager(
         redactArgumentsInLog: Boolean = false,
         requireExistingConnection: Boolean = false,
     ): McpToolCallResult {
-        val pair = clients[serverId]
-        val client = pair?.second
+        var pair = clients[serverId]
             ?: return McpToolCallResult(
                 parts = listOf(UIMessagePart.Text("Failed to execute tool, because no such mcp client for the tool")),
                 isError = true,
             )
+
+        if (requireExistingConnection && pair.second.transport == null) {
+            return McpToolCallResult(
+                parts = listOf(UIMessagePart.Text("The MCP server is not currently connected.")),
+                isError = true,
+                unavailable = true,
+            )
+        }
+
+        val refreshedConfig = ensureFreshToken(pair.first)
+        if (requiresMcpTransportReconnect(pair.first, refreshedConfig)) {
+            reconnectClient(refreshedConfig)
+            pair = clients[serverId]
+                ?: return McpToolCallResult(
+                    parts = listOf(UIMessagePart.Text("Failed to execute tool, because no such mcp client for the tool")),
+                    isError = true,
+                )
+        }
+
         val config = pair.first
+        val client = pair.second
+        if (syncingStatus.value[serverId] is McpStatus.NeedsAuthorization) {
+            return authorizationRequiredToolCallResult()
+        }
         Log.i(
             TAG,
             "callTool: $toolName / ${if (redactArgumentsInLog) "[redacted]" else args} " +
@@ -203,15 +266,45 @@ class McpManager(
             }
             client.connect(getTransport(config))
         }
-        val result = client.callTool(
-            request = CallToolRequest(
-                params = CallToolRequestParams(
-                    name = toolName,
-                    arguments = args,
-                ),
-            ),
-            options = RequestOptions(timeout = 120.seconds),
-        )
+        var result = try {
+            callMcpTool(client, toolName, args)
+        } catch (error: Exception) {
+            if (needsAuthorization(config, error)) {
+                null
+            } else {
+                throw error
+            }
+        }
+
+        if (result == null || isMcpToolAuthorizationFailure(result)) {
+            val refreshedConfig = ensureFreshToken(config, forceRefresh = true)
+            if (!requiresMcpTransportReconnect(config, refreshedConfig)) {
+                cancelReconnect(config.id)
+                setStatus(config, McpStatus.NeedsAuthorization)
+                return authorizationRequiredToolCallResult()
+            }
+
+            reconnectClient(refreshedConfig)
+            val retryPair = clients[serverId]
+                ?: return authorizationRequiredToolCallResult()
+            val retryConfig = retryPair.first
+            result = try {
+                callMcpTool(retryPair.second, toolName, args)
+            } catch (error: Exception) {
+                if (needsAuthorization(retryConfig, error)) {
+                    cancelReconnect(retryConfig.id)
+                    setStatus(retryConfig, McpStatus.NeedsAuthorization)
+                    return authorizationRequiredToolCallResult()
+                }
+                throw error
+            }
+            if (isMcpToolAuthorizationFailure(result)) {
+                cancelReconnect(retryConfig.id)
+                setStatus(retryConfig, McpStatus.NeedsAuthorization)
+                return authorizationRequiredToolCallResult()
+            }
+        }
+
         return McpToolCallResult(
             parts = result.content.map {
                 when (it) {
@@ -223,6 +316,11 @@ class McpManager(
             isError = result.isError == true,
         )
     }
+
+    private fun authorizationRequiredToolCallResult(): McpToolCallResult = McpToolCallResult(
+        parts = listOf(UIMessagePart.Text("The MCP authorization has expired. Please authorize this service again.")),
+        isError = true,
+    )
 
     private suspend fun convertImageContentToFilePart(image: ImageContent): UIMessagePart.Image {
         val bytes = Base64.decode(image.data)
@@ -237,6 +335,20 @@ class McpManager(
         Log.i(TAG, "convertImageContentToFilePart: saved mcp image to $uri")
         return UIMessagePart.Image(url = uri.toString())
     }
+
+    private suspend fun callMcpTool(
+        client: Client,
+        toolName: String,
+        args: JsonObject,
+    ): CallToolResult = client.callTool(
+        request = CallToolRequest(
+            params = CallToolRequestParams(
+                name = toolName,
+                arguments = args,
+            ),
+        ),
+        options = RequestOptions(timeout = 120.seconds),
+    )
 
     private fun getTransport(config: McpServerConfig): AbstractTransport = when (config) {
         is McpServerConfig.SseTransportServer -> {
@@ -265,18 +377,6 @@ class McpManager(
                     })
                 }
             )
-        }
-    }
-
-    /** 合并用户自定义请求头与 OAuth Bearer 令牌。 */
-    private fun McpServerConfig.resolveHeaders(): List<Pair<String, String>> {
-        val base = commonOptions.headers
-        val token = commonOptions.oauth?.takeIf { it.enabled }?.accessToken
-        val hasAuthHeader = base.any { it.first.equals("Authorization", ignoreCase = true) }
-        return if (!token.isNullOrBlank() && !hasAuthHeader) {
-            base + ("Authorization" to "Bearer $token")
-        } else {
-            base
         }
     }
 
@@ -310,7 +410,7 @@ class McpManager(
         }
 
         transport.onError { error ->
-            Log.e(TAG, "Transport error for ${config.commonOptions.name}: ${error.message}")
+            Log.e(TAG, formatMcpTransportErrorLog(config.commonOptions.name, error))
             val currentStatus = syncingStatus.value[config.id]
             // 只有在已连接状态下才触发重连
             if (currentStatus == McpStatus.Connected) {
@@ -326,12 +426,12 @@ class McpManager(
             setStatus(config = config, status = McpStatus.Connected)
             reconnectAttempts[config.id] = 0 // 重置重连计数
             Log.i(TAG, "addClient: connected ${config.commonOptions.name}")
-        }.onFailure {
-            it.printStackTrace()
-            if (needsAuthorization(config, it)) {
+        }.onFailure { error ->
+            Log.e(TAG, formatMcpTransportErrorLog(config.commonOptions.name, error))
+            if (needsAuthorization(config, error)) {
                 setStatus(config = config, status = McpStatus.NeedsAuthorization)
             } else {
-                setStatus(config = config, status = McpStatus.Error(it.message ?: it.javaClass.name))
+                setStatus(config = config, status = McpStatus.Error(error.message ?: error.javaClass.name))
             }
         }
     }
@@ -346,7 +446,7 @@ class McpManager(
             client.connect(getTransport(config))
         }
         val serverTools = client.listTools()?.tools ?: emptyList()
-        Log.i(TAG, "sync: tools: $serverTools")
+        Log.i(TAG, "MCP tool sync received ${serverTools.size} tool(s)")
 
         // 在 lambda 外构建新的 tools 列表
         val common = config.commonOptions
@@ -402,8 +502,8 @@ class McpManager(
         clients.values.map { it.first }.toList().forEach { config ->
             runCatching {
                 sync(config)
-            }.onFailure {
-                it.printStackTrace()
+            }.onFailure { error ->
+                Log.e(TAG, formatMcpTransportErrorLog(config.commonOptions.name, error))
             }
         }
     }
@@ -414,11 +514,11 @@ class McpManager(
         if (entry != null) {
             runCatching {
                 entry.second.close()
-            }.onFailure {
-                it.printStackTrace()
+            }.onFailure { error ->
+                Log.e(TAG, formatMcpTransportErrorLog(entry.first.commonOptions.name, error))
             }
             syncingStatus.emit(syncingStatus.value.toMutableMap().apply { remove(config.id) })
-            Log.i(TAG, "removeClient: ${entry.first} / ${entry.first.commonOptions.name}")
+            Log.i(TAG, "Removed MCP client: ${entry.first.commonOptions.name}")
         }
         reconnectAttempts.remove(config.id)
     }
@@ -464,7 +564,7 @@ class McpManager(
                 Log.i(TAG, "Reconnect cancelled for ${config.commonOptions.name}")
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Reconnect failed for ${config.commonOptions.name}", e)
+                Log.e(TAG, formatMcpTransportErrorLog(config.commonOptions.name, e))
                 // 继续尝试重连
                 scheduleReconnect(config)
             }
@@ -487,7 +587,9 @@ class McpManager(
         // 先关闭旧客户端
         val oldEntry = clients[config.id]
         if (oldEntry != null) {
-            runCatching { oldEntry.second.close() }.onFailure { it.printStackTrace() }
+            runCatching { oldEntry.second.close() }.onFailure { error ->
+                Log.e(TAG, formatMcpTransportErrorLog(config.commonOptions.name, error))
+            }
             clients.remove(config.id)
         }
 
@@ -509,7 +611,7 @@ class McpManager(
         }
 
         transport.onError { error ->
-            Log.e(TAG, "Transport error for ${config.commonOptions.name}: ${error.message}")
+            Log.e(TAG, formatMcpTransportErrorLog(config.commonOptions.name, error))
             val currentStatus = syncingStatus.value[config.id]
             if (currentStatus == McpStatus.Connected) {
                 scheduleReconnect(config)
@@ -560,11 +662,11 @@ class McpManager(
         val job = appScope.launch {
             setStatus(config, McpStatus.Authorizing)
             runCatching { authorizeInternal(config, context.applicationContext) }
-                .onFailure {
+                .onFailure { error ->
                     // 用户主动取消：状态由 cancelAuthorization 负责回退，这里不覆盖
-                    if (it is CancellationException) return@onFailure
-                    it.printStackTrace()
-                    setStatus(config, McpStatus.Error(it.message ?: "OAuth authorization failed"))
+                    if (error is CancellationException) return@onFailure
+                    Log.e(TAG, formatMcpTransportErrorLog(config.commonOptions.name, error))
+                    setStatus(config, McpStatus.Error(error.message ?: "OAuth authorization failed"))
                 }
         }
         authorizationJobs[config.id] = job
@@ -701,12 +803,15 @@ class McpManager(
     }
 
     /** 若令牌即将过期且存在 refresh_token，则提前刷新并持久化，返回更新后的配置。 */
-    private suspend fun ensureFreshToken(config: McpServerConfig): McpServerConfig {
+    private suspend fun ensureFreshToken(
+        config: McpServerConfig,
+        forceRefresh: Boolean = false,
+    ): McpServerConfig {
         val oauth = config.commonOptions.oauth ?: return config
         if (!oauth.enabled || oauth.refreshToken.isNullOrBlank()) return config
         val expired = oauth.expiresAt > 0 &&
             System.currentTimeMillis() >= oauth.expiresAt - TOKEN_REFRESH_LEEWAY_MS
-        val needsRefresh = oauth.accessToken.isNullOrBlank() || expired
+        val needsRefresh = forceRefresh || oauth.accessToken.isNullOrBlank() || expired
         if (!needsRefresh) return config
 
         val tokenEndpoint = oauth.tokenEndpoint ?: return config
@@ -729,7 +834,7 @@ class McpManager(
             persistOAuthState(config.id, updated)
             config.clone(commonOptions = config.commonOptions.copy(oauth = updated))
         }.getOrElse {
-            Log.w(TAG, "Token refresh failed for ${config.commonOptions.name}: ${it.message}")
+            Log.w(TAG, formatMcpTransportErrorLog(config.commonOptions.name, it))
             config // 刷新失败仍用旧令牌尝试，失败会转为 NeedsAuthorization
         }
     }
@@ -773,7 +878,9 @@ class McpManager(
         if (hasManualAuth) return false
         // 主动探测：仅当 server 发布了受保护资源元数据 (protected resource metadata) 时才支持 OAuth
         return runCatching { oauthClient.discoverProtectedResource(config.serverUrl) }
-            .onFailure { Log.i(TAG, "OAuth probe failed for ${config.commonOptions.name}: ${it.message}") }
+            .onFailure { error ->
+                Log.i(TAG, "OAuth probe failed for ${config.commonOptions.name} (${error::class.simpleName})")
+            }
             .isSuccess
     }
 
@@ -782,12 +889,7 @@ class McpManager(
         val message = generateSequence(error) { it.cause }
             .mapNotNull { it.message }
             .joinToString(" ")
-            .lowercase()
-        return message.contains("401") ||
-            message.contains("unauthorized") ||
-            message.contains("invalid_token") ||
-            message.contains("invalid access token") ||
-            message.contains("missing or invalid")
+        return looksUnauthorizedText(message)
     }
 }
 

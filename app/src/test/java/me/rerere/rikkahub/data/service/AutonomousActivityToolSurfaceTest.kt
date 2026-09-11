@@ -1,6 +1,5 @@
 package me.rerere.rikkahub.data.service
 
-import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -16,13 +15,6 @@ import me.rerere.rikkahub.data.ai.mcp.McpTool
 import me.rerere.rikkahub.data.ai.tools.ToolInvocationContext
 import me.rerere.rikkahub.data.ai.tools.ToolNaming
 import me.rerere.rikkahub.data.datastore.AutonomousActivitySetting
-import me.rerere.rikkahub.data.datastore.AutonomousMcpToolPermission
-import me.rerere.rikkahub.data.lounge.VisitorLoungeStartResult
-import me.rerere.rikkahub.data.lounge.VisitorLoungeToolFriend
-import me.rerere.rikkahub.data.lounge.VisitorLoungeToolGateway
-import me.rerere.rikkahub.data.lounge.VisitorLoungeVisit
-import me.rerere.rikkahub.data.lounge.VisitorLoungeVisitMode
-import me.rerere.rikkahub.data.lounge.VisitorLoungeVisitStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -31,34 +23,47 @@ import kotlin.uuid.Uuid
 
 class AutonomousActivityToolSurfaceTest {
     @Test
-    fun `only explicitly selected MCP tools are exposed with their schema and idle authorization`() = runBlocking {
+    fun `all tools from an enabled configured MCP server are exposed with their schema and idle authorization`() = runBlocking {
         val serverId = Uuid.random()
-        val selected = McpTool(name = "publish_post", inputSchema = schema(), needsApproval = true)
-        val unselected = McpTool(name = "delete_post", inputSchema = schema(), needsApproval = false)
+        val publishPost = McpTool(name = "publish_post", inputSchema = schema(), needsApproval = true)
+        val deletePost = McpTool(name = "delete_post", inputSchema = schema(), needsApproval = false)
         val surface = builder(
-            mcp = FakeMcpGateway(listOf(serverId to selected, serverId to unselected)),
+            mcp = FakeMcpGateway(listOf(serverId to publishPost, serverId to deletePost)),
         ).build(
-            setting = AutonomousActivitySetting(
-                enabled = true,
-                allowedMcpTools = listOf(AutonomousMcpToolPermission(serverId.toString(), selected.name)),
-            ),
+            setting = AutonomousActivitySetting(enabled = true),
             allowedMcpServerIds = setOf(serverId),
-            sourceConversationId = "conversation-1",
             webTools = emptyList(),
         )
 
-        val forumTool = surface.tools.single { it.name == ToolNaming.buildMcpToolName(serverId, selected.name) }
+        val publishTool = surface.tools.single { it.name == ToolNaming.buildMcpToolName(serverId, publishPost.name) }
+        val deleteTool = surface.tools.single { it.name == ToolNaming.buildMcpToolName(serverId, deletePost.name) }
 
-        assertEquals(selected.inputSchema, forumTool.parameters())
-        assertFalse(forumTool.needsApproval)
-        assertTrue(surface.tools.none { it.name == ToolNaming.buildMcpToolName(serverId, unselected.name) })
+        assertEquals(publishPost.inputSchema, publishTool.parameters())
+        assertFalse(publishTool.needsApproval)
+        assertEquals(deletePost.inputSchema, deleteTool.parameters())
+        assertFalse(deleteTool.needsApproval)
     }
 
     @Test
-    fun `one idle opportunity cannot mix web forum and visitor lounge actions`() = runBlocking {
+    fun `idle surface exposes a selected visitor MCP tool like any other configured MCP tool`() = runBlocking {
+        val serverId = Uuid.random()
+        val visitorMcpTool = McpTool(name = "talk_to_host", inputSchema = schema())
+        val surface = builder(mcp = FakeMcpGateway(listOf(serverId to visitorMcpTool))).build(
+            setting = enabledFor(serverId, visitorMcpTool.name),
+            allowedMcpServerIds = setOf(serverId),
+            webTools = emptyList(),
+        )
+
+        assertEquals(
+            listOf(ToolNaming.buildMcpToolName(serverId, visitorMcpTool.name)),
+            surface.tools.map(Tool::name),
+        )
+    }
+
+    @Test
+    fun `one idle opportunity cannot mix web and configured MCP actions`() = runBlocking {
         val serverId = Uuid.random()
         val mcp = FakeMcpGateway(listOf(serverId to McpTool(name = "publish_post", inputSchema = schema())))
-        val lounge = FakeLoungeGateway(listOf(VisitorLoungeToolFriend("friend-1", "Alice")))
         var webCalls = 0
         val webTool = Tool(
             name = "read_webpage",
@@ -69,22 +74,18 @@ class AutonomousActivityToolSurfaceTest {
                 listOf(UIMessagePart.Text("read ok"))
             },
         )
-        val surface = builder(mcp = mcp, lounge = lounge).build(
+        val surface = builder(mcp = mcp).build(
             setting = enabledFor(serverId, "publish_post"),
             allowedMcpServerIds = setOf(serverId),
-            sourceConversationId = "conversation-1",
             webTools = listOf(webTool),
         )
 
         surface.tools.single { it.name == "read_webpage" }.execute(Json.parseToJsonElement("{}"))
         surface.tools.single { it.name == ToolNaming.buildMcpToolName(serverId, "publish_post") }
             .execute(Json.parseToJsonElement("{}"))
-        surface.tools.single { it.name == "visit_visitor_lounge_proactive" }
-            .execute(Json.parseToJsonElement("""{"friend_id":"friend-1","topic":"hello"}"""))
 
         assertEquals(1, webCalls)
         assertEquals(0, mcp.callCount)
-        assertEquals(0, lounge.proactiveCallCount)
     }
 
     @Test
@@ -94,7 +95,6 @@ class AutonomousActivityToolSurfaceTest {
         val surface = builder(mcp = mcp).build(
             setting = enabledFor(serverId, "publish_post"),
             allowedMcpServerIds = setOf(serverId),
-            sourceConversationId = "conversation-1",
             webTools = emptyList(),
         )
         val forumTool = surface.tools.single { it.name == ToolNaming.buildMcpToolName(serverId, "publish_post") }
@@ -103,18 +103,6 @@ class AutonomousActivityToolSurfaceTest {
         forumTool.execute(Json.parseToJsonElement("{}"))
 
         assertEquals(2, mcp.callCount)
-    }
-
-    @Test
-    fun `visitor lounge tool is absent without a policy eligible friend`() = runBlocking {
-        val surface = builder(lounge = FakeLoungeGateway(emptyList())).build(
-            setting = AutonomousActivitySetting(enabled = true),
-            allowedMcpServerIds = emptySet(),
-            sourceConversationId = "conversation-1",
-            webTools = emptyList(),
-        )
-
-        assertTrue(surface.tools.none { it.name == "visit_visitor_lounge_proactive" })
     }
 
     @Test
@@ -132,7 +120,6 @@ class AutonomousActivityToolSurfaceTest {
         val surface = builder(mcp = mcp, store = store).build(
             setting = enabledFor(serverId, "publish_post"),
             allowedMcpServerIds = setOf(serverId),
-            sourceConversationId = "conversation-1",
             webTools = emptyList(),
         )
 
@@ -144,18 +131,13 @@ class AutonomousActivityToolSurfaceTest {
 
     private fun builder(
         mcp: FakeMcpGateway = FakeMcpGateway(emptyList()),
-        lounge: FakeLoungeGateway = FakeLoungeGateway(emptyList()),
         store: FakeActivityStore = FakeActivityStore(),
     ) = AutonomousActivityToolSurfaceBuilder(
         mcpGateway = mcp,
-        visitorLoungeGateway = lounge,
         activityRepository = AutonomousActivityRepository(store),
     )
 
-    private fun enabledFor(serverId: Uuid, toolName: String) = AutonomousActivitySetting(
-        enabled = true,
-        allowedMcpTools = listOf(AutonomousMcpToolPermission(serverId.toString(), toolName)),
-    )
+    private fun enabledFor(serverId: Uuid, toolName: String) = AutonomousActivitySetting(enabled = true)
 
     private fun schema() = InputSchema.Obj(properties = buildJsonObject { put("body", "string") })
 
@@ -176,41 +158,6 @@ class AutonomousActivityToolSurfaceTest {
         ): AutonomousActivityMcpCallResult {
             callCount += 1
             return nextResult
-        }
-    }
-
-    private class FakeLoungeGateway(
-        private val eligibleFriends: List<VisitorLoungeToolFriend>,
-    ) : VisitorLoungeToolGateway {
-        var proactiveCallCount = 0
-
-        override suspend fun savedFriends(): List<VisitorLoungeToolFriend> = eligibleFriends
-
-        override suspend fun proactiveFriends(): List<VisitorLoungeToolFriend> = eligibleFriends
-
-        override suspend fun startManual(
-            sourceConversationId: String?,
-            friendId: String,
-            topic: String,
-        ): VisitorLoungeStartResult = error("not used")
-
-        override suspend fun startProactive(
-            sourceConversationId: String,
-            friendId: String,
-            topic: String,
-        ): VisitorLoungeStartResult {
-            proactiveCallCount += 1
-            return VisitorLoungeStartResult.Started(
-                VisitorLoungeVisit(
-                    id = "visit-1",
-                    friendId = friendId,
-                    sourceConversationId = sourceConversationId,
-                    mode = VisitorLoungeVisitMode.PROACTIVE,
-                    status = VisitorLoungeVisitStatus.QUEUED,
-                    topic = topic,
-                    startedAt = Instant.ofEpochMilli(1_000),
-                ),
-            )
         }
     }
 

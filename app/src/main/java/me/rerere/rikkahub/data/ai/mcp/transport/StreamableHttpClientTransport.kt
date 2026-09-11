@@ -54,6 +54,24 @@ private const val MCP_SESSION_ID_HEADER = "mcp-session-id"
 private const val MCP_PROTOCOL_VERSION_HEADER = "mcp-protocol-version"
 private const val MCP_RESUMPTION_TOKEN_HEADER = "Last-Event-ID"
 
+internal fun formatMcpRequestLog(
+    @Suppress("UNUSED_PARAMETER") url: String,
+    @Suppress("UNUSED_PARAMETER") payload: String,
+): String = "Client sending MCP message via POST"
+
+internal fun formatMcpSseLog(
+    event: String?,
+    @Suppress("UNUSED_PARAMETER") data: String?,
+    id: String?,
+): String = "Client received SSE event: event=$event, id=$id"
+
+internal fun formatMcpSseErrorLog(
+    @Suppress("UNUSED_PARAMETER") data: String,
+): String = "MCP SSE server reported an error"
+
+internal fun formatMcpTransportFailureLog(operation: String, error: Throwable): String =
+    "MCP transport failed while $operation (${error::class.simpleName ?: "UnknownError"})"
+
 /**
  * Error class for Streamable HTTP transport errors.
  */
@@ -71,7 +89,6 @@ public class StreamableHttpClientTransport(
     private val url: String,
     private val reconnectionTime: Duration? = null,
     private val requestBuilder: HttpRequestBuilder.() -> Unit = {},
-    private val logPayloads: Boolean = true,
 ) : AbstractTransport() {
     public var sessionId: String? = null
         private set
@@ -110,11 +127,8 @@ public class StreamableHttpClientTransport(
         onResumptionToken: ((String) -> Unit)? = null,
     ) {
         check(initialized.load()) { "Transport is not started" }
-        if (logPayloads) {
-            Log.d(TAG, "Client sending message via POST to $url: ${McpJson.encodeToString(message)}")
-        } else {
-            Log.d(TAG, "Client sending message via POST to $url")
-        }
+        val jsonBody = McpJson.encodeToString(message)
+        Log.d(TAG, formatMcpRequestLog(url, jsonBody))
 
         // If we have a resumption token, reconnect the SSE stream with it
         resumptionToken?.let { token ->
@@ -126,7 +140,6 @@ public class StreamableHttpClientTransport(
             return
         }
 
-        val jsonBody = McpJson.encodeToString(message)
         val response = client.post(url) {
             applyCommonHeaders(this)
             headers.append(HttpHeaders.Accept, "${ContentType.Application.Json}, ${ContentType.Text.EventStream}")
@@ -145,7 +158,7 @@ public class StreamableHttpClientTransport(
                     try {
                         startSseSession(onResumptionToken = onResumptionToken)
                     } catch (e: Exception) {
-                        Log.w(TAG, "Failed to start SSE session, falling back to JSON-only mode", e)
+                Log.w(TAG, formatMcpTransportFailureLog("starting SSE session", e))
                         _onError(e)
                     }
                 }
@@ -211,7 +224,7 @@ public class StreamableHttpClientTransport(
      */
     public suspend fun terminateSession() {
         if (sessionId == null) return
-        Log.d(TAG, "Terminating session: $sessionId")
+        Log.d(TAG, "Terminating MCP session")
         val response = client.delete(url) {
             applyCommonHeaders(this)
             requestBuilder()
@@ -223,7 +236,7 @@ public class StreamableHttpClientTransport(
                 response.status.value,
                 "Failed to terminate session: ${response.status.description}",
             )
-            Log.e(TAG, "Failed to terminate session", error)
+            Log.e(TAG, formatMcpTransportFailureLog("terminating session", error))
             _onError(error)
             throw error
         }
@@ -241,7 +254,7 @@ public class StreamableHttpClientTransport(
         sseSession?.cancel()
         sseJob?.cancelAndJoin()
 
-        Log.d(TAG, "Client attempting to start SSE session at url: $url")
+        Log.d(TAG, "Client attempting to start SSE session")
         try {
             sseSession = client.sseSession(
                 urlString = url,
@@ -299,11 +312,7 @@ public class StreamableHttpClientTransport(
                     lastEventId = it
                     onResumptionToken?.invoke(it)
                 }
-                if (logPayloads) {
-                    Log.d(TAG, "Client received SSE event: event=${event.event}, data=${event.data}, id=${event.id}")
-                } else {
-                    Log.d(TAG, "Client received SSE event: event=${event.event}, id=${event.id}")
-                }
+                Log.d(TAG, formatMcpSseLog(event.event, event.data, event.id))
                 when (event.event) {
                     null, "message" ->
                         event.data?.takeIf { it.isNotEmpty() }?.let { json ->

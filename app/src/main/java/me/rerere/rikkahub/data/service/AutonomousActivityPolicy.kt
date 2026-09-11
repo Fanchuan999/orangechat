@@ -5,7 +5,6 @@ import me.rerere.rikkahub.data.datastore.AutonomousActivitySetting
 enum class AutonomousActivityFamily {
     WEB,
     FORUM,
-    VISITOR_LOUNGE,
 }
 
 class AutonomousActivityFamilyGuard {
@@ -35,8 +34,6 @@ object AutonomousActivityPolicy {
         val normalizedServerId = serverId.trim()
         val normalizedToolName = toolName.trim()
         if (normalizedServerId.isBlank() || normalizedToolName.isBlank()) return false
-        return setting.normalizedAllowedMcpTools().any { permission ->
-            permission.serverId == normalizedServerId && permission.toolName == normalizedToolName
-        }
+        return normalizedServerId !in setting.normalizedDisabledMcpServerIds()
     }
 }

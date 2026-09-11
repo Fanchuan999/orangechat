@@ -701,14 +701,6 @@ entry<Screen.Extensions> {
                                 CompanionSpacePage()
                             }
 
-                            entry<Screen.VisitorLounge> {
-                                me.rerere.rikkahub.ui.pages.lounge.VisitorLoungePage()
-                            }
-
-                            entry<Screen.VisitorLoungeVisit> { key ->
-                                me.rerere.rikkahub.ui.pages.lounge.VisitorLoungeVisitPage(key.visitId)
-                            }
-
                             entry<Screen.SettingWeixinBot> {
                                 SettingWeixinBotPage()
                             }
@@ -1100,12 +1092,6 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object CompanionSpace : Screen
-
-    @Serializable
-    data object VisitorLounge : Screen
-
-    @Serializable
-    data class VisitorLoungeVisit(val visitId: String) : Screen
 
     @Serializable
     data object SettingWeixinBot : Screen
