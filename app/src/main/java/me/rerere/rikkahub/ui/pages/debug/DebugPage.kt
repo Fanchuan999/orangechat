@@ -62,6 +62,7 @@ import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import org.koin.androidx.compose.koinViewModel
+import java.util.Locale
 import kotlin.random.Random
 import kotlin.random.nextInt
 import kotlin.uuid.Uuid
@@ -82,7 +83,7 @@ fun DebugPage(vm: DebugVM = koinViewModel()) {
             )
         }
     ) { contentPadding ->
-        val state = rememberPagerState { 3 }
+        val state = rememberPagerState { 4 }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -124,6 +125,17 @@ fun DebugPage(vm: DebugVM = koinViewModel()) {
                         Text("Logging")
                     }
                 )
+                Tab(
+                    selected = state.currentPage == 3,
+                    onClick = {
+                        scope.launch {
+                            state.animateScrollToPage(3)
+                        }
+                    },
+                    text = {
+                        Text("上下文账单")
+                    }
+                )
             }
             HorizontalPager(
                 state = state,
@@ -135,10 +147,110 @@ fun DebugPage(vm: DebugVM = koinViewModel()) {
                     0 -> MainPage(vm)
                     1 -> ColorsPage()
                     2 -> Box {}
+                    3 -> ContextBudgetPage(vm)
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ContextBudgetPage(vm: DebugVM) {
+    val report by vm.latestContextBudget.collectAsStateWithLifecycle()
+
+    if (report == null) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("还没有可展示的请求", style = MaterialTheme.typography.titleMedium)
+            Text("发送一条消息后，这里会显示最近一次发给模型的上下文估算。")
+            Text(
+                "账单只保存分类、工具名称和估算数字；不会保存或显示聊天正文、记忆内容、密钥或完整请求。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+    val currentReport = requireNotNull(report)
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Text("最近一次模型请求", style = MaterialTheme.typography.titleMedium)
+        }
+        item {
+            Text(
+                "约 ${formatTokenEstimate(currentReport.totalEstimatedTokens)} 输入",
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        item {
+            Text(
+                "这是本地估算，用来对比各来源的体积；供应商的实际输入、缓存和计费口径可能不同。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        item {
+            HorizontalDivider()
+            Text(
+                "按来源",
+                modifier = Modifier.padding(top = 10.dp),
+                style = MaterialTheme.typography.titleSmall,
+            )
+        }
+        items(currentReport.categoryTotals, key = { it.category.name }) { total ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(total.category.displayName)
+                Text(
+                    formatTokenEstimate(total.estimatedTokens),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        item {
+            HorizontalDivider()
+            Text(
+                "明细（不含正文）",
+                modifier = Modifier.padding(top = 10.dp),
+                style = MaterialTheme.typography.titleSmall,
+            )
+        }
+        items(
+            items = currentReport.entries.sortedByDescending { it.estimatedTokens },
+        ) { entry ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(entry.label, modifier = Modifier.weight(1f))
+                    Text(formatTokenEstimate(entry.estimatedTokens))
+                }
+                Text(
+                    entry.category.displayName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+private fun formatTokenEstimate(tokens: Int): String = when {
+    tokens >= 1_000 -> String.format(Locale.US, "%.1fK", tokens / 1_000.0)
+    else -> "$tokens"
 }
 
 @Composable

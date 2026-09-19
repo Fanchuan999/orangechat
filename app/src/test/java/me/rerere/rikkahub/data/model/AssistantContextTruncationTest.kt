@@ -10,6 +10,13 @@ import org.junit.Test
 class AssistantContextTruncationTest {
 
     @Test
+    fun `rolling conversation digest defaults to disabled for existing assistants`() {
+        val decoded = Json.decodeFromString<Assistant>("""{"name":"Daddy","contextMessageSize":400}""")
+
+        assertFalse(decoded.enableRollingConversationDigest)
+    }
+
+    @Test
     fun `cache friendly truncation defaults to disabled`() {
         assertFalse(Assistant().cacheFriendlyContextTruncation)
     }

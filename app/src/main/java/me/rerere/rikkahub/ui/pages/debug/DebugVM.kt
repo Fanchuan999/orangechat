@@ -18,6 +18,8 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.datastore.DEFAULT_ASSISTANT_ID
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.ai.ContextBudgetReport
+import me.rerere.rikkahub.data.ai.ContextBudgetTracker
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.repository.ConversationRepository
@@ -30,9 +32,12 @@ import kotlin.uuid.Uuid
 class DebugVM(
     private val settingsStore: SettingsStore,
     private val conversationRepository: ConversationRepository,
+    contextBudgetTracker: ContextBudgetTracker,
 ) : ViewModel() {
     val settings: StateFlow<Settings> = settingsStore.settingsFlow
         .stateIn(viewModelScope, SharingStarted.Lazily, Settings.dummy())
+
+    val latestContextBudget: StateFlow<ContextBudgetReport?> = contextBudgetTracker.latestReport
 
     fun updateSettings(settings: Settings) {
         viewModelScope.launch {

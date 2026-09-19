@@ -455,6 +455,26 @@ internal fun AssistantBasicContent(
             FormItem(
                 modifier = Modifier.padding(8.dp),
                 label = {
+                    Text("本地对话整理摘要")
+                },
+                description = {
+                    Text(
+                        text = "保留最近约 30 条原始消息；较早内容每 15 条用“压缩模型”整理为本地摘要。不会写入 Supabase 或 Ombre。压缩模型不可用时会提示，并继续使用原始对话。",
+                    )
+                },
+                tail = {
+                    Switch(
+                        checked = assistant.enableRollingConversationDigest,
+                        onCheckedChange = { enabled ->
+                            onUpdate(assistant.copy(enableRollingConversationDigest = enabled))
+                        },
+                    )
+                },
+            )
+            HorizontalDivider()
+            FormItem(
+                modifier = Modifier.padding(8.dp),
+                label = {
                     Text("缓存友好截断")
                 },
                 description = {

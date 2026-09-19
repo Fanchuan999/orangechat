@@ -32,6 +32,7 @@ data class Assistant(
     val temperature: Float? = null,
     val topP: Float? = null,
     val contextMessageSize: Int = 0,
+    val enableRollingConversationDigest: Boolean = false,
     val cacheFriendlyContextTruncation: Boolean = false,
     val streamOutput: Boolean = true,
     val enableMemory: Boolean = false,

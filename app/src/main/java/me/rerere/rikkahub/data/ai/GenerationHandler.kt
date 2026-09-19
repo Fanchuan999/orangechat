@@ -60,6 +60,8 @@ import me.rerere.rikkahub.data.datastore.gadgetbridgePromptContext
 import me.rerere.rikkahub.data.datastore.promptContext
 import me.rerere.rikkahub.data.datastore.thinkingImmersionPrompt
 import me.rerere.rikkahub.data.service.MemoryBankService
+import me.rerere.rikkahub.data.service.ConversationDigestContext
+import me.rerere.rikkahub.data.service.ConversationDigestService
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.model.Assistant
@@ -97,6 +99,8 @@ class GenerationHandler(
     private val conversationRepo: ConversationRepository,
     private val aiLoggingManager: AILoggingManager,
     private val memoryBankService: MemoryBankService,
+    private val contextBudgetTracker: ContextBudgetTracker,
+    private val conversationDigestService: ConversationDigestService,
 ) {
     private val cacheFriendlyTrimTiers = ConcurrentHashMap<String, Int>()
 
@@ -108,19 +112,28 @@ class GenerationHandler(
         outputTransformers: List<OutputMessageTransformer> = emptyList(),
         assistant: Assistant,
         memories: List<AssistantMemory>? = null,
-        tools: List<Tool> = emptyList(),
+        tools: List<ContextBudgetTool> = emptyList(),
         maxSteps: Int = 256,
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
         conversationSystemPrompt: String? = null,
         workspaceCwd: String? = null,
         pluginPromptInjections: List<String> = emptyList(),
         conversationId: String? = null,
+        contextProfile: GenerationContextProfile = GenerationContextProfile.Default,
     ): Flow<GenerationChunk> = flow {
         val provider = model.findProvider(settings.providers) ?: error("Provider not found")
         val providerImpl = providerManager.getProviderByType(provider)
 
         var messages: List<UIMessage> = messages
-        val contextSelection = assistant.selectContextMessagesWithMetadata(messages)
+        val conversationDigest = conversationDigestService.prepareContext(
+            settings = settings,
+            assistant = assistant,
+            conversationId = conversationId,
+            messages = messages,
+        )
+        val contextSelection = assistant.selectContextMessagesWithMetadata(
+            messages.forConversationDigest(conversationDigest).keepMostRecent(contextProfile),
+        )
         val contextTrimKey = buildContextTrimKey(assistant, conversationId)
         val previousTrimTier = cacheFriendlyTrimTiers.put(contextTrimKey, contextSelection.cacheFriendlyTrimTier)
         if (contextSelection.cacheFriendlyTrimTier > (previousTrimTier ?: 0)) {
@@ -132,9 +145,9 @@ class GenerationHandler(
         for (stepIndex in 0 until maxSteps) {
             Log.i(TAG, "streamText: start step #$stepIndex (${model.id})")
  
-            val toolsInternal = buildList {
+            val toolsInternal = if (contextProfile.allowsTools) buildList {
                 Log.i(TAG, "generateInternal: build tools($assistant)")
-                if (assistant?.enableMemory == true) {
+                if (assistant.enableMemory) {
                     val memoryAssistantId = if (assistant.useGlobalMemory) {
                         MemoryRepository.GLOBAL_MEMORY_ID
                     } else {
@@ -144,17 +157,28 @@ class GenerationHandler(
                         json = json,
                         memoryRepository = memoryRepo,
                         memoryAssistantId = memoryAssistantId,
-                    ).let(this::addAll)
+                    ).forEach { tool ->
+                        add(ContextBudgetTool(tool, ContextBudgetCategory.MEMORIES))
+                    }
                 }
                 // 文件写入工具 - AI可直接将文件内容写入设备或打包ZIP
-                add(buildWriteFilesTool(conversationId))
+                add(
+                    ContextBudgetTool(
+                        tool = buildWriteFilesTool(conversationId),
+                        category = ContextBudgetCategory.LOCAL_TOOLS,
+                    )
+                )
                 addAll(tools)
+            } else {
+                emptyList()
             }
  
             // Check if we have tool calls ready to continue after user interaction.
-            val pendingTools = messages.lastOrNull()?.getTools()?.filter {
-                it.canResumeExecution
-            } ?: emptyList()
+            val pendingTools = if (contextProfile.allowsTools) {
+                messages.lastOrNull()?.getTools()?.filter { it.canResumeExecution } ?: emptyList()
+            } else {
+                emptyList()
+            }
  
             val toolsToProcess: List<UIMessagePart.Tool>
  
@@ -195,7 +219,9 @@ class GenerationHandler(
                     processingStatus = processingStatus,
                     conversationSystemPrompt = conversationSystemPrompt,
                     workspaceCwd = workspaceCwd,
+                    conversationDigest = conversationDigest,
                     requestSessionId = conversationId,
+                    contextProfile = contextProfile,
                 )
                 messages = messages.visualTransforms(
                     transformers = outputTransformers,
@@ -226,7 +252,7 @@ class GenerationHandler(
                 // Check for tools that need approval
                 var hasPendingApproval = false
                 val updatedTools = tools.map { tool ->
-                    val toolDef = toolsInternal.find { it.name == tool.toolName }
+                    val toolDef = toolsInternal.find { it.tool.name == tool.toolName }?.tool
                     when {
                         // Auto-approve everything (lazy mode) -> skip approval
                         settings.autoApproveAllTools -> tool
@@ -313,7 +339,7 @@ class GenerationHandler(
                     else -> {
                         // Auto or Approved - execute the tool
                         runCatching {
-                            val toolDef = toolsInternal.find { toolDef -> toolDef.name == tool.toolName }
+                            val toolDef = toolsInternal.find { toolDef -> toolDef.tool.name == tool.toolName }?.tool
                                 ?: error("Tool ${tool.toolName} not found")
                             val args = runCatching {
                                 json.parseToJsonElement(tool.input.ifBlank { "{}" })
@@ -386,15 +412,26 @@ class GenerationHandler(
         model: Model,
         providerImpl: Provider<ProviderSetting>,
         provider: ProviderSetting,
-        tools: List<Tool>,
+        tools: List<ContextBudgetTool>,
         memories: List<AssistantMemory>,
         stream: Boolean,
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
         conversationSystemPrompt: String? = null,
         workspaceCwd: String? = null,
+        conversationDigest: ConversationDigestContext? = null,
         requestSessionId: String? = null,
+        contextProfile: GenerationContextProfile = GenerationContextProfile.Default,
     ) {
-        val internalMessages = buildList {
+        val contextBudget = ContextBudgetBuilder()
+        val selectedContextMessages = assistant.selectContextMessages(
+            messages.forConversationDigest(conversationDigest).keepMostRecent(contextProfile),
+        )
+        contextBudget.addText(
+            category = ContextBudgetCategory.HISTORY,
+            label = "当前对话历史",
+            content = selectedContextMessages.joinToString("\n") { it.summaryAsText() },
+        )
+        val internalMessagesBeforeTransforms = buildList {
             val system = buildString {
                 val effectiveSystemPrompt =
                     if (assistant.allowConversationSystemPrompt && !conversationSystemPrompt.isNullOrBlank()) {
@@ -404,27 +441,43 @@ class GenerationHandler(
                     }
                 if (effectiveSystemPrompt.isNotBlank()) {
                     append(effectiveSystemPrompt)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.PERSONA,
+                        label = "人设与对话提示",
+                        content = effectiveSystemPrompt,
+                    )
                 }
 
-                settings.displaySetting.thinkingImmersionPrompt().takeIf { it.isNotBlank() }?.let { prompt ->
+                if (contextProfile.allowsOperationalRules) {
+                    settings.displaySetting.thinkingImmersionPrompt().takeIf { it.isNotBlank() }?.let { prompt ->
                     appendLine()
                     appendLine()
                     append(prompt)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.FIXED_RULES,
+                        label = "沉浸式思考提示",
+                        content = prompt,
+                    )
+                    }
                 }
 
                 // 记忆
                 if (assistant.enableMemory) {
+                    val memoryPrompt = buildMemoryPrompt(
+                        memories = memories,
+                        contentTokenBudget = assistant.manualMemoryPromptTokenBudget,
+                    )
                     appendLine()
-                    append(
-                        buildMemoryPrompt(
-                            memories = memories,
-                            contentTokenBudget = assistant.manualMemoryPromptTokenBudget,
-                        )
+                    append(memoryPrompt)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.MEMORIES,
+                        label = "长期记忆提示",
+                        content = memoryPrompt,
                     )
                 }
  
                 // 外置记忆库召回
-                try {
+                if (contextProfile.allowsExternalMemoryRecall) try {
                     val externalMemoryConfigs = settings.externalMemories.filter {
                         it.enabled && it.id in assistant.externalMemoryIds
                     }
@@ -508,11 +561,17 @@ class GenerationHandler(
                                 .flatten()
                         }
                         if (allRecalled.isNotEmpty()) {
+                            val externalMemoryPrompt = buildExternalMemoryPrompt(
+                                recalledMemories = allRecalled,
+                                contentTokenBudget = assistant.externalMemoryPromptTokenBudget,
+                            )
                             append(
-                                buildExternalMemoryPrompt(
-                                    recalledMemories = allRecalled,
-                                    contentTokenBudget = assistant.externalMemoryPromptTokenBudget,
-                                )
+                                externalMemoryPrompt
+                            )
+                            contextBudget.addText(
+                                category = ContextBudgetCategory.EXTERNAL_MEMORY,
+                                label = "外置记忆召回",
+                                content = externalMemoryPrompt,
                             )
                         }
                     }
@@ -520,19 +579,40 @@ class GenerationHandler(
                     Log.w(TAG, "External memory recall failed", e)
                 }
  
-                if (assistant.enableRecentChatsReference) {
+                if (contextProfile.allowsOperationalRules && assistant.enableRecentChatsReference) {
+                    val recentChatsPrompt = buildRecentChatsPrompt(assistant, conversationRepo)
                     appendLine()
-                    append(buildRecentChatsPrompt(assistant, conversationRepo))
+                    append(recentChatsPrompt)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.RECENT_CHAT_REFERENCE,
+                        label = "近期对话参考",
+                        content = recentChatsPrompt,
+                    )
                 }
  
                 // 代码文件命名和ZIP打包功能说明
-                appendLine()
-                append(buildCodeBlockPrompt())
+                if (contextProfile.allowsOperationalRules) {
+                    val codeBlockPrompt = buildCodeBlockPrompt()
+                    appendLine()
+                    append(codeBlockPrompt)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.FIXED_RULES,
+                        label = "文件与代码规则",
+                        content = codeBlockPrompt,
+                    )
+                }
  
                 // 工具prompt
-                tools.forEach { tool ->
+                tools.forEach { source ->
+                    val tool = source.tool
+                    val toolPrompt = tool.systemPrompt(model, messages)
                     appendLine()
-                    append(tool.systemPrompt(model, messages))
+                    append(toolPrompt)
+                    contextBudget.addText(
+                        category = source.category,
+                        label = tool.name,
+                        content = buildToolBudgetText(tool, toolPrompt),
+                    )
                 }
  
                 // 插件提示词注入
@@ -541,19 +621,32 @@ class GenerationHandler(
                         appendLine()
                         appendLine()
                         append(injection)
+                        contextBudget.addText(
+                            category = ContextBudgetCategory.PLUGINS,
+                            label = "插件提示词",
+                            content = injection,
+                        )
                     }
                 }
  
                 // 允许跳过回复
-                if (assistant.allowSkipReply) {
+                if (contextProfile.allowsOperationalRules && assistant.allowSkipReply) {
+                    val skipReplyPrompt = """
+                        ## Skip Reply
+                        If you determine that no reply is needed (e.g., the user's message doesn't require a response, or you have nothing meaningful to add), you may reply with exactly `[SKIP]` (without any other text). This message will be hidden from the user. Use this sparingly and only when truly appropriate.
+                    """.trimIndent()
                     appendLine()
                     appendLine()
-                    appendLine("## Skip Reply")
-                    appendLine("If you determine that no reply is needed (e.g., the user's message doesn't require a response, or you have nothing meaningful to add), you may reply with exactly `[SKIP]` (without any other text). This message will be hidden from the user. Use this sparingly and only when truly appropriate.")
+                    append(skipReplyPrompt)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.FIXED_RULES,
+                        label = "Skip Reply 规则",
+                        content = skipReplyPrompt,
+                    )
                 }
 
                 // 屏幕跳转能力（AI总是可以跳转，不需要开关）
-                if (true) {
+                if (contextProfile.allowsOperationalRules) {
                     appendLine()
                     appendLine()
                     appendLine("## 屏幕跳转能力")
@@ -565,20 +658,50 @@ class GenerationHandler(
                     appendLine("- 一般闲聊不需要跳转")
                     appendLine("- 用户正在跟你正常对话时不需要跳转")
                     appendLine("[JUMP] 标记不会展示给用户，仅用于触发屏幕跳转。")
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.FIXED_RULES,
+                        label = "屏幕跳转规则",
+                        content = """
+                            ## 屏幕跳转能力
+                            你可以在回复末尾追加 [JUMP] 标记（单独一行）来把聊天界面拉到用户屏幕最前面。
+                            适用场景：
+                            - 用户说要去别的应用，你觉得需要把用户拉回来时
+                            - 你觉得接下来的内容需要用户立即看到时
+                            不适用场景：
+                            - 一般闲聊不需要跳转
+                            - 用户正在跟你正常对话时不需要跳转
+                            [JUMP] 标记不会展示给用户，仅用于触发屏幕跳转。
+                        """.trimIndent(),
+                    )
                 }
  
                 // 分气泡: 告知模型它自己能控制消息如何被拆成多个气泡
-                if (assistant.splitBubbleByLine) {
+                if (contextProfile.allowsOperationalRules && assistant.splitBubbleByLine) {
                     appendLine()
                     appendLine()
                     appendLine("## Message Bubbles")
                     appendLine("Your reply will be automatically split into separate chat bubbles at every line break (\\n) you write, similar to how a person sends several short texts in a row instead of one long message. You are fully in control of this: write a line break whenever you want the previous thought/sentence to appear as its own bubble, and keep things on the same line when they belong together. Do not insert blank lines purely for spacing — every line break becomes a new bubble, so use them intentionally. Exception: line breaks inside fenced code blocks (```) and Markdown tables are preserved as-is and will NOT create new bubbles, since those must stay intact as a single block.")
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.FIXED_RULES,
+                        label = "分气泡规则",
+                        content = """
+                            ## Message Bubbles
+                            Your reply will be automatically split into separate chat bubbles at every line break (\\n) you write, similar to how a person sends several short texts in a row instead of one long message. You are fully in control of this: write a line break whenever you want the previous thought/sentence to appear as its own bubble, and keep things on the same line when they belong together. Do not insert blank lines purely for spacing — every line break becomes a new bubble, so use them intentionally. Exception: line breaks inside fenced code blocks (```) and Markdown tables are preserved as-is and will NOT create new bubbles, since those must stay intact as a single block.
+                        """.trimIndent(),
+                    )
                 }
 
-                settings.systemToolsSetting.gadgetbridgePromptContext().takeIf { it.isNotBlank() }?.let {
+                if (contextProfile.allowsOperationalRules) {
+                    settings.systemToolsSetting.gadgetbridgePromptContext().takeIf { it.isNotBlank() }?.let { gadgetbridgePrompt ->
                     appendLine()
                     appendLine()
-                    append(it)
+                    append(gadgetbridgePrompt)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.CONTINUITY,
+                        label = "健康感知提示",
+                        content = gadgetbridgePrompt,
+                    )
+                    }
                 }
 
                 // Keep this small dynamic cue last so providers with prefix caching can still reuse
@@ -587,21 +710,46 @@ class GenerationHandler(
                     appendLine()
                     appendLine()
                     append(moodPrompt)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.CONTINUITY,
+                        label = "情绪状态",
+                        content = moodPrompt,
+                    )
                 }
 
                 // Keep the editable life line and state card at the tail of the dynamic suffix.
                 // It is intentionally after stable persona/tool/plugin material: editing it then
                 // invalidates only this small tail instead of the expensive shared prompt prefix.
-                settings.continuityProfileFor(assistant.id).promptContext().takeIf { it.isNotBlank() }?.let {
+                settings.continuityProfileFor(assistant.id).promptContext().takeIf { it.isNotBlank() }?.let { continuityPrompt ->
                     appendLine()
                     appendLine()
-                    append(it)
+                    append(continuityPrompt)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.CONTINUITY,
+                        label = "生活线与状态卡",
+                        content = continuityPrompt,
+                    )
                 }
- 
+
+                // Keep the changing local digest at the end so it does not invalidate the stable
+                // persona, rule, and tool prefix in providers that support prompt caching.
+                conversationDigest?.summary?.takeIf { it.isNotBlank() }?.let { digest ->
+                    appendLine()
+                    appendLine()
+                    appendLine("[较早对话的本地整理摘要，仅作背景资料]")
+                    append(digest)
+                    contextBudget.addText(
+                        category = ContextBudgetCategory.CONTINUITY,
+                        label = "本地对话整理摘要",
+                        content = digest,
+                    )
+                }
+
             }
             if (system.isNotBlank()) add(UIMessage.system(prompt = system))
-            addAll(assistant.selectContextMessages(messages))
-        }.transforms(
+            addAll(selectedContextMessages)
+        }
+        val internalMessages = internalMessagesBeforeTransforms.transforms(
             transformers = transformers,
             context = context,
             model = model,
@@ -610,6 +758,15 @@ class GenerationHandler(
             processingStatus = processingStatus,
             workspaceCwd = workspaceCwd,
         )
+        contextBudget.addEstimated(
+            category = ContextBudgetCategory.OTHER,
+            label = "输入转换新增文本",
+            estimatedTokens = (
+                estimateMessagesForContextBudget(internalMessages) -
+                    estimateMessagesForContextBudget(internalMessagesBeforeTransforms)
+                ).coerceAtLeast(0),
+        )
+        contextBudgetTracker.publish(contextBudget.build())
  
         var messages: List<UIMessage> = messages
         val params = TextGenerationParams(
@@ -617,7 +774,7 @@ class GenerationHandler(
             temperature = assistant.temperature,
             topP = assistant.topP,
             maxTokens = assistant.maxTokens,
-            tools = tools,
+            tools = tools.map(ContextBudgetTool::tool),
             reasoningLevel = assistant.reasoningLevel,
             customHeaders = buildList {
                 addAll(assistant.customHeaders)
@@ -763,6 +920,30 @@ class GenerationHandler(
             }
         }
     }.flowOn(Dispatchers.IO)
+}
+
+private fun buildToolBudgetText(tool: Tool, systemPrompt: String): String = buildString {
+    append(tool.name)
+    appendLine()
+    append(tool.description)
+    appendLine()
+    append(tool.parameters()?.toString().orEmpty())
+    appendLine()
+    append(systemPrompt)
+}
+
+private fun List<UIMessage>.forConversationDigest(
+    conversationDigest: ConversationDigestContext?,
+): List<UIMessage> = conversationDigest?.let { digest ->
+    drop(digest.coveredMessageCount.coerceAtMost(size))
+} ?: this
+
+private fun List<UIMessage>.keepMostRecent(
+    contextProfile: GenerationContextProfile,
+): List<UIMessage> = contextProfile.maxRecentMessages?.let(::takeLast) ?: this
+
+private fun estimateMessagesForContextBudget(messages: List<UIMessage>): Int = messages.sumOf { message ->
+    estimatePromptTokens(message.summaryAsText())
 }
  
 /**
