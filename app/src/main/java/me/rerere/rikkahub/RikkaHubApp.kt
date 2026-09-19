@@ -49,6 +49,7 @@ import me.rerere.rikkahub.data.service.DeviceEventAiTriggerService
 import me.rerere.rikkahub.data.service.DeviceEventTrackingService
 import me.rerere.rikkahub.data.service.NightWatchManager
 import me.rerere.rikkahub.data.service.IdleExploreScheduler
+import me.rerere.rikkahub.data.service.DeadlineReminderScheduler
 import me.rerere.rikkahub.data.service.ProactiveMessageService
 import me.rerere.rikkahub.data.service.SupabaseSyncService
 import me.rerere.rikkahub.data.sync.companion.HarnessManager
@@ -74,6 +75,7 @@ const val MUSIC_PLAYER_NOTIFICATION_CHANNEL_ID = "music_player"
 const val DEVICE_EVENT_NOTIFICATION_CHANNEL_ID = "device_event_tracking"
 const val VOICE_CALL_NOTIFICATION_CHANNEL_ID = "voice_call"
 const val ANNOUNCEMENT_NOTIFICATION_CHANNEL_ID = "announcement"
+const val COMPANION_DEADLINE_REMINDER_NOTIFICATION_CHANNEL_ID = "companion_deadline_reminder"
 
 class RikkaHubApp : Application(), SingletonImageLoader.Factory {
     companion object {
@@ -134,6 +136,9 @@ class RikkaHubApp : Application(), SingletonImageLoader.Factory {
 
         // The optional idle exploration loop is independent and defaults to disabled.
         rescheduleIdleExploreIfEnabled()
+
+        // Deadline reminders are local WorkManager jobs; they never use system alarms.
+        rescheduleDeadlineReminders()
 
         // Keep the local Harness workspace available without a foreground service.
         recoverHarnessIfEnabled()
@@ -258,6 +263,16 @@ class RikkaHubApp : Application(), SingletonImageLoader.Factory {
         }
     }
 
+    private fun rescheduleDeadlineReminders() {
+        get<AppScope>().launch {
+            runCatching {
+                DeadlineReminderScheduler.syncFromStore(this@RikkaHubApp, get<SettingsStore>())
+            }.onFailure {
+                Log.e(TAG, "rescheduleDeadlineReminders failed", it)
+            }
+        }
+    }
+
     private fun recoverHarnessIfEnabled() {
         get<AppScope>().launch(Dispatchers.IO) {
             runCatching {
@@ -275,6 +290,7 @@ class RikkaHubApp : Application(), SingletonImageLoader.Factory {
             }
         }
     }
+
 
     private fun rescheduleSupabaseSyncIfEnabled() {
         SupabaseSyncService.rescheduleIfEnabled(this)
@@ -433,6 +449,17 @@ class RikkaHubApp : Application(), SingletonImageLoader.Factory {
             .setVibrationEnabled(true)
             .build()
         notificationManager.createNotificationChannel(announcementChannel)
+
+        val deadlineReminderChannel = NotificationChannelCompat
+            .Builder(
+                COMPANION_DEADLINE_REMINDER_NOTIFICATION_CHANNEL_ID,
+                NotificationManagerCompat.IMPORTANCE_DEFAULT,
+            )
+            .setName("课程与截止日期")
+            .setVibrationEnabled(true)
+            .setShowBadge(true)
+            .build()
+        notificationManager.createNotificationChannel(deadlineReminderChannel)
     }
 
     override fun onTerminate() {

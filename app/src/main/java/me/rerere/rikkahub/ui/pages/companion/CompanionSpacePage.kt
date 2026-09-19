@@ -6,6 +6,9 @@
 
 package me.rerere.rikkahub.ui.pages.companion
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -16,10 +19,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -52,11 +58,22 @@ import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.datastore.CompanionLetter
 import me.rerere.rikkahub.data.datastore.CompanionPhoto
 import me.rerere.rikkahub.data.datastore.CompanionSharedTask
+import me.rerere.rikkahub.data.datastore.CompanionCourse
+import me.rerere.rikkahub.data.datastore.CompanionDeadline
+import me.rerere.rikkahub.data.datastore.DeadlineStatus
+import me.rerere.rikkahub.data.datastore.DeadlineStep
 import me.rerere.rikkahub.data.datastore.DiaryCandidate
 import me.rerere.rikkahub.data.datastore.currentSummary
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.service.CompanionDiaryService
+import me.rerere.rikkahub.data.service.CompanionCourseImporter
+import me.rerere.rikkahub.data.service.CompanionCourseImportResult
 import me.rerere.rikkahub.data.service.CompanionSpaceService
+import me.rerere.rikkahub.data.service.DeadlineReminderScheduler
+import me.rerere.rikkahub.data.service.TodoistDeadlineDrafts
+import me.rerere.rikkahub.data.service.TodoistDeadlineSyncService
+import me.rerere.rikkahub.data.service.TodoistSyncResult
+import me.rerere.rikkahub.data.service.TodoistWriteErrorCategory
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.context.LocalNavController
@@ -65,6 +82,7 @@ import me.rerere.rikkahub.widget.DaddyWidgetProvider
 import org.koin.compose.koinInject
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Calendar
 import java.util.Locale
 
 /** A local-first room for photos, little promises, letters and a reviewable diary. */
@@ -75,6 +93,7 @@ fun CompanionSpacePage(
     diaryService: CompanionDiaryService = koinInject(),
     spaceService: CompanionSpaceService = koinInject(),
     filesManager: FilesManager = koinInject(),
+    todoistSyncService: TodoistDeadlineSyncService = koinInject(),
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val space = settings.companionSpaceSetting
@@ -93,6 +112,15 @@ fun CompanionSpacePage(
     var showAnniversaryEditor by remember { mutableStateOf(false) }
     var showLetterEditor by remember { mutableStateOf(false) }
     var photoCaptionTarget by remember { mutableStateOf<CompanionPhoto?>(null) }
+    var showCourseEditor by remember { mutableStateOf(false) }
+    var courseEditorTarget by remember { mutableStateOf<CompanionCourse?>(null) }
+    var courseImportPreview by remember { mutableStateOf<CompanionCourseImportResult?>(null) }
+    var showDeadlineEditor by remember { mutableStateOf(false) }
+    var selectedDeadlineForSteps by remember { mutableStateOf<CompanionDeadline?>(null) }
+    var selectedDeadlineForTodoist by remember { mutableStateOf<CompanionDeadline?>(null) }
+    var deadlineTypeFilter by rememberSaveable { mutableStateOf(DEADLINE_FILTER_ALL) }
+    var coursesExpanded by rememberSaveable { mutableStateOf(false) }
+    var deadlinesExpanded by rememberSaveable { mutableStateOf(false) }
     var widgetExpanded by rememberSaveable { mutableStateOf(false) }
     var anniversariesExpanded by rememberSaveable { mutableStateOf(false) }
     var lettersExpanded by rememberSaveable { mutableStateOf(false) }
@@ -144,6 +172,24 @@ fun CompanionSpacePage(
         }
     }
 
+    val courseImportPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)
+                    ?.bufferedReader(Charsets.UTF_8)
+                    ?.use { CompanionCourseImporter.parse(it.readText()) }
+            }
+            if (imported == null || imported.courses.isEmpty()) {
+                snackbar.showSnackbar("没有识别到课程；请导入 CSV 或日历 .ics 文件")
+            } else {
+                courseImportPreview = imported
+            }
+        }
+    }
+
     LaunchedEffect(candidate?.content) {
         draftText = candidate?.content.orEmpty()
     }
@@ -186,6 +232,104 @@ fun CompanionSpacePage(
                     spaceService.addAnniversary(title, dateText, note)
                     showAnniversaryEditor = false
                     snackbar.showSnackbar("纪念日已经放进小屋")
+                }
+            },
+        )
+    }
+
+    if (showCourseEditor) {
+        CourseEditorDialog(
+            course = courseEditorTarget,
+            onDismiss = {
+                showCourseEditor = false
+                courseEditorTarget = null
+            },
+            onSave = { course ->
+                scope.launch {
+                    if (courseEditorTarget == null) {
+                        spaceService.addCourse(course)
+                    } else {
+                        spaceService.updateCourse(course)
+                    }
+                    showCourseEditor = false
+                    courseEditorTarget = null
+                    snackbar.showSnackbar("课程表已保存")
+                }
+            },
+        )
+    }
+
+    courseImportPreview?.let { preview ->
+        CourseImportPreviewDialog(
+            preview = preview,
+            onDismiss = { courseImportPreview = null },
+            onConfirm = {
+                scope.launch {
+                    val count = spaceService.importCourses(preview.courses)
+                    courseImportPreview = null
+                    snackbar.showSnackbar("已导入 $count 门课程；已有课程保持原样，可继续编辑")
+                }
+            },
+        )
+    }
+
+    if (showDeadlineEditor) {
+        DeadlineEditorDialog(
+            onDismiss = { showDeadlineEditor = false },
+            onSave = { deadline ->
+                scope.launch {
+                    spaceService.addDeadline(deadline)
+                    showDeadlineEditor = false
+                    DeadlineReminderScheduler.sync(context, space.copy(deadlines = space.deadlines + deadline))
+                    snackbar.showSnackbar("截止日期已经记下了")
+                }
+            },
+        )
+    }
+
+    selectedDeadlineForSteps?.let { deadline ->
+        DeadlineStepsDialog(
+            deadline = deadline,
+            onDismiss = { selectedDeadlineForSteps = null },
+            onSave = { steps ->
+                scope.launch {
+                    spaceService.updateDeadlineSteps(deadline, steps)
+                    selectedDeadlineForSteps = null
+                    snackbar.showSnackbar("拆解草案已保存，旧的 Todoist 确认已失效")
+                }
+            },
+        )
+    }
+
+    selectedDeadlineForTodoist?.let { deadline ->
+        val draft = TodoistDeadlineDrafts.create(deadline)
+        TodoistDraftConfirmationDialog(
+            deadline = deadline,
+            draft = draft,
+            onDismiss = { selectedDeadlineForTodoist = null },
+            onConfirm = {
+                scope.launch {
+                    spaceService.confirmTodoistDraft(deadline)
+                    when (val result = todoistSyncService.sync(deadline.id, draft.revision, draft.previewHash)) {
+                        is TodoistSyncResult.Synced -> snackbar.showSnackbar("Todoist 已同步：${result.taskId}")
+                        is TodoistSyncResult.Failed -> {
+                            val message = when (result.category) {
+                                TodoistWriteErrorCategory.TOOL_SCHEMA_UNVERIFIED ->
+                                    "Todoist 工具尚未通过写入安全校验，草案仅保留在本地，未同步"
+                                TodoistWriteErrorCategory.NOT_CONNECTED ->
+                                    "Todoist 当前没有连接；请在 MCP 设置中重新连接后再试"
+                                TodoistWriteErrorCategory.REMOTE_REJECTED ->
+                                    "Todoist 没有接收这条任务，草案未同步；可在同一版本上再试"
+                                TodoistWriteErrorCategory.RESULT_UNVERIFIABLE ->
+                                    "Todoist 已响应但未返回任务编号；为防重复已暂停重试，请先去 Todoist 核对"
+                                else -> "Todoist 写入失败，可在同一草案版本上再次确认"
+                            }
+                            snackbar.showSnackbar(message)
+                        }
+                        TodoistSyncResult.NotConfirmed -> snackbar.showSnackbar("确认版本已变化，请重新生成草案")
+                        TodoistSyncResult.StaleDraft -> snackbar.showSnackbar("草案已变化，请重新打开预览")
+                    }
+                    selectedDeadlineForTodoist = null
                 }
             },
         )
@@ -329,6 +473,108 @@ fun CompanionSpacePage(
                         ) { Text("清除小组件背景图") }
                     }
                     Text("桌面可添加 2×2、2×4、4×4 三种尺寸；刷新时只读本地状态，不会调用模型。")
+                }
+            }
+
+            item {
+                CompanionCollapsibleSection(
+                    title = "课程表",
+                    summary = if (space.courses.isEmpty()) "还没有课程安排" else "已记录 ${space.courses.size} 门课程",
+                    expanded = coursesExpanded,
+                    onExpandedChange = { coursesExpanded = it },
+                ) {
+                    Text("按星期和时间记下固定课程", style = MaterialTheme.typography.titleMedium)
+                    if (space.courses.isEmpty()) {
+                        Text("可导入学校导出的 CSV 或日历 .ics，课程只保存在本机。")
+                    } else {
+                        space.courses.forEach { course ->
+                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("${weekdayLabel(course.weekday)} ${course.name}")
+                                    Text("${course.startMinutes.toClockText()}–${course.endMinutes.toClockText()}${course.location.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}")
+                                    if (course.teacher.isNotBlank()) Text(course.teacher)
+                                }
+                                TextButton(onClick = {
+                                    courseEditorTarget = course
+                                    showCourseEditor = true
+                                }) { Text("编辑") }
+                                TextButton(onClick = { scope.launch { spaceService.removeCourse(course.id) } }) { Text("移除") }
+                            }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { courseImportPicker.launch(arrayOf("text/*", "text/calendar", "application/octet-stream")) }) {
+                            Text("一键导入课程表")
+                        }
+                        TextButton(onClick = {
+                            courseEditorTarget = null
+                            showCourseEditor = true
+                        }) { Text("手动添加") }
+                    }
+                }
+            }
+
+            item {
+                CompanionCollapsibleSection(
+                    title = "截止日期与提醒",
+                    summary = if (space.deadlines.isEmpty()) "还没有截止事项" else "${space.deadlines.count { it.status != DeadlineStatus.DONE && it.status != DeadlineStatus.CANCELLED }} 件未完成",
+                    expanded = deadlinesExpanded,
+                    onExpandedChange = { deadlinesExpanded = it },
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("7 / 3 / 1 天提醒")
+                            Text("提醒使用本机 WorkManager，不会新增系统闹钟。")
+                        }
+                        Switch(
+                            checked = space.deadlineRemindersEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch {
+                                    vm.updateSettings(settings.copy(companionSpaceSetting = space.copy(deadlineRemindersEnabled = enabled)))
+                                    DeadlineReminderScheduler.sync(context, space.copy(deadlineRemindersEnabled = enabled))
+                                }
+                            },
+                        )
+                    }
+                    val deadlineTypes = listOf(DEADLINE_FILTER_ALL) +
+                        (DEFAULT_DEADLINE_TYPES + space.deadlines.map { it.type.trim() }).filter { it.isNotBlank() }.distinct()
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(deadlineTypes, key = { it }) { type ->
+                            FilterChip(
+                                selected = deadlineTypeFilter == type,
+                                onClick = { deadlineTypeFilter = type },
+                                label = { Text(type) },
+                            )
+                        }
+                    }
+                    val visibleDeadlines = space.deadlines.filter { deadline ->
+                        deadlineTypeFilter == DEADLINE_FILTER_ALL || deadline.type.trim() == deadlineTypeFilter
+                    }
+                    if (visibleDeadlines.isEmpty()) {
+                        Text("可以先记录作业、考试或申请材料，再补充拆解步骤。")
+                    } else {
+                        visibleDeadlines.forEach { deadline ->
+                            DeadlineRow(
+                                deadline = deadline,
+                                onRemove = {
+                                    scope.launch {
+                                        spaceService.removeDeadline(deadline.id)
+                                        DeadlineReminderScheduler.sync(context, space.copy(deadlines = space.deadlines.filterNot { it.id == deadline.id }))
+                                    }
+                                },
+                                onSteps = { selectedDeadlineForSteps = deadline },
+                                onTodoist = { selectedDeadlineForTodoist = deadline },
+                                onReminderChange = { offset ->
+                                    val disabled = if (offset in deadline.disabledReminderOffsets) deadline.disabledReminderOffsets - offset else deadline.disabledReminderOffsets + offset
+                                    scope.launch {
+                                        spaceService.updateDeadline(deadline.copy(disabledReminderOffsets = disabled))
+                                        DeadlineReminderScheduler.sync(context, space.copy(deadlines = space.deadlines.map { if (it.id == deadline.id) deadline.copy(disabledReminderOffsets = disabled) else it }))
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    Button(onClick = { showDeadlineEditor = true }) { Text("添加截止事项") }
                 }
             }
 
@@ -652,3 +898,261 @@ private fun PhotoCaptionDialog(
 }
 
 private fun Long.toDisplayTime(): String = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(this))
+
+@Composable
+private fun CourseEditorDialog(
+    course: CompanionCourse?,
+    onDismiss: () -> Unit,
+    onSave: (CompanionCourse) -> Unit,
+) {
+    var name by remember(course?.id) { mutableStateOf(course?.name.orEmpty()) }
+    var teacher by remember(course?.id) { mutableStateOf(course?.teacher.orEmpty()) }
+    var location by remember(course?.id) { mutableStateOf(course?.location.orEmpty()) }
+    var weekday by remember(course?.id) { mutableStateOf(course?.weekday?.toString() ?: "1") }
+    var start by remember(course?.id) { mutableStateOf(course?.startMinutes?.toClockText() ?: "09:00") }
+    var end by remember(course?.id) { mutableStateOf(course?.endMinutes?.toClockText() ?: "10:00") }
+    val parsed = parseCourseTime(start)?.let { a -> parseCourseTime(end)?.let { b -> a to b } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (course == null) "添加课程" else "编辑课程") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it.take(80) }, label = { Text("课程名称") })
+                OutlinedTextField(value = weekday, onValueChange = { weekday = it.filter(Char::isDigit).take(1) }, label = { Text("星期（1=周一，7=周日）") }, singleLine = true)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = start, onValueChange = { start = it.take(5) }, label = { Text("开始 HH:mm") }, modifier = Modifier.weight(1f), singleLine = true)
+                    OutlinedTextField(value = end, onValueChange = { end = it.take(5) }, label = { Text("结束 HH:mm") }, modifier = Modifier.weight(1f), singleLine = true)
+                }
+                OutlinedTextField(value = teacher, onValueChange = { teacher = it.take(48) }, label = { Text("老师（可选）") })
+                OutlinedTextField(value = location, onValueChange = { location = it.take(80) }, label = { Text("地点（可选）") })
+            }
+        },
+        confirmButton = {
+            Button(enabled = name.trim().isNotBlank() && weekday.toIntOrNull() in 1..7 && parsed != null && parsed.first < parsed.second, onClick = {
+                val (from, to) = parsed!!
+                onSave(
+                    (course ?: CompanionCourse(
+                        name = name,
+                        weekday = weekday.toInt(),
+                        startMinutes = from,
+                        endMinutes = to,
+                    )).copy(
+                        name = name,
+                        teacher = teacher,
+                        location = location,
+                        weekday = weekday.toInt(),
+                        startMinutes = from,
+                        endMinutes = to,
+                    ),
+                )
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun CourseImportPreviewDialog(
+    preview: CompanionCourseImportResult,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("导入 ${preview.courses.size} 门课程？") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("现有同一课程时段会保留你的手动修改，不会重复覆盖。")
+                preview.courses.take(8).forEach { course ->
+                    Text("${weekdayLabel(course.weekday)} ${course.startMinutes.toClockText()} ${course.name}")
+                }
+                if (preview.courses.size > 8) Text("还有 ${preview.courses.size - 8} 门课程")
+                if (preview.skippedRows > 0) Text("已跳过 ${preview.skippedRows} 行无法识别的内容")
+            }
+        },
+        confirmButton = { Button(onClick = onConfirm) { Text("确认导入") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun DeadlineEditorDialog(
+    onDismiss: () -> Unit,
+    onSave: (CompanionDeadline) -> Unit,
+) {
+    val context = LocalContext.current
+    var type by remember { mutableStateOf("作业") }
+    var title by remember { mutableStateOf("") }
+    var dueAt by remember { mutableStateOf<Long?>(null) }
+    var note by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("添加截止事项") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = type, onValueChange = { type = it.take(32) }, label = { Text("类型") }, singleLine = true)
+                OutlinedTextField(value = title, onValueChange = { title = it.take(80) }, label = { Text("标题") }, singleLine = true)
+                Text(if (dueAt == null) "还没有选择截止日期和时间" else "截止：${dueAt!!.toDisplayTime()}")
+                Button(onClick = {
+                    showDateAndTimePicker(
+                        context = context,
+                        initialEpochMillis = dueAt ?: System.currentTimeMillis(),
+                        onSelected = { dueAt = it },
+                    )
+                }) { Text("选择日期与时间") }
+                OutlinedTextField(value = note, onValueChange = { note = it.take(240) }, label = { Text("备注（可选）") }, minLines = 2)
+                Text("保存后会按本地时区安排 7、3、1 天提醒。")
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = type.trim().isNotBlank() && title.trim().isNotBlank() && dueAt != null,
+                onClick = { onSave(CompanionDeadline(type = type, title = title, dueAtEpochMillis = dueAt!!, note = note)) },
+            ) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun DeadlineStepsDialog(
+    deadline: CompanionDeadline,
+    onDismiss: () -> Unit,
+    onSave: (List<DeadlineStep>) -> Unit,
+) {
+    var text by remember(deadline.id, deadline.draftRevision) { mutableStateOf(deadline.steps.sortedBy { it.order }.joinToString("\n") { it.title }) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("拆解：${deadline.title}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("一行一个步骤；保存会生成新的本地草案版本。")
+                OutlinedTextField(value = text, onValueChange = { text = it.take(1_000) }, modifier = Modifier.fillMaxWidth(), minLines = 5, label = { Text("步骤") })
+            }
+        },
+        confirmButton = { Button(onClick = {
+            onSave(text.lines().mapNotNull { it.trim().takeIf(String::isNotBlank) }.take(20).mapIndexed { index, value -> DeadlineStep(title = value.take(160), order = index) })
+        }) { Text("保存拆解") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun TodoistDraftConfirmationDialog(
+    deadline: CompanionDeadline,
+    draft: me.rerere.rikkahub.data.service.TodoistDeadlineDraft,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("确认写入 Todoist？") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("只有你确认，且已连接的 Todoist 工具通过写入安全校验后，才会同步。")
+                Text("任务：${draft.content}")
+                Text(draft.description)
+                Text("草案版本：${draft.revision}")
+                if (deadline.todoistSyncState == me.rerere.rikkahub.data.datastore.TodoistSyncState.SYNC_FAILED) Text("上次写入失败；再次确认会在同一草案版本上显式恢复。")
+                if (deadline.todoistSyncState == me.rerere.rikkahub.data.datastore.TodoistSyncState.SYNC_UNKNOWN) Text("上次请求已得到响应，但没有任务编号。为避免重复，请先在 Todoist 核对是否已创建。")
+            }
+        },
+        confirmButton = {
+            if (deadline.todoistSyncState != me.rerere.rikkahub.data.datastore.TodoistSyncState.SYNC_UNKNOWN) {
+                Button(onClick = onConfirm) { Text("确认写入") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("知道了") } },
+    )
+}
+
+@Composable
+private fun DeadlineRow(
+    deadline: CompanionDeadline,
+    onRemove: () -> Unit,
+    onSteps: () -> Unit,
+    onTodoist: () -> Unit,
+    onReminderChange: (Int) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("${deadline.type} · ${deadline.title}", style = MaterialTheme.typography.titleSmall)
+                Text("截止 ${deadline.dueAtEpochMillis.toDisplayTime()}")
+                Text("状态：${deadline.status.displayName()} · 草案 v${deadline.draftRevision}")
+            }
+            TextButton(onClick = onRemove) { Text("移除") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            listOf(7, 3, 1).forEach { offset ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = offset !in deadline.disabledReminderOffsets, onCheckedChange = { onReminderChange(offset) })
+                    Text("${offset}天")
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = onSteps) { Text("拆解（${deadline.steps.size}）") }
+            TextButton(onClick = onTodoist) {
+                Text(
+                    when {
+                        deadline.todoistTaskId != null -> "已同步 Todoist"
+                        deadline.todoistSyncState == me.rerere.rikkahub.data.datastore.TodoistSyncState.SYNC_UNKNOWN -> "核对 Todoist"
+                        else -> "Todoist 草案"
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun parseCourseTime(value: String): Int? {
+    val parts = value.split(":")
+    val hour = parts.getOrNull(0)?.toIntOrNull() ?: return null
+    val minute = parts.getOrNull(1)?.toIntOrNull() ?: return null
+    return if (hour in 0..23 && minute in 0..59) hour * 60 + minute else null
+}
+
+private fun showDateAndTimePicker(
+    context: Context,
+    initialEpochMillis: Long,
+    onSelected: (Long) -> Unit,
+) {
+    val initial = Calendar.getInstance().apply { timeInMillis = initialEpochMillis }
+    DatePickerDialog(
+        context,
+        { _, year, month, dayOfMonth ->
+            TimePickerDialog(
+                context,
+                { _, hour, minute ->
+                    onSelected(
+                        Calendar.getInstance().apply {
+                            set(year, month, dayOfMonth, hour, minute, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }.timeInMillis,
+                    )
+                },
+                initial.get(Calendar.HOUR_OF_DAY),
+                initial.get(Calendar.MINUTE),
+                true,
+            ).show()
+        },
+        initial.get(Calendar.YEAR),
+        initial.get(Calendar.MONTH),
+        initial.get(Calendar.DAY_OF_MONTH),
+    ).show()
+}
+
+private fun Int.toClockText(): String = "%02d:%02d".format(this / 60, this % 60)
+
+private fun weekdayLabel(value: Int): String = listOf("", "周一", "周二", "周三", "周四", "周五", "周六", "周日").getOrElse(value) { "星期$value" }
+
+private fun DeadlineStatus.displayName(): String = when (this) {
+    DeadlineStatus.OPEN -> "待开始"
+    DeadlineStatus.IN_PROGRESS -> "进行中"
+    DeadlineStatus.DONE -> "已完成"
+    DeadlineStatus.CANCELLED -> "已取消"
+}
+
+private const val DEADLINE_FILTER_ALL = "全部"
+private val DEFAULT_DEADLINE_TYPES = listOf("作业", "报告", "考试")
