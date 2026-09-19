@@ -142,6 +142,18 @@ fun SettingDisplayNotificationPage(vm: SettingVM = koinViewModel()) {
                             )
                         },
                     )
+                    item(
+                        headlineContent = { Text("AI 回复显示为语音条") },
+                        supportingContent = { Text("用类似微信的语音条显示完成后的 AI 文字回复；点按后才会调用 TTS 播放。") },
+                        trailingContent = {
+                            Switch(
+                                checked = displaySetting.assistantReplyVoiceBarEnabled,
+                                onCheckedChange = {
+                                    updateDisplaySetting(displaySetting.copy(assistantReplyVoiceBarEnabled = it))
+                                }
+                            )
+                        },
+                    )
                 }
             }
         }

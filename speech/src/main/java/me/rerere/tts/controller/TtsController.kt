@@ -15,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -149,6 +150,41 @@ class TtsController(
         prefetchFrom((_currentChunk.value).coerceAtLeast(0))
     }
 
+    /**
+     * Appends a voice-call sentence without prefetching it into a full byte
+     * array. Providers that emit incremental MP3 can therefore begin playing
+     * as soon as their first audio packet arrives.
+     */
+    fun enqueueStreamingText(text: String) {
+        if (text.isBlank()) return
+        val provider = currentProvider
+        if (provider == null) {
+            _error.update { "No TTS provider selected" }
+            return
+        }
+
+        val newChunks = chunker.split(text, preferStreamingPlayback = true)
+        if (newChunks.isEmpty()) return
+
+        val startIndex = (allChunks.lastOrNull()?.index ?: -1) + 1
+        val remapped = newChunks.mapIndexed { index, chunk ->
+            chunk.copy(index = startIndex + index)
+        }
+        allChunks.addAll(remapped)
+        queue.addAll(remapped)
+        _totalChunks.update { queue.size }
+        _error.update { null }
+        _playbackState.update {
+            it.copy(
+                currentChunkIndex = _currentChunk.value,
+                totalChunks = _totalChunks.value,
+                status = PlaybackStatus.Buffering,
+            )
+        }
+
+        if (workerJob?.isActive != true) startWorker()
+    }
+
     private fun internalReset() {
         // Reset current session while keeping provider availability
         workerJob?.cancel()
@@ -253,22 +289,14 @@ class TtsController(
                         )
                     }
 
-                    // 预取下一窗口
-                    prefetchFrom(chunk.index + 1)
-
-                    val response = try {
-                        awaitOrCreate(chunk, provider)
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        Log.e(TAG, "Synthesis error", e)
-                        _error.update { e.message ?: "TTS synthesis error" }
-                        processedCount++
-                        continue
-                    }
-
-                    // 播放
                     try {
-                        audio.play(response)
+                        if (chunk.preferStreamingPlayback) {
+                            playStreamingChunk(chunk, provider)
+                        } else {
+                            // 预取下一窗口
+                            prefetchFrom(chunk.index + 1)
+                            audio.play(awaitOrCreate(chunk, provider))
+                        }
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         Log.e(TAG, "Playback error", e)
@@ -311,6 +339,24 @@ class TtsController(
             deferred.await()
         } finally {
             // 可按需保留缓存（此处保留，便于重播/重试）
+        }
+    }
+
+    private suspend fun playStreamingChunk(
+        chunk: TtsChunk,
+        provider: TTSProviderSetting,
+    ) = coroutineScope {
+        var playback: kotlinx.coroutines.Deferred<Unit>? = null
+        val fallback = synthesizer.synthesizeForStreamingPlayback(provider, chunk) { buffer ->
+            playback = async(Dispatchers.Main.immediate) {
+                audio.playStreamingMp3(buffer)
+            }
+        }
+
+        if (fallback != null) {
+            audio.play(fallback)
+        } else {
+            playback?.await()
         }
     }
     // endregion

@@ -79,6 +79,7 @@ private val ColorBgWarm = Color(0xFF241A0B)
  */
 private fun statusAccentColor(status: VoiceCallStatus): Color = when (status) {
     VoiceCallStatus.Idle -> ColorIdle
+    VoiceCallStatus.Connecting -> ColorProcessing
     VoiceCallStatus.Listening -> ColorListening
     VoiceCallStatus.Processing -> ColorProcessing
     VoiceCallStatus.Speaking -> ColorSpeaking
@@ -245,6 +246,7 @@ fun VoiceCallPage(
                 VoiceCallStatus.Processing -> uiState.userTranscript
                 VoiceCallStatus.Speaking,
                 VoiceCallStatus.Idle -> uiState.assistantText
+                VoiceCallStatus.Connecting -> ""
                 VoiceCallStatus.Error -> ""
             }
             if (subtitleText.isNotBlank()) {
@@ -380,6 +382,7 @@ private fun ControlButton(
 
 private fun statusText(status: VoiceCallStatus): String = when (status) {
     VoiceCallStatus.Idle -> "准备就绪"
+    VoiceCallStatus.Connecting -> "正在连接语音"
     VoiceCallStatus.Listening -> "正在聆听"
     VoiceCallStatus.Processing -> "正在思考"
     VoiceCallStatus.Speaking -> "正在传达"

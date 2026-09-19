@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import me.rerere.asr.ASRController
+import me.rerere.asr.ASRConnectionMode
 import me.rerere.asr.ASRProviderSetting
 import me.rerere.asr.ASRState
 import me.rerere.asr.providers.MiMoASRController
@@ -93,6 +94,7 @@ suspend fun createCustomAsrState(
  
 interface CustomAsrState {
     val state: StateFlow<ASRState>
+    val connectionMode: ASRConnectionMode
     fun start(onTranscriptChange: (String) -> Unit)
     fun stop()
     fun cleanup()
@@ -103,6 +105,7 @@ internal class CustomAsrStateImpl(
     private val httpClient: OkHttpClient
 ) : CustomAsrState {
     private var controller: ASRController? = null
+    private var providerSetting: ASRProviderSetting? = null
     private val idleState = MutableStateFlow(ASRState())
  
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -118,6 +121,9 @@ internal class CustomAsrStateImpl(
  
     override val state: StateFlow<ASRState>
         get() = controller?.state ?: idleState
+
+    override val connectionMode: ASRConnectionMode
+        get() = providerSetting?.connectionMode ?: ASRConnectionMode.Batch
  
     fun updateProvider(provider: ASRProviderSetting?) {
         try {
@@ -125,6 +131,7 @@ internal class CustomAsrStateImpl(
         } catch (e: Exception) {
             Log.e(ASR_TAG, "updateProvider: 释放旧 controller 失败", e)
         }
+        providerSetting = provider
         controller = provider?.let { createController(it) }
         if (controller == null) {
             idleState.value = ASRState()
@@ -173,6 +180,7 @@ internal class CustomAsrStateImpl(
             Log.e(ASR_TAG, "cleanup: dispose controller 失败", e)
         }
         controller = null
+        providerSetting = null
         try {
             audioManager.abandonAudioFocusRequest(audioFocusRequest)
         } catch (e: Exception) {

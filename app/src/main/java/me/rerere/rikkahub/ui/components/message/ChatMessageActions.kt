@@ -122,9 +122,9 @@ fun ColumnScope.ChatMessageActionButtons(
                 .size(16.dp)
         )
 
-        if (message.role == MessageRole.ASSISTANT) {
+        val displaySettings = LocalDisplaySettings.current
+        if (message.role == MessageRole.ASSISTANT && !displaySettings.assistantReplyVoiceBarEnabled) {
             val tts = LocalTTSState.current
-            val displaySettings = LocalDisplaySettings.current
             val isSpeaking by tts.isSpeaking.collectAsState()
             val isAvailable by tts.isAvailable.collectAsState()
             Icon(

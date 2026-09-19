@@ -163,7 +163,7 @@ internal class CustomTtsStateImpl(
         if (text.isBlank()) return
         val processed = text.stripMarkdown()
         if (processed.isBlank()) return
-        controller.speak(processed, flush = false)
+        controller.enqueueStreamingText(processed)
     }
 
     override fun cleanup() {

@@ -43,6 +43,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -110,6 +111,7 @@ import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.modifier.shimmer
 import me.rerere.rikkahub.ui.components.ui.toComposeColor
 import me.rerere.rikkahub.ui.context.LocalDisplaySettings
+import me.rerere.rikkahub.ui.context.LocalTTSState
 import me.rerere.rikkahub.ui.theme.extendColors
 import me.rerere.rikkahub.data.datastore.ChatFontFamily
 import androidx.compose.ui.text.font.Font
@@ -121,6 +123,7 @@ import me.rerere.rikkahub.utils.openUrl
 import coil3.compose.AsyncImage
 import me.rerere.rikkahub.utils.splitIntoBubbleSegments
 import me.rerere.rikkahub.utils.urlDecode
+import me.rerere.rikkahub.utils.extractQuotedContentAsText
 import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
  
@@ -395,7 +398,18 @@ private fun MessagePartsBlock(
                         
                         SelectionContainer {
                             Column {
-                                if (role == MessageRole.USER) {
+                                if (AssistantReplyVoiceBarPresentation.shouldShowVoiceBar(
+                                        enabled = displaySettings.assistantReplyVoiceBarEnabled,
+                                        role = role,
+                                        text = displayText,
+                                        loading = loading,
+                                    )
+                                ) {
+                                    AssistantReplyVoiceBar(
+                                        text = displayText,
+                                        onlyReadQuoted = displaySettings.ttsOnlyReadQuoted,
+                                    )
+                                } else if (role == MessageRole.USER) {
                                     if (assistant?.splitUserBubbleByLine == true) {
                                         // 分气泡: 按用户输入的换行 (\n) 拆成多个独立气泡,
                                         // 拆分逻辑见 splitIntoBubbleSegments (会保护代码块/表格内部的换行)
@@ -1046,6 +1060,72 @@ internal fun VoiceMessageBubble(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun AssistantReplyVoiceBar(
+    text: String,
+    onlyReadQuoted: Boolean,
+) {
+    val tts = LocalTTSState.current
+    val isAvailable by tts.isAvailable.collectAsState()
+    val isSpeaking by tts.isSpeaking.collectAsState()
+    val textToSpeak = remember(text, onlyReadQuoted) {
+        if (onlyReadQuoted) text.extractQuotedContentAsText() ?: text else text
+    }
+    val durationSec = remember(text) {
+        AssistantReplyVoiceBarPresentation.estimatedDurationSeconds(text)
+    }
+    val waveformBars = remember(text) {
+        val random = java.util.Random(text.hashCode().toLong())
+        List(24) { 0.2f + random.nextFloat() * 0.8f }
+    }
+    val waveformColor = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.5f)
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        onClick = {
+            if (isAvailable) {
+                if (isSpeaking) tts.stop() else tts.speak(textToSpeak)
+            }
+        },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = if (isSpeaking) HugeIcons.PauseCircle else HugeIcons.PlayCircle,
+                contentDescription = if (isSpeaking) "停止播放" else "播放语音",
+                tint = if (isAvailable) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.38f),
+                modifier = Modifier.size(24.dp),
+            )
+            Canvas(modifier = Modifier.width(60.dp).height(24.dp)) {
+                val barWidth = 2.5f
+                val gap = (size.width - barWidth * waveformBars.size) /
+                    (waveformBars.size - 1).coerceAtLeast(1)
+                waveformBars.forEachIndexed { index, barRatio ->
+                    val barHeight = size.height * barRatio.coerceIn(0.2f, 1f)
+                    val x = index * (barWidth + gap)
+                    val y = (size.height - barHeight) / 2f
+                    drawRoundRect(
+                        color = waveformColor,
+                        topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                        size = Size(barWidth, barHeight),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.5f, 1.5f),
+                    )
+                }
+            }
+            Text(
+                text = "${durationSec}″",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
         }
     }
 }

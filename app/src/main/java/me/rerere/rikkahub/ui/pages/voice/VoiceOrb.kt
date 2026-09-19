@@ -50,6 +50,7 @@ fun VoiceOrb(
 
     // 流动速度: Processing 时更快, 营造"在思考"的感觉
     val rotationDurationMs = when (status) {
+        VoiceCallStatus.Connecting -> 5500
         VoiceCallStatus.Processing -> 4000
         VoiceCallStatus.Speaking -> 6000
         VoiceCallStatus.Listening -> 8000
@@ -67,6 +68,7 @@ fun VoiceOrb(
 
     // 呼吸缩放
     val breatheDurationMs = when (status) {
+        VoiceCallStatus.Connecting -> 1800
         VoiceCallStatus.Processing -> 1200
         VoiceCallStatus.Speaking -> 1800
         VoiceCallStatus.Listening -> 2400
@@ -100,6 +102,7 @@ fun VoiceOrb(
         0f
     }
     val intensity = when (status) {
+        VoiceCallStatus.Connecting -> 0.18f
         VoiceCallStatus.Listening -> (currentAmplitude * 0.8f + 0.15f).coerceIn(0.15f, 0.8f)
         VoiceCallStatus.Speaking -> 0.5f + (currentAmplitude * 0.3f)
         VoiceCallStatus.Processing -> 0.25f

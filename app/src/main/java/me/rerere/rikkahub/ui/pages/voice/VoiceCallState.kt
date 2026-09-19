@@ -10,11 +10,12 @@ package me.rerere.rikkahub.ui.pages.voice
  * 语音通话状态机
  *
  * 状态流转:
- * Idle -> Listening -> Processing -> Speaking -> Listening -> ...
+ * Idle -> Connecting -> Listening -> Processing -> Speaking -> Connecting -> ...
  *                                    |-> Error -> Idle
  */
 enum class VoiceCallStatus {
     Idle,
+    Connecting,
     Listening,
     Processing,
     Speaking,

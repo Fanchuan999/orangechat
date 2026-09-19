@@ -17,6 +17,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.ByteArrayDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,7 +59,7 @@ class AudioPlayer(context: Context) {
     }
 
     @OptIn(UnstableApi::class)
-    suspend fun play(response: TTSResponse) = suspendCancellableCoroutine<Unit> { cont ->
+    suspend fun play(response: TTSResponse) {
         val bytes = if (response.format == AudioFormat.PCM) {
             pcmToWav(response.audioData, response.sampleRate ?: 24000)
         } else response.audioData
@@ -66,6 +67,27 @@ class AudioPlayer(context: Context) {
         val dataSourceFactory = DataSource.Factory { ByteArrayDataSource(bytes) }
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
             .createMediaSource(MediaItem.fromUri(Uri.EMPTY))
+
+        playMediaSource(
+            mediaSource = mediaSource,
+            durationMs = (response.duration?.times(1000))?.toLong(),
+        )
+    }
+
+    @OptIn(UnstableApi::class)
+    suspend fun playStreamingMp3(buffer: StreamingAudioBuffer) {
+        val dataSourceFactory = DataSource.Factory { StreamingAudioDataSource(buffer) }
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+            .createMediaSource(MediaItem.fromUri(Uri.EMPTY))
+
+        playMediaSource(mediaSource = mediaSource, onCancelled = buffer::close)
+    }
+
+    private suspend fun playMediaSource(
+        mediaSource: MediaSource,
+        durationMs: Long? = null,
+        onCancelled: () -> Unit = {},
+    ) = suspendCancellableCoroutine<Unit> { cont ->
 
         player.setMediaSource(mediaSource)
         player.prepare()
@@ -75,7 +97,7 @@ class AudioPlayer(context: Context) {
             it.copy(
                 status = PlaybackStatus.Buffering,
                 positionMs = 0L,
-                durationMs = (response.duration?.times(1000))?.toLong() ?: it.durationMs
+                durationMs = durationMs ?: it.durationMs
             )
         }
 
@@ -120,6 +142,7 @@ class AudioPlayer(context: Context) {
             override fun onPlayerError(error: PlaybackException) {
                 player.removeListener(this)
                 stopPositionUpdates()
+                onCancelled()
                 _playbackState.update { it.copy(status = PlaybackStatus.Error, errorMessage = error.message) }
                 if (cont.isActive) cont.resumeWithException(error)
             }
@@ -135,6 +158,7 @@ class AudioPlayer(context: Context) {
             player.removeListener(listener)
             player.stop()
             stopPositionUpdates()
+            onCancelled()
         }
     }
 

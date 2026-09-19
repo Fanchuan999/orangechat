@@ -10,10 +10,33 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlin.uuid.Uuid
 
+/**
+ * Whether an ASR provider needs a remote connection before it can accept audio.
+ *
+ * Batch providers record locally first and upload after a turn ends, so waiting
+ * for a WebSocket-style ready signal would incorrectly leave the call UI stuck
+ * in its connecting state.
+ */
+enum class ASRConnectionMode {
+    Batch,
+    Realtime,
+}
+
 @Serializable
 sealed class ASRProviderSetting {
     abstract val id: Uuid
     abstract val name: String
+
+    val connectionMode: ASRConnectionMode
+        get() = when (this) {
+            is OpenAIRealtime,
+            is Volcengine,
+            -> ASRConnectionMode.Realtime
+
+            is SiliconFlow,
+            is MiMo,
+            -> ASRConnectionMode.Batch
+        }
 
     abstract fun copyProvider(
         id: Uuid = this.id,

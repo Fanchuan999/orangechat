@@ -37,6 +37,7 @@ import me.rerere.rikkahub.RouteActivity
 import me.rerere.rikkahub.VOICE_CALL_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.service.ChatGenerationMode.VoiceCall
 import me.rerere.rikkahub.ui.hooks.CustomAsrState
 import me.rerere.rikkahub.ui.hooks.CustomTtsState
 import me.rerere.rikkahub.ui.hooks.createCustomAsrState
@@ -87,6 +88,7 @@ class VoiceCallService : Service(), KoinComponent {
     private var conversationMonitorJob: Job? = null
     private var asrMonitorJob: Job? = null
     private var interruptDetectJob: Job? = null
+    private var asrReadyTimeoutJob: Job? = null
     private var lastSpokenText: String = ""
 
     // 跟踪 AI 消息的增量, 用于流式 TTS
@@ -224,6 +226,14 @@ class VoiceCallService : Service(), KoinComponent {
                 launch {
                     asr.state.collect { asrState ->
                         updateAmplitudes(asrState.amplitudes)
+                        val nextStatus = VoiceCallTurnPolicy.callStatusForAsr(
+                            currentCallStatus = _uiState.value.status,
+                            asrMode = asr.connectionMode,
+                            asrStatus = asrState.status,
+                        )
+                        if (nextStatus == VoiceCallStatus.Listening) {
+                            becomeReadyToListen()
+                        }
                         if (asrState.status == me.rerere.asr.ASRStatus.Error) {
                             val msg = asrState.errorMessage ?: "语音识别发生未知错误"
                             Log.e(TAG, "ASR 底层报错, conversationId=$conversationId, msg=$msg")
@@ -268,7 +278,7 @@ class VoiceCallService : Service(), KoinComponent {
 
         _uiState.update {
             it.copy(
-                status = VoiceCallStatus.Listening,
+                status = VoiceCallStatus.Connecting,
                 userTranscript = "",
                 errorMessage = null,
                 isMuted = false
@@ -290,7 +300,7 @@ class VoiceCallService : Service(), KoinComponent {
             return
         }
 
-        startVadDetection()
+        settleAfterAsrStart()
         startAsrMonitor()
         startConversationMonitor()
     }
@@ -307,7 +317,7 @@ class VoiceCallService : Service(), KoinComponent {
 
         _uiState.update {
             it.copy(
-                status = VoiceCallStatus.Listening,
+                status = VoiceCallStatus.Connecting,
                 userTranscript = "",
                 errorMessage = null
             )
@@ -319,14 +329,92 @@ class VoiceCallService : Service(), KoinComponent {
         // 重启 ASR: 非流式 ASR (SiliconFlow) 是“录一段→停”的一次性模式,
         // AI 说完话回到 Listening 时它已停, 不重启则音波球不动、说话发不出去.
         // 流式 ASR 的 start() 有 isRecording 守卫, 重复调用无副作用.
-        if (!isMuted) {
-            runCatching {
-                asr.start { transcript ->
-                    _uiState.update { it.copy(userTranscript = transcript) }
-                }
-            }.onFailure { Log.e(TAG, it.toString(), it) }
+        if (isMuted) {
+            _uiState.update { it.copy(status = VoiceCallStatus.Listening) }
+            return
         }
 
+        restartAsrForListening()
+    }
+
+    /** Reconnects ASR without claiming that the microphone is ready too early. */
+    private fun restartAsrForListening() {
+        if (isMuted) return
+        _uiState.update { state ->
+            if (state.status == VoiceCallStatus.Listening) {
+                state.copy(status = VoiceCallStatus.Connecting, errorMessage = null)
+            } else {
+                state
+            }
+        }
+
+        runCatching {
+            asr.start { transcript ->
+                _uiState.update { it.copy(userTranscript = transcript) }
+            }
+        }.onFailure { error ->
+            Log.e(TAG, "重启 ASR 失败", error)
+            _uiState.update {
+                it.copy(
+                    status = VoiceCallStatus.Error,
+                    errorMessage = "麦克风重启失败: ${error.message}",
+                )
+            }
+            return
+        }
+
+        if (_uiState.value.status == VoiceCallStatus.Connecting) {
+            settleAfterAsrStart()
+        }
+    }
+
+    /**
+     * HTTP/batch ASR is ready as soon as local recording starts. Only realtime
+     * WebSocket providers need a remote-ready deadline.
+     */
+    private fun settleAfterAsrStart() {
+        when (
+            VoiceCallTurnPolicy.statusAfterStart(
+                asrMode = asr.connectionMode,
+                asrStatus = asr.state.value.status,
+            )
+        ) {
+            VoiceCallStatus.Listening -> becomeReadyToListen()
+            VoiceCallStatus.Connecting -> {
+                startAsrReadyTimeout()
+                becomeReadyToListenIfAsrReady()
+            }
+
+            else -> Unit
+        }
+    }
+
+    private fun startAsrReadyTimeout() {
+        asrReadyTimeoutJob?.cancel()
+        asrReadyTimeoutJob = serviceScope.launch {
+            delay(8_000)
+            if (_uiState.value.status == VoiceCallStatus.Connecting) {
+                _uiState.update {
+                    it.copy(
+                        status = VoiceCallStatus.Error,
+                        errorMessage = "语音连接超时，请检查网络、麦克风权限和语音识别设置",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun becomeReadyToListenIfAsrReady() {
+        if (asr.state.value.status == me.rerere.asr.ASRStatus.Listening) {
+            becomeReadyToListen()
+        }
+    }
+
+    private fun becomeReadyToListen() {
+        if (_uiState.value.status != VoiceCallStatus.Connecting) return
+        asrReadyTimeoutJob?.cancel()
+        asrReadyTimeoutJob = null
+        _uiState.update { it.copy(status = VoiceCallStatus.Listening, errorMessage = null) }
         startVadDetection()
     }
 
@@ -413,7 +501,8 @@ class VoiceCallService : Service(), KoinComponent {
         try {
             chatService.sendMessage(
                 conversationId,
-                listOf(UIMessagePart.Text(transcript))
+                listOf(UIMessagePart.Text(transcript)),
+                generationMode = VoiceCall,
             )
         } catch (e: Exception) {
             Log.e(
@@ -635,6 +724,7 @@ class VoiceCallService : Service(), KoinComponent {
         if (_uiState.value.status != VoiceCallStatus.Speaking) return
         speakingMonitorJob?.cancel()
         interruptDetectJob?.cancel()
+        chatService.cancelGeneration(conversationId)
         startListening()
     }
 
@@ -662,9 +752,7 @@ class VoiceCallService : Service(), KoinComponent {
                         // 此时已停在 Idle, 不重启的话音波球不动、下一句说话发不出去.
                         // 流式 ASR 的 start() 有 isRecording 守卫, 重复调用无副作用.
                         if (!isMuted && _uiState.value.status == VoiceCallStatus.Listening) {
-                            runCatching {
-                                asr.start { t -> _uiState.update { it.copy(userTranscript = t) } }
-                            }.onFailure { Log.e(TAG, it.toString(), it) }
+                            restartAsrForListening()
                         }
                     }
                 }
@@ -684,11 +772,19 @@ class VoiceCallService : Service(), KoinComponent {
 
         try {
             if (isMuted) {
+                asrReadyTimeoutJob?.cancel()
+                asrReadyTimeoutJob = null
                 asr.stop()
             } else {
                 // 不管当前是 Listening 还是 Speaking, 取消静音都要重新开始监听
-                asr.start { transcript ->
-                    _uiState.update { it.copy(userTranscript = transcript) }
+                if (_uiState.value.status == VoiceCallStatus.Listening ||
+                    _uiState.value.status == VoiceCallStatus.Connecting
+                ) {
+                    restartAsrForListening()
+                } else {
+                    asr.start { transcript ->
+                        _uiState.update { it.copy(userTranscript = transcript) }
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -714,6 +810,7 @@ class VoiceCallService : Service(), KoinComponent {
         conversationMonitorJob?.cancel()
         asrMonitorJob?.cancel()
         interruptDetectJob?.cancel()
+        asrReadyTimeoutJob?.cancel()
         asr.stop()
         tts.stop()
         _uiState.update {
@@ -739,6 +836,7 @@ class VoiceCallService : Service(), KoinComponent {
      */
     private fun buildNotification(state: VoiceCallUiState): android.app.Notification {
         val contentText = when (state.status) {
+            VoiceCallStatus.Connecting -> "正在连接语音..."
             VoiceCallStatus.Listening -> "正在聆听..."
             VoiceCallStatus.Processing -> "正在思考..."
             VoiceCallStatus.Speaking -> "正在说话..."

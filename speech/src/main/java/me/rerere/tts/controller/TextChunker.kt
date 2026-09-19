@@ -12,7 +12,10 @@ package me.rerere.tts.controller
 class TextChunker(
     private val maxChunkLength: Int = 150
 ) {
-    fun split(text: String): List<TtsChunk> {
+    fun split(
+        text: String,
+        preferStreamingPlayback: Boolean = false,
+    ): List<TtsChunk> {
         if (text.isBlank()) return emptyList()
 
         val paragraphs = text.split("\n\n")
@@ -38,7 +41,11 @@ class TextChunker(
         }
 
         return chunks.mapIndexed { index, value ->
-            TtsChunk(text = value, index = index)
+            TtsChunk(
+                text = value,
+                index = index,
+                preferStreamingPlayback = preferStreamingPlayback,
+            )
         }
     }
 }
@@ -46,6 +53,7 @@ class TextChunker(
 data class TtsChunk(
     val id: java.util.UUID = java.util.UUID.randomUUID(),
     val index: Int,
-    val text: String
+    val text: String,
+    val preferStreamingPlayback: Boolean = false,
 )
 
