@@ -39,8 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,10 +72,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastForEach
 import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Tick01
 import me.rerere.rikkahub.ui.components.table.DataTable
@@ -91,6 +87,7 @@ import org.intellij.markdown.ast.LeafASTNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
+import org.intellij.markdown.html.HtmlGenerator
 import org.intellij.markdown.parser.MarkdownParser
 
 private val flavour by lazy {
@@ -190,21 +187,51 @@ private fun MarkdownPreview() {
     }
 }
 
-private data class MarkdownParseResult(
-    val preprocessed: String,
-    val astTree: ASTNode,
-    val hasHtml: Boolean,
-)
+internal sealed interface MarkdownRenderSnapshot {
+    val input: String
+
+    data class Native(
+        override val input: String,
+        val preprocessed: String,
+        val astTree: ASTNode,
+    ) : MarkdownRenderSnapshot
+
+    data class Html(
+        override val input: String,
+        val html: String,
+    ) : MarkdownRenderSnapshot
+}
 
 private fun ASTNode.containsHtml(): Boolean {
     if (type == MarkdownElementTypes.HTML_BLOCK || type == MarkdownTokenTypes.HTML_TAG) return true
     return children.any { it.containsHtml() }
 }
 
-private fun parseMarkdown(content: String): MarkdownParseResult {
+internal fun buildMarkdownRenderSnapshot(content: String): MarkdownRenderSnapshot {
     val preprocessed = preProcess(content)
     val astTree = parser.buildMarkdownTreeFromString(preprocessed)
-    return MarkdownParseResult(preprocessed, astTree, astTree.containsHtml())
+    return if (astTree.containsHtml()) {
+        MarkdownRenderSnapshot.Html(
+            input = content,
+            html = HtmlGenerator(preprocessed, astTree, flavour).generateHtml(),
+        )
+    } else {
+        MarkdownRenderSnapshot.Native(
+            input = content,
+            preprocessed = preprocessed,
+            astTree = astTree,
+        )
+    }
+}
+
+internal fun generateMarkdownHtml(content: String): String {
+    val snapshot = buildMarkdownRenderSnapshot(content)
+    return when (snapshot) {
+        is MarkdownRenderSnapshot.Html -> snapshot.html
+        is MarkdownRenderSnapshot.Native -> {
+            HtmlGenerator(snapshot.preprocessed, snapshot.astTree, flavour).generateHtml()
+        }
+    }
 }
 
 @Composable
@@ -214,36 +241,32 @@ fun MarkdownBlock(
     style: TextStyle = LocalTextStyle.current,
     onClickCitation: (String) -> Unit = {}
 ) {
-    var (data, setData) = remember { mutableStateOf(parseMarkdown(content)) }
+    var snapshot by remember { mutableStateOf(buildMarkdownRenderSnapshot(content)) }
 
-    // 监听内容变化，重新解析AST树
-    // 这里在后台线程解析AST树, 防止频繁更新的时候掉帧
-    val updatedContent by rememberUpdatedState(content)
-    LaunchedEffect(Unit) {
-        snapshotFlow { updatedContent }
-            .distinctUntilChanged()
-            .mapLatest { parseMarkdown(it) }
-            .catch { exception -> exception.printStackTrace() }
-            .flowOn(Dispatchers.Default)
-            .collect { setData(it) }
+    // 每次内容变化只构建一份不可拆分的快照：路径选择、AST 和 HTML 永远来自同一份输入。
+    LaunchedEffect(content) {
+        snapshot = withContext(Dispatchers.Default) {
+            buildMarkdownRenderSnapshot(content)
+        }
     }
 
-    if (data.hasHtml) {
-        MarkdownNew(
-            content = content,
+    when (val current = snapshot) {
+        is MarkdownRenderSnapshot.Html -> MarkdownHtml(
+            html = current.html,
             modifier = modifier,
             style = style,
             onClickCitation = onClickCitation,
         )
-    } else {
-        ProvideTextStyle(style) {
-            Column(
-                modifier = modifier.padding(horizontal = 4.dp)
-            ) {
-                data.astTree.children.fastForEach { child ->
-                    MarkdownNode(
-                        node = child, content = data.preprocessed, onClickCitation = onClickCitation
-                    )
+        is MarkdownRenderSnapshot.Native -> {
+            ProvideTextStyle(style) {
+                Column(
+                    modifier = modifier.padding(horizontal = 4.dp)
+                ) {
+                    current.astTree.children.fastForEach { child ->
+                        MarkdownNode(
+                            node = child, content = current.preprocessed, onClickCitation = onClickCitation
+                        )
+                    }
                 }
             }
         }
@@ -797,6 +820,17 @@ private fun TableNode(node: ASTNode, content: String, modifier: Modifier = Modif
     // 检查是否有足够的列来显示表格
     if (columnCount == 0) return
 
+    val delimiterCells = node.children
+        .firstOrNull { child ->
+            child.type != GFMElementTypes.HEADER && child.type != GFMElementTypes.ROW
+        }
+        ?.children
+        ?.filter { it.type == GFMTokenTypes.CELL }
+        ?.map { it.getTextInNode(content).trim() }
+        ?: emptyList()
+    val columnAlignments = parseMarkdownTableAlignments(delimiterCells)
+        .map { it.toComposeAlignment() }
+
     // 提取表头单元格文本
     val headerCells =
         headerNode?.children?.filter { it.type == GFMTokenTypes.CELL }?.map { it.getTextInNode(content).trim() }
@@ -834,7 +868,33 @@ private fun TableNode(node: ASTNode, content: String, modifier: Modifier = Modif
         modifier = modifier.padding(vertical = 8.dp),
         columnMinWidths = List(columnCount) { 80.dp },
         columnMaxWidths = List(columnCount) { 200.dp },
+        columnAlignments = columnAlignments,
     )
+}
+
+internal enum class MarkdownTableAlignment {
+    LEFT,
+    CENTER,
+    RIGHT,
+}
+
+internal fun parseMarkdownTableAlignments(delimiterCells: List<String>): List<MarkdownTableAlignment> {
+    return delimiterCells.map { cell ->
+        val normalized = cell.trim()
+        when {
+            normalized.matches(Regex("^:-{3,}:$")) -> MarkdownTableAlignment.CENTER
+            normalized.matches(Regex("^-{3,}:$")) -> MarkdownTableAlignment.RIGHT
+            else -> MarkdownTableAlignment.LEFT
+        }
+    }
+}
+
+private fun MarkdownTableAlignment.toComposeAlignment(): Alignment {
+    return when (this) {
+        MarkdownTableAlignment.LEFT -> Alignment.CenterStart
+        MarkdownTableAlignment.CENTER -> Alignment.Center
+        MarkdownTableAlignment.RIGHT -> Alignment.CenterEnd
+    }
 }
 
 private fun AnnotatedString.Builder.appendMarkdownNodeContent(

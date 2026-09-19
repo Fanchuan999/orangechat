@@ -51,6 +51,7 @@ fun DataTable(
     columnMinWidths: List<Dp> = emptyList(),
     columnMaxWidths: List<Dp> = emptyList(),
     cellAlignment: Alignment = Alignment.CenterStart,
+    columnAlignments: List<Alignment> = emptyList(),
 ) {
     val hScroll = rememberScrollState()
     val surfaceContainer = MaterialTheme.colorScheme.surfaceContainer
@@ -82,7 +83,7 @@ fun DataTable(
                         padding = cellPadding,
                         border = cellBorder,
                         background = headerBackground,
-                        alignment = cellAlignment
+                        alignment = columnAlignments.getOrNull(c) ?: cellAlignment
                     ) {
                         headers.getOrNull(c)?.invoke()
                     }
@@ -100,7 +101,12 @@ fun DataTable(
             fun subcomposeBodyOnce(r: Int, c: Int): Placeable {
                 val bg = if (zebraStriping && r % 2 == 1) surfaceContainer else Color.Transparent
                 val measurables = subcompose("b1_${r}_$c") {
-                    CellBox(padding = cellPadding, border = cellBorder, background = bg, alignment = cellAlignment) {
+                CellBox(
+                    padding = cellPadding,
+                    border = cellBorder,
+                    background = bg,
+                    alignment = columnAlignments.getOrNull(c) ?: cellAlignment,
+                ) {
                         rows[r].getOrNull(c)?.invoke()
                     }
                 }
@@ -145,7 +151,7 @@ fun DataTable(
                         padding = cellPadding,
                         border = cellBorder,
                         background = headerBackground,
-                        alignment = cellAlignment
+                        alignment = columnAlignments.getOrNull(c) ?: cellAlignment
                     ) {
                         headers.getOrNull(c)?.invoke()
                     }
@@ -159,7 +165,12 @@ fun DataTable(
                 val bg =
                     if (zebraStriping && r % 2 == 1) surfaceContainer else Color.Transparent
                 val measurables = subcompose("b2_${r}_$c") {
-                    CellBox(padding = cellPadding, border = cellBorder, background = bg, alignment = cellAlignment) {
+                    CellBox(
+                        padding = cellPadding,
+                        border = cellBorder,
+                        background = bg,
+                        alignment = columnAlignments.getOrNull(c) ?: cellAlignment,
+                    ) {
                         rows[r].getOrNull(c)?.invoke()
                     }
                 }
