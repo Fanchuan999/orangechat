@@ -2,7 +2,10 @@ package me.rerere.rikkahub.data.ai.tools
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.pcbridge.PcBridgeRemoteTaskState
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskMailbox
+import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskProgress
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskRequest
 import me.rerere.rikkahub.data.pcbridge.PcBridgeTaskService
 import java.io.File
@@ -37,6 +40,40 @@ class PcBridgeTaskToolsTest {
     }
 
     @Test
+    fun `refresh tool returns a cached terminal result once`() = runBlocking {
+        val mailbox = RecordingMailbox().apply {
+            progress += PcBridgeTaskProgress(
+                eventId = "event-complete",
+                taskId = "task-readme",
+                attemptId = "attempt-readme",
+                sequence = 3,
+                state = PcBridgeRemoteTaskState.COMPLETE,
+                summary = "# Daddy",
+            )
+        }
+        val service = PcBridgeTaskService(
+            mailbox = mailbox,
+            taskIdFactory = { "task-readme" },
+            attemptIdFactory = { "attempt-readme" },
+        )
+        val tools = PcBridgeTaskTools(service).getTools()
+        val submit = tools.single { it.name == "submit_pc_task" }
+        val refresh = tools.single { it.name == "refresh_pc_task_board" }
+        submit.execute(Json.parseToJsonElement("""{"task_brief":"读取 README 标题"}"""))
+
+        val first = refresh.execute(Json.parseToJsonElement("{}"))
+            .filterIsInstance<UIMessagePart.Text>().single().text
+        val second = refresh.execute(Json.parseToJsonElement("{}"))
+            .filterIsInstance<UIMessagePart.Text>().single().text
+
+        assertTrue("first=$first", first.contains("\"terminal_result\""))
+        assertTrue("first=$first", first.contains("# Daddy"))
+        assertTrue("first=$first", first.contains("\"result_available\":true"))
+        assertTrue("second=$second", second.contains("\"result_available\":false"))
+        assertFalse("second=$second", second.contains("terminal_result"))
+    }
+
+    @Test
     fun `unpaired phone does not expose PC task tools`() = runBlocking {
         val tools = PcBridgeTaskTools(PcBridgeTaskService(UnpairedMailbox())).getTools()
 
@@ -48,7 +85,7 @@ class PcBridgeTaskToolsTest {
         val chatService = File("src/main/java/me/rerere/rikkahub/service/ChatService.kt").readText()
 
         assertTrue(chatService.contains("private val pcBridgeTaskToolsProvider: () -> PcBridgeTaskTools"))
-        assertTrue(chatService.contains("addAll(pcBridgeTaskToolsProvider().getTools())"))
+        assertTrue(chatService.contains("pcBridgeTaskToolsProvider().getTools().forEach"))
     }
 
     @Test
@@ -64,12 +101,16 @@ class PcBridgeTaskToolsTest {
 
     private class RecordingMailbox : PcBridgeTaskMailbox {
         val requests = mutableListOf<PcBridgeTaskRequest>()
+        val progress = ArrayDeque<PcBridgeTaskProgress>()
 
         override suspend fun isConfigured(): Boolean = true
 
         override suspend fun enqueue(request: PcBridgeTaskRequest) {
             requests += request
         }
+
+        override suspend fun claimNextProgress(): PcBridgeTaskProgress? =
+            if (progress.isEmpty()) null else progress.removeFirst()
     }
 
     private class UnpairedMailbox : PcBridgeTaskMailbox {

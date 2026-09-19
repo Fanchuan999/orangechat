@@ -19,6 +19,9 @@ class PcBridgeTaskService(
 
     private val handledEventIds = mutableSetOf<String>()
     private val restoreMutex = Mutex()
+    private val boardMutex = Mutex()
+    private var nextTerminalGeneration = 1L
+    private var assistantReportedThroughGeneration = 0L
     private var restored = false
 
     /** The task surface is available only after a phone-to-PC pairing has been confirmed. */
@@ -28,7 +31,7 @@ class PcBridgeTaskService(
         brief: String,
         workspaceId: String,
         relativeScope: String = ".",
-    ): PcBridgeTaskCard {
+    ): PcBridgeTaskCard = boardMutex.withLock {
         restore()
         val request = PcBridgeTaskRequest(
             taskId = requireIdentifier(taskIdFactory(), "task id"),
@@ -40,7 +43,7 @@ class PcBridgeTaskService(
             brief = requireBrief(brief),
         )
         mailbox.enqueue(request)
-        return PcBridgeTaskCard(
+        PcBridgeTaskCard(
             taskId = request.taskId,
             attemptId = request.attemptId,
             workspaceId = request.workspaceId,
@@ -53,45 +56,30 @@ class PcBridgeTaskService(
         ).also { addCard(it) }
     }
 
-    suspend fun applyProgress(progress: PcBridgeTaskProgress) {
+    suspend fun applyProgress(progress: PcBridgeTaskProgress) = boardMutex.withLock {
         restore()
-        if (!handledEventIds.add(requireIdentifier(progress.eventId, "event id"))) return
-        requireIdentifier(progress.taskId, "task id")
-        requireIdentifier(progress.attemptId, "attempt id")
-        require(progress.sequence >= 0) { "Task progress sequence is invalid" }
-        require(progress.summary.isNotBlank() && progress.summary.length <= MAX_SUMMARY_CHARS) {
-            "Task progress summary is invalid"
-        }
-
-        val current = mutableCards.value
-        val index = current.indexOfFirst { card ->
-            card.taskId == progress.taskId && card.attemptId == progress.attemptId
-        }
-        if (index < 0 || progress.sequence <= current[index].sequence) {
-            persist()
-            return
-        }
-        val updated = current[index].copy(
-            state = progress.state.toCardState(),
-            summary = progress.summary,
-            sequence = progress.sequence,
-            updatedAtMillis = nowMillis(),
-        )
-        mutableCards.value = current.toMutableList().also { it[index] = updated }
-        persist()
+        applyProgressLocked(progress)
     }
 
-    /** Pulls the available compact PC progress events from one user refresh. */
-    suspend fun refreshFromPc(): PcBridgeTaskProgress? {
-        restore()
-        expireUnreceivedTasks()
-        var latest: PcBridgeTaskProgress? = null
-        repeat(MAX_PROGRESS_EVENTS_PER_REFRESH) {
-            val progress = mailbox.claimNextProgress() ?: return latest
-            applyProgress(progress)
-            latest = progress
+    /** Pulls available PC progress for the Code Hut UI without consuming an AI result. */
+    suspend fun refreshFromPc(): PcBridgeTaskProgress? = boardMutex.withLock {
+        refreshFromPcLocked().latestProgress
+    }
+
+    /**
+     * Pulls PC progress and atomically claims the newest terminal result for the assistant.
+     * The claim is persisted separately from ordinary UI synchronization so a UI refresh
+     * cannot make the result disappear before the model sees it.
+     */
+    suspend fun refreshFromPcForAssistant(): PcBridgeTaskRefreshResult = boardMutex.withLock {
+        refreshFromPcLocked().let { synced ->
+            val terminalResult = claimLatestTerminalResultLocked()
+            PcBridgeTaskRefreshResult(
+                latestProgress = synced.latestProgress,
+                terminalResult = terminalResult,
+                activeTaskCount = activeTaskCount(),
+            )
         }
-        return latest
     }
 
     /** Restores only compact local card state; it does not read chat history, Ombre or Supabase. */
@@ -102,9 +90,22 @@ class PcBridgeTaskService(
             if (snapshot != null) {
                 mutableCards.value = snapshot.cards
                 handledEventIds += snapshot.handledEventIds
+                nextTerminalGeneration = snapshot.nextTerminalGeneration.coerceAtLeast(1L)
+                assistantReportedThroughGeneration = snapshot.assistantReportedThroughGeneration.coerceAtLeast(0L)
             }
             restored = true
         }
+    }
+
+    private suspend fun refreshFromPcLocked(): SyncResult {
+        restore()
+        expireUnreceivedTasksLocked()
+        var latest: PcBridgeTaskProgress? = null
+        for (index in 0 until MAX_PROGRESS_EVENTS_PER_REFRESH) {
+            val progress = mailbox.claimNextProgress() ?: break
+            if (applyProgressLocked(progress)) latest = progress
+        }
+        return SyncResult(latestProgress = latest)
     }
 
     private suspend fun addCard(card: PcBridgeTaskCard) {
@@ -112,27 +113,90 @@ class PcBridgeTaskService(
         persist()
     }
 
-    private suspend fun expireUnreceivedTasks() {
+    private suspend fun applyProgressLocked(progress: PcBridgeTaskProgress): Boolean {
+        val eventId = requireIdentifier(progress.eventId, "event id")
+        requireIdentifier(progress.taskId, "task id")
+        requireIdentifier(progress.attemptId, "attempt id")
+        require(progress.sequence >= 0) { "Task progress sequence is invalid" }
+        require(progress.summary.isNotBlank() && progress.summary.length <= MAX_SUMMARY_CHARS) {
+            "Task progress summary is invalid"
+        }
+        if (!handledEventIds.add(eventId)) return false
+
+        val current = mutableCards.value
+        val index = current.indexOfFirst { card ->
+            card.taskId == progress.taskId && card.attemptId == progress.attemptId
+        }
+        if (index < 0 || progress.sequence <= current[index].sequence) {
+            persist()
+            return false
+        }
+        val nextState = progress.state.toCardState()
+        val terminalGeneration = if (nextState.isTerminal()) nextTerminalGeneration++ else null
+        val updated = current[index].copy(
+            state = nextState,
+            summary = progress.summary,
+            sequence = progress.sequence,
+            updatedAtMillis = nowMillis(),
+            terminalGeneration = terminalGeneration,
+        )
+        mutableCards.value = current.toMutableList().also { it[index] = updated }
+        persist()
+        return true
+    }
+
+    private suspend fun expireUnreceivedTasksLocked() {
         val now = nowMillis()
         val current = mutableCards.value
+        var changed = false
         val updated = current.map { card ->
             if (
                 card.state == PcBridgeTaskCardState.AWAITING_PC &&
                 now - card.updatedAtMillis >= TASK_DELIVERY_TTL_MILLIS
             ) {
+                changed = true
                 card.copy(
                     state = PcBridgeTaskCardState.FAILED,
                     summary = "电脑未在 10 分钟内接收，任务已过期；可重新提交。",
                     updatedAtMillis = now,
+                    terminalGeneration = nextTerminalGeneration++,
                 )
             } else {
                 card
             }
         }
-        if (updated != current) {
+        if (changed) {
             mutableCards.value = updated
             persist()
         }
+    }
+
+    private suspend fun claimLatestTerminalResultLocked(): PcBridgeTaskTerminalResult? {
+        val candidate = mutableCards.value
+            .asSequence()
+            .filter { card ->
+                card.state.isTerminal() &&
+                    card.terminalGeneration != null &&
+                    card.terminalGeneration > assistantReportedThroughGeneration
+            }
+            .maxByOrNull { it.terminalGeneration!! }
+            ?: return null
+        val generation = requireNotNull(candidate.terminalGeneration)
+        val previousWatermark = assistantReportedThroughGeneration
+        assistantReportedThroughGeneration = generation
+        try {
+            persist()
+        } catch (error: Exception) {
+            assistantReportedThroughGeneration = previousWatermark
+            throw error
+        }
+        return PcBridgeTaskTerminalResult(
+            taskId = candidate.taskId,
+            attemptId = candidate.attemptId,
+            state = candidate.state,
+            summary = candidate.summary,
+            sequence = candidate.sequence,
+        )
     }
 
     private suspend fun persist() {
@@ -140,9 +204,19 @@ class PcBridgeTaskService(
             PcBridgeTaskBoardSnapshot(
                 cards = mutableCards.value.takeLast(MAX_STORED_CARDS),
                 handledEventIds = handledEventIds.toList().takeLast(MAX_HANDLED_EVENT_IDS),
+                nextTerminalGeneration = nextTerminalGeneration,
+                assistantReportedThroughGeneration = assistantReportedThroughGeneration,
             ),
         )
     }
+
+    private fun activeTaskCount(): Int = mutableCards.value.count { !it.state.isTerminal() }
+
+    private fun PcBridgeTaskCardState.isTerminal(): Boolean = this in setOf(
+        PcBridgeTaskCardState.COMPLETE,
+        PcBridgeTaskCardState.FAILED,
+        PcBridgeTaskCardState.CANCELED,
+    )
 
     private fun PcBridgeRemoteTaskState.toCardState(): PcBridgeTaskCardState = when (this) {
         PcBridgeRemoteTaskState.QUEUED -> PcBridgeTaskCardState.AWAITING_PC
@@ -184,6 +258,12 @@ class PcBridgeTaskService(
         require(normalized.isNotEmpty() && normalized.length <= MAX_BRIEF_CHARS) { "Task brief is invalid" }
         return normalized
     }
+
+    private data class SyncResult(
+        val latestProgress: PcBridgeTaskProgress?,
+        val terminalResult: PcBridgeTaskTerminalResult? = null,
+        val activeTaskCount: Int = 0,
+    )
 
     private companion object {
         const val MAX_BRIEF_CHARS = 20_000

@@ -88,22 +88,34 @@ class PcBridgeTaskTools(
 
     private fun refreshTaskBoardTool() = Tool(
         name = "refresh_pc_task_board",
-        description = "Fetch one encrypted PC progress event for the paired phone task board. Use only when the user asks about a PC task's progress or result; do not fabricate a status.",
+        description = "Fetch encrypted PC progress for the paired phone task board. Use only when the user asks about a PC task's progress or result; a terminal_result may come from the locally synced board even when no new event was claimed, and each terminal result is reported once. Never fabricate a status.",
         parameters = { InputSchema.Obj(properties = buildJsonObject { }) },
         execute = {
             try {
-                val updated = taskService.refreshFromPc()
-                val active = taskService.cards.value.filter { card -> !card.isTerminal() }
+                val result = taskService.refreshFromPcForAssistant()
                 listOf(
                     UIMessagePart.Text(
                         buildJsonObject {
                             put("success", true)
-                            put("updated", updated != null)
-                            put("active_task_count", active.size)
-                            if (updated != null) {
-                                put("task_id", updated.taskId)
-                                put("state", updated.state.name.lowercase())
-                                put("summary", updated.summary)
+                            put("updated", result.latestProgress != null)
+                            put("active_task_count", result.activeTaskCount)
+                            result.latestProgress?.let { progress ->
+                                put("task_id", progress.taskId)
+                                put("state", progress.state.name.lowercase())
+                                put("summary", progress.summary)
+                            }
+                            if (result.terminalResult != null) {
+                                val terminal = result.terminalResult
+                                put("result_available", true)
+                                put("terminal_result", buildJsonObject {
+                                    put("task_id", terminal.taskId)
+                                    put("attempt_id", terminal.attemptId)
+                                    put("state", terminal.state.name.lowercase())
+                                    put("summary", terminal.summary)
+                                    put("sequence", terminal.sequence)
+                                })
+                            } else {
+                                put("result_available", false)
                             }
                         }.toString(),
                     ),
@@ -132,5 +144,4 @@ class PcBridgeTaskTools(
         ),
     )
 
-    private fun PcBridgeTaskCard.isTerminal() = state.name in setOf("COMPLETE", "FAILED", "CANCELED")
 }

@@ -59,6 +59,21 @@ data class PcBridgeTaskCard(
     val summary: String,
     val sequence: Int,
     val updatedAtMillis: Long,
+    val terminalGeneration: Long? = null,
+)
+
+data class PcBridgeTaskRefreshResult(
+    val latestProgress: PcBridgeTaskProgress?,
+    val terminalResult: PcBridgeTaskTerminalResult?,
+    val activeTaskCount: Int,
+)
+
+data class PcBridgeTaskTerminalResult(
+    val taskId: String,
+    val attemptId: String,
+    val state: PcBridgeTaskCardState,
+    val summary: String,
+    val sequence: Int,
 )
 
 @Serializable

@@ -167,6 +167,101 @@ class PcBridgeTaskServiceTest {
         assertTrue(mailbox.queuedProgress.isEmpty())
     }
 
+    @Test
+    fun `assistant receives a completion after UI already consumed the progress event`() = runBlocking {
+        val mailbox = RecordingPcTaskMailbox().apply { queuedProgress += completeProgress() }
+        val service = newService(mailbox)
+        service.submit("读取 README 标题", "daddy-orangechat", ".")
+
+        assertEquals(PcBridgeRemoteTaskState.COMPLETE, service.refreshFromPc()?.state)
+        val result = service.refreshFromPcForAssistant()
+
+        assertNull(result.latestProgress)
+        assertEquals("task-readme", result.terminalResult?.taskId)
+        assertEquals(PcBridgeTaskCardState.COMPLETE, result.terminalResult?.state)
+        assertEquals("# Daddy", result.terminalResult?.summary)
+        assertEquals(0, result.activeTaskCount)
+    }
+
+    @Test
+    fun `assistant terminal result is reported once`() = runBlocking {
+        val mailbox = RecordingPcTaskMailbox().apply { queuedProgress += completeProgress() }
+        val service = newService(mailbox)
+        service.submit("读取 README 标题", "daddy-orangechat", ".")
+
+        val first = service.refreshFromPcForAssistant()
+        val second = service.refreshFromPcForAssistant()
+
+        assertEquals("task-readme", first.terminalResult?.taskId)
+        assertNull(second.terminalResult)
+        assertEquals(0, second.activeTaskCount)
+    }
+
+    @Test
+    fun `assistant watermark survives board service restart`() = runBlocking {
+        val storage = MemoryBoardStorage()
+        val first = PcBridgeTaskService(
+            mailbox = RecordingPcTaskMailbox().apply { queuedProgress += completeProgress() },
+            boardStorage = storage,
+            taskIdFactory = { "task-readme" },
+            attemptIdFactory = { "attempt-readme" },
+        )
+        first.submit("读取 README 标题", "daddy-orangechat", ".")
+        assertEquals("task-readme", first.refreshFromPcForAssistant().terminalResult?.taskId)
+
+        val restored = PcBridgeTaskService(
+            mailbox = RecordingPcTaskMailbox(),
+            boardStorage = storage,
+        )
+
+        assertNull(restored.refreshFromPcForAssistant().terminalResult)
+    }
+
+    @Test
+    fun `stale progress does not become the latest assistant result`() = runBlocking {
+        val mailbox = RecordingPcTaskMailbox().apply {
+            queuedProgress += PcBridgeTaskProgress(
+                eventId = "event-running",
+                taskId = "task-readme",
+                attemptId = "attempt-readme",
+                sequence = 2,
+                state = PcBridgeRemoteTaskState.RUNNING,
+                summary = "电脑正在读取 README。",
+            )
+            queuedProgress += PcBridgeTaskProgress(
+                eventId = "event-stale-complete",
+                taskId = "task-readme",
+                attemptId = "attempt-readme",
+                sequence = 1,
+                state = PcBridgeRemoteTaskState.COMPLETE,
+                summary = "过期结果",
+            )
+        }
+        val service = newService(mailbox)
+        service.submit("读取 README 标题", "daddy-orangechat", ".")
+
+        val result = service.refreshFromPcForAssistant()
+
+        assertEquals(PcBridgeTaskCardState.RUNNING, service.cards.first().single().state)
+        assertNull(result.terminalResult)
+        assertEquals(PcBridgeRemoteTaskState.RUNNING, result.latestProgress?.state)
+    }
+
+    private fun newService(mailbox: RecordingPcTaskMailbox) = PcBridgeTaskService(
+        mailbox = mailbox,
+        taskIdFactory = { "task-readme" },
+        attemptIdFactory = { "attempt-readme" },
+    )
+
+    private fun completeProgress() = PcBridgeTaskProgress(
+        eventId = "event-complete",
+        taskId = "task-readme",
+        attemptId = "attempt-readme",
+        sequence = 3,
+        state = PcBridgeRemoteTaskState.COMPLETE,
+        summary = "# Daddy",
+    )
+
     private class RecordingPcTaskMailbox : PcBridgeTaskMailbox {
         val sent = mutableListOf<PcBridgeTaskRequest>()
         val queuedProgress = ArrayDeque<PcBridgeTaskProgress>()

@@ -23,6 +23,8 @@ private val Context.pcBridgeTaskBoardStore by preferencesDataStore(name = PC_BRI
 data class PcBridgeTaskBoardSnapshot(
     val cards: List<PcBridgeTaskCard>,
     val handledEventIds: List<String>,
+    val nextTerminalGeneration: Long = 1L,
+    val assistantReportedThroughGeneration: Long = 0L,
 )
 
 interface PcBridgeTaskBoardRepository {
@@ -120,16 +122,22 @@ private data class PcBridgeTaskBoardPrivateRecord(
     val version: Int = 1,
     val cards: List<PcBridgeTaskBoardCardRecord>,
     val handledEventIds: List<String>,
+    val nextTerminalGeneration: Long = 1L,
+    val assistantReportedThroughGeneration: Long = 0L,
 ) {
     fun toSnapshot(): PcBridgeTaskBoardSnapshot = PcBridgeTaskBoardSnapshot(
         cards = cards.mapNotNull(PcBridgeTaskBoardCardRecord::toCard),
         handledEventIds = handledEventIds.filter { it.matches(Regex("[A-Za-z0-9_-]{1,128}")) }.takeLast(256),
+        nextTerminalGeneration = nextTerminalGeneration.coerceAtLeast(1L),
+        assistantReportedThroughGeneration = assistantReportedThroughGeneration.coerceAtLeast(0L),
     )
 
     companion object {
         fun from(snapshot: PcBridgeTaskBoardSnapshot) = PcBridgeTaskBoardPrivateRecord(
             cards = snapshot.cards.takeLast(80).map(PcBridgeTaskBoardCardRecord::from),
             handledEventIds = snapshot.handledEventIds.takeLast(256),
+            nextTerminalGeneration = snapshot.nextTerminalGeneration.coerceAtLeast(1L),
+            assistantReportedThroughGeneration = snapshot.assistantReportedThroughGeneration.coerceAtLeast(0L),
         )
     }
 }
@@ -145,6 +153,7 @@ private data class PcBridgeTaskBoardCardRecord(
     val summary: String,
     val sequence: Int,
     val updatedAtMillis: Long,
+    val terminalGeneration: Long? = null,
 ) {
     fun toCard(): PcBridgeTaskCard? = runCatching {
         PcBridgeTaskCard(
@@ -157,6 +166,7 @@ private data class PcBridgeTaskBoardCardRecord(
             summary = summary,
             sequence = sequence,
             updatedAtMillis = updatedAtMillis,
+            terminalGeneration = terminalGeneration,
         )
     }.getOrNull()
 
@@ -171,6 +181,7 @@ private data class PcBridgeTaskBoardCardRecord(
             summary = card.summary,
             sequence = card.sequence,
             updatedAtMillis = card.updatedAtMillis,
+            terminalGeneration = card.terminalGeneration,
         )
     }
 }
