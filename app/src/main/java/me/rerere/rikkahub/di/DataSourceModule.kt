@@ -21,6 +21,7 @@ import me.rerere.ai.provider.ProviderManager
 import me.rerere.common.http.AcceptLanguageBuilder
 import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.data.ai.AIRequestInterceptor
+import me.rerere.rikkahub.data.ai.ContextBudgetTracker
 import me.rerere.rikkahub.data.ai.RequestLoggingInterceptor
 import me.rerere.rikkahub.data.ai.transformers.AssistantTemplateLoader
 import me.rerere.rikkahub.data.ai.GenerationHandler
@@ -30,6 +31,7 @@ import me.rerere.rikkahub.data.api.SponsorAPI
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.dao.AutonomousActivityDao
+import me.rerere.rikkahub.data.db.dao.ConversationDigestDao
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
 import me.rerere.rikkahub.data.db.fts.SimpleDictManager
 import me.rerere.rikkahub.data.db.migrations.Migration_6_7
@@ -46,6 +48,7 @@ import me.rerere.rikkahub.data.db.migrations.Migration_25_26
 import me.rerere.rikkahub.data.db.migrations.Migration_29_30
 import me.rerere.rikkahub.data.db.migrations.Migration_30_31
 import me.rerere.rikkahub.data.db.migrations.Migration_31_32
+import me.rerere.rikkahub.data.db.migrations.Migration_32_33
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.service.MemoryBankService
 import me.rerere.rikkahub.data.service.AutonomousActivityRepository
@@ -53,6 +56,9 @@ import me.rerere.rikkahub.data.service.RoomAutonomousActivityRecordStore
 import me.rerere.rikkahub.data.service.CompanionMoodEngine
 import me.rerere.rikkahub.data.service.CompanionDiaryService
 import me.rerere.rikkahub.data.service.CompanionSpaceService
+import me.rerere.rikkahub.data.service.ConversationDigestService
+import me.rerere.rikkahub.data.service.TodoistDeadlineSyncService
+import me.rerere.rikkahub.data.service.TodoistMcpGateway
 import me.rerere.rikkahub.data.service.ChatMediaStorageService
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.rikkahub.data.sync.companion.AmapMcpService
@@ -96,7 +102,7 @@ val dataSourceModule = module {
         val context: Context = get()
         Room.databaseBuilder(context, AppDatabase::class.java, "rikka_hub")
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-            .addMigrations(Migration_6_7, Migration_11_12, Migration_13_14, Migration_14_15, Migration_15_16, Migration_19_20, Migration_20_21, Migration_23_24, Migration_24_25, Migration_25_26, Migration_29_30, Migration_30_31, Migration_31_32)
+            .addMigrations(Migration_6_7, Migration_11_12, Migration_13_14, Migration_14_15, Migration_15_16, Migration_19_20, Migration_20_21, Migration_23_24, Migration_24_25, Migration_25_26, Migration_29_30, Migration_30_31, Migration_31_32, Migration_32_33)
             .addCallback(object : RoomDatabase.Callback() {
                 override fun onOpen(db: SupportSQLiteDatabase) {
                     val dictDir = SimpleDictManager.extractDict(context)
@@ -162,6 +168,10 @@ val dataSourceModule = module {
         get<AppDatabase>().conversationDao()
     }
 
+    single<ConversationDigestDao> {
+        get<AppDatabase>().conversationDigestDao()
+    }
+
     single {
         get<AppDatabase>().memoryDao()
     }
@@ -216,6 +226,17 @@ val dataSourceModule = module {
         )
     }
 
+    single { ContextBudgetTracker() }
+
+    single {
+        ConversationDigestService(
+            context = get(),
+            appScope = get(),
+            digestDao = get(),
+            providerManager = get(),
+        )
+    }
+
     single {
         GenerationHandler(
             context = get(),
@@ -224,7 +245,9 @@ val dataSourceModule = module {
             memoryRepo = get(),
             conversationRepo = get(),
             aiLoggingManager = get(),
-            memoryBankService = get()
+            memoryBankService = get(),
+            contextBudgetTracker = get(),
+            conversationDigestService = get(),
         )
     }
 
@@ -321,6 +344,20 @@ val dataSourceModule = module {
     }
 
     single { CompanionSpaceService(settingsStore = get()) }
+
+    single {
+        TodoistDeadlineSyncService(
+            settingsStore = get(),
+            gateway = get(),
+        )
+    }
+
+    single {
+        TodoistMcpGateway(
+            mcpManager = get(),
+            settingsStore = get(),
+        )
+    }
 
     single { ChatMediaStorageService(filesManager = get(), conversationRepository = get(), settingsStore = get()) }
 

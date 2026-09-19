@@ -70,7 +70,11 @@ import me.rerere.rikkahub.CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.RouteActivity
 import me.rerere.rikkahub.data.ai.GenerationChunk
+import me.rerere.rikkahub.data.ai.GenerationContextProfile
 import me.rerere.rikkahub.data.ai.GenerationHandler
+import me.rerere.rikkahub.data.ai.ContextBudgetCategory
+import me.rerere.rikkahub.data.ai.ContextBudgetTool
+import me.rerere.rikkahub.data.ai.deduplicateContextBudgetTools
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.tools.LocalTools
 import me.rerere.rikkahub.data.ai.tools.PcBridgeTaskTools
@@ -135,6 +139,13 @@ data class ChatError(
 
 enum class ChatErrorSolution {
     CheckTitleModelSettings,
+}
+
+enum class ChatGenerationMode(
+    val contextProfile: GenerationContextProfile,
+) {
+    Normal(GenerationContextProfile.Default),
+    VoiceCall(GenerationContextProfile.VoiceCall),
 }
 
 private val inputTransformers by lazy {
@@ -414,6 +425,7 @@ class ChatService(
         content: List<UIMessagePart>,
         answer: Boolean = true,
         useSmartToolRouting: Boolean = false,
+        generationMode: ChatGenerationMode = ChatGenerationMode.Normal,
     ) {
         if (content.isEmptyInputMessage()) return
 
@@ -539,7 +551,11 @@ class ChatService(
 
                 // 开始补全
                 if (answer) {
-                    handleMessageComplete(conversationId, useSmartToolRouting = useSmartToolRouting)
+                    handleMessageComplete(
+                        conversationId,
+                        useSmartToolRouting = useSmartToolRouting,
+                        generationMode = generationMode,
+                    )
                 } else {
                     session.clearSmartToolRouting()
                 }
@@ -860,6 +876,7 @@ class ChatService(
         conversationId: Uuid,
         messageRange: ClosedRange<Int>? = null,
         useSmartToolRouting: Boolean = false,
+        generationMode: ChatGenerationMode = ChatGenerationMode.Normal,
     ) {
         val settings = settingsStore.settingsFlow.first()
         val initialConversation = getConversationFlow(conversationId).value
@@ -881,7 +898,7 @@ class ChatService(
             updateConversation(conversationId, initialConversation.copy(chatSuggestions = emptyList()))
 
             // memory tool
-            if (!model.abilities.contains(ModelAbility.TOOL)) {
+            if (generationMode.contextProfile.allowsTools && !model.abilities.contains(ModelAbility.TOOL)) {
                 if (settings.enableWebSearch || mcpManager.getAllAvailableTools().isNotEmpty()) {
                     addError(
                         IllegalStateException(context.getString(R.string.tools_warning)),
@@ -927,19 +944,34 @@ class ChatService(
                     memoryRepository.getMemoriesOfAssistant(assistant.id.toString())
                 },
                 inputTransformers = buildList {
-                    addAll(inputTransformers)
+                    if (generationMode.contextProfile.allowsOperationalRules) {
+                        addAll(inputTransformers)
+                    } else {
+                        add(TimeReminderTransformer)
+                    }
                     add(templateTransformer)
-                    add(workspaceReminderTransformer)
+                    if (generationMode.contextProfile.allowsOperationalRules) {
+                        add(workspaceReminderTransformer)
+                    }
                 },
                 outputTransformers = outputTransformers,
-                tools = ToolNaming.deduplicateToolNames(buildList {
+                tools = if (!generationMode.contextProfile.allowsTools) {
+                    emptyList()
+                } else deduplicateContextBudgetTools(buildList {
                     if (settings.enableWebSearch) {
-                        addAll(createSearchTools(settings))
+                        createSearchTools(settings).forEach { tool ->
+                            add(ContextBudgetTool(tool, ContextBudgetCategory.WEB_SEARCH))
+                        }
                     }
-addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tools.ToolInvocationContext(
-    callerAssistantId = assistant.id.toString(),
-    callerConversationId = conversationId.toString(),
-)))
+                    localTools.getTools(
+                        assistant.localTools,
+                        me.rerere.rikkahub.data.ai.tools.ToolInvocationContext(
+                            callerAssistantId = assistant.id.toString(),
+                            callerConversationId = conversationId.toString(),
+                        )
+                    ).forEach { tool ->
+                        add(ContextBudgetTool(tool, ContextBudgetCategory.LOCAL_TOOLS))
+                    }
                     // System tools (location, notifications, calendar, alarm, camera)
                     val systemToolsOptions = settings.systemToolsSetting.getEnabledOptions().toMutableSet()
                     // 如果存在启用的外置记忆库，始终启用 supabase_query 工具
@@ -948,23 +980,31 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                     }
                     if (systemToolsOptions.isNotEmpty()) {
                         val systemTools = SystemTools(context, settings)
-                        addAll(systemTools.getTools(systemToolsOptions, conversation.currentMessages, filesManager))
+                        systemTools.getTools(systemToolsOptions, conversation.currentMessages, filesManager)
+                            .forEach { tool ->
+                                add(ContextBudgetTool(tool, ContextBudgetCategory.SYSTEM_TOOLS))
+                            }
                     }
-                    addAll(createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), conversation.workspaceCwd))
+                    createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), conversation.workspaceCwd)
+                        .forEach { tool ->
+                            add(ContextBudgetTool(tool, ContextBudgetCategory.WORKSPACE))
+                        }
                     if (assistant.enabledSkills.isNotEmpty()) {
-                        addAll(
-                            createSkillTools(
-                                enabledSkills = assistant.enabledSkills,
-                                allSkills = skillManager.listSkills(),
-                                skillManager = skillManager,
-                            )
-                        )
+                        createSkillTools(
+                            enabledSkills = assistant.enabledSkills,
+                            allSkills = skillManager.listSkills(),
+                            skillManager = skillManager,
+                        ).forEach { tool ->
+                            add(ContextBudgetTool(tool, ContextBudgetCategory.SKILLS))
+                        }
                     }
                     mcpManager.getAllAvailableTools(smartToolSelection.allowedMcpServerIds)
                         .filter { (serverId, tool) -> smartToolSelection.allowsMcpTool(serverId, tool.name) }
                         .forEach { (serverId, tool) ->
                             add(
-                                Tool(
+                                ContextBudgetTool(
+                                    category = ContextBudgetCategory.MCP,
+                                    tool = Tool(
                                     name = ToolNaming.buildMcpToolName(serverId, tool.name),
                                     description = tool.description ?: "",
                                     parameters = { tool.inputSchema },
@@ -972,30 +1012,36 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                                     execute = {
                                         mcpManager.callTool(serverId, tool.name, it.jsonObject)
                                     },
+                                    ),
                                 )
                             )
                         }
                     // Plugin tools
-                    addAll(
-                        pluginToolProvider.getTools(
-                            allowedPluginIds = smartToolSelection.allowedPluginIds,
-                        )
-                    )
+                    pluginToolProvider.getTools(
+                        allowedPluginIds = smartToolSelection.allowedPluginIds,
+                    ).forEach { tool ->
+                        add(ContextBudgetTool(tool, ContextBudgetCategory.PLUGINS))
+                    }
                     // PC bridge is a native, paired-device capability. It must remain available even when
                     // MCP/plugin tools are manually throttled, otherwise Daddy cannot dispatch a PC task.
-                    addAll(pcBridgeTaskToolsProvider().getTools())
+                    pcBridgeTaskToolsProvider().getTools().forEach { tool ->
+                        add(ContextBudgetTool(tool, ContextBudgetCategory.PC_BRIDGE))
+                    }
                 }) { duplicateToolName ->
                     Log.w(TAG, "Dropped duplicate tool name: $duplicateToolName")
                 },
                 pluginPromptInjections = buildList {
-                    addAll(
-                        pluginToolProvider.getPluginPromptInjections(
-                            allowedPluginIds = smartToolSelection.allowedPluginIds,
-                        ),
-                    )
+                    if (generationMode.contextProfile.allowsTools) {
+                        addAll(
+                            pluginToolProvider.getPluginPromptInjections(
+                                allowedPluginIds = smartToolSelection.allowedPluginIds,
+                            ),
+                        )
+                    }
                 },
                 conversationId = conversationId.toString(),
-            ).onCompletion {
+                contextProfile = generationMode.contextProfile,
+            ).onCompletion { completionCause ->
                 // 取消 Live Update 通知
                 cancelLiveUpdateNotification(conversationId)
 
@@ -1009,7 +1055,7 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                 updateConversation(conversationId, updatedConversation)
 
                 // Show notification if app is not in foreground
-                if (!isForeground.value && settings.displaySetting.enableNotificationOnMessageGeneration) {
+                if (completionCause == null && !isForeground.value && settings.displaySetting.enableNotificationOnMessageGeneration) {
                     sendGenerationDoneNotification(conversationId, senderName)
                 }
             }.collect { chunk ->
@@ -1026,15 +1072,20 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
                     }
                 }
             }
-        }.onFailure {
+        }.onFailure { error ->
             if (useSmartToolRouting) session.clearSmartToolRouting()
             // 取消 Live Update 通知
             cancelLiveUpdateNotification(conversationId)
 
-            it.printStackTrace()
-            addError(it, conversationId, title = context.getString(R.string.error_title_generation))
-            Logging.log(TAG, "handleMessageComplete: $it")
-            Logging.log(TAG, it.stackTraceToString())
+            if (error is CancellationException) {
+                Log.i(TAG, "Generation cancelled, conversationId=$conversationId")
+                return@onFailure
+            }
+
+            error.printStackTrace()
+            addError(error, conversationId, title = context.getString(R.string.error_title_generation))
+            Logging.log(TAG, "handleMessageComplete: $error")
+            Logging.log(TAG, error.stackTraceToString())
         }.onSuccess {
             var finalConversation = session.saveMutex.withLock {
                 val latest = getConversationFlow(conversationId).value
@@ -1894,6 +1945,15 @@ addAll(localTools.getTools(assistant.localTools, me.rerere.rikkahub.data.ai.tool
         }
 
         updateConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
+    }
+
+    /**
+     * Immediately asks the provider flow for this conversation to stop. This is
+     * used for voice-call barge-in, where waiting for [stopGeneration] to join
+     * would keep the caller in the old turn for too long.
+     */
+    fun cancelGeneration(conversationId: Uuid) {
+        sessions[conversationId]?.getJob()?.cancel()
     }
 
     // 停止当前会话生成任务（不清理会话缓存）
